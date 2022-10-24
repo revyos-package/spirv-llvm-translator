@@ -1,6 +1,7 @@
 spirv-llvm-translator-14 (14.0.0-4) UNRELEASED; urgency=medium
 
   * Build with -fvisibility=hidden -fvisibility-inlines-hidden.
+  * Drop hidden symbols from .symbols control file.
 
  -- Andreas Beckmann <anbe@debian.org>  Fri, 14 Oct 2022 23:54:43 +0200
 
