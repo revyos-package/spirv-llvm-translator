@@ -13,6 +13,7 @@ Restrictions:
  allow-stderr,
 
 Test-Command: debian/tests/upstream-testsuite
+Features: test-name=upstream-testsuite-flaky
 Architecture: !amd64
 Depends:
  @,
