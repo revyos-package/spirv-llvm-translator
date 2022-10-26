@@ -1,4 +1,4 @@
-# SymbolsHelper-Confirmed: 14.0.0 amd64 i386
+# SymbolsHelper-Confirmed: 14.0.0 amd64 arm64 armel armhf hurd-i386 i386 mips64el mipsel powerpc ppc64 ppc64el riscv64 s390x sparc64
 libLLVMSPIRVLib.so.14 #PACKAGE# #MINVER#
 * Build-Depends-Package: libllvmspirvlib-14-dev
  _ZGVZNKSt8__detail11_AnyMatcherINSt7__cxx1112regex_traitsIcEELb0ELb0ELb0EEclEcE5__nul@Base 0
@@ -53,7 +53,7 @@ libLLVMSPIRVLib.so.14 #PACKAGE# #MINVER#
  _ZN5SPIRV15readSpirvModuleERSiRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE@Base 0
  _ZN5SPIRV18SPIRVUseTextFormatE@Base 0
 #MISSING: 14.0.0# (optional=templinst|arch=!armel !mips64el !mipsel)_ZN5SPIRV4rmapIN7OCLUtil6OclExt4KindEN3spv10CapabilityEPNS_15SPIRVCapabilityEEESt3setIT_St4lessIS9_ESaIS9_EERKSt3mapIT0_T1_SA_ISF_ESaISt4pairIKSF_SG_EEE@Base 0
- (optional=templinst|arch=armel armhf)_ZN5SPIRV6concatIiEENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEERKS6_RKT_@Base 0
+#MISSING: 14.0.0# (optional=templinst|arch=armel armhf)_ZN5SPIRV6concatIiEENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEERKS6_RKT_@Base 0
 #MISSING: 14.0.0# (optional=templinst|arch=amd64 arm64)_ZN5SPIRV8toStringIN4llvm4TypeEEENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEPKT_@Base 14
 #MISSING: 14.0.0# (optional=templinst|arch=!amd64 !arm64 !armel !mips64el !ppc64el !riscv64 !x32)_ZN5SPIRVlsINS_9SPIRVTypeEEERKNS_12SPIRVEncoderES4_PT_@Base 0
  _ZNK5SPIRV14TranslatorOpts25isUnknownIntrinsicAllowedEPN4llvm13IntrinsicInstE@Base 13
@@ -105,10 +105,10 @@ libLLVMSPIRVLib.so.14 #PACKAGE# #MINVER#
  (optional=templinst)_ZNSt6vectorISt4pairIPN4llvm8FunctionEN3spv2OpEESaIS6_EE17_M_realloc_insertIJS6_EEEvN9__gnu_cxx17__normal_iteratorIPS6_S8_EEDpOT_@Base 0
  (optional=templinst)_ZNSt6vectorISt4pairIccESaIS1_EE17_M_realloc_insertIJS1_EEEvN9__gnu_cxx17__normal_iteratorIPS1_S3_EEDpOT_@Base 0
  (optional=templinst)_ZNSt6vectorISt4pairIjjESaIS1_EE12emplace_backIJN3spv15LoopControlMaskERjEEEvDpOT_@Base 12
- (optional=templinst|arch=!armel !armhf !i386 !mipsel !powerpc !x32)_ZNSt6vectorISt4pairIjjESaIS1_EE12emplace_backIJN3spv15LoopControlMaskERmEEEvDpOT_@Base 12
+ (optional=templinst|arch=!armel !armhf !hurd-i386 !i386 !mipsel !powerpc !x32)_ZNSt6vectorISt4pairIjjESaIS1_EE12emplace_backIJN3spv15LoopControlMaskERmEEEvDpOT_@Base 12
  (optional=templinst)_ZNSt6vectorISt4pairIjjESaIS1_EE12emplace_backIJN3spv15LoopControlMaskEiEEEvDpOT_@Base 12
- (optional=templinst|arch=armel armhf i386 mipsel powerpc x32)_ZNSt6vectorISt4pairIjjESaIS1_EE12emplace_backIJN3spv15LoopControlMaskEjEEEvDpOT_@Base 12
- (optional=templinst|arch=!armel !armhf !i386 !mipsel !powerpc !x32)_ZNSt6vectorISt4pairIjjESaIS1_EE12emplace_backIJN3spv15LoopControlMaskEmEEEvDpOT_@Base 12
+ (optional=templinst|arch=armel armhf hurd-i386 i386 mipsel powerpc x32)_ZNSt6vectorISt4pairIjjESaIS1_EE12emplace_backIJN3spv15LoopControlMaskEjEEEvDpOT_@Base 12
+ (optional=templinst|arch=!armel !armhf !hurd-i386 !i386 !mipsel !powerpc !x32)_ZNSt6vectorISt4pairIjjESaIS1_EE12emplace_backIJN3spv15LoopControlMaskEmEEEvDpOT_@Base 12
  (optional=templinst)_ZNSt6vectorISt4pairIjjESaIS1_EE12emplace_backIJRKN3spv15LoopControlMaskEjEEEvDpOT_@Base 13
  (optional=templinst)_ZNSt6vectorISt4pairIjjESaIS1_EE12emplace_backIJRKjRjEEEvDpOT_@Base 0
  (optional=templinst|arch=armel armhf hurd-i386 i386 mipsel powerpc)_ZNSt6vectorISt4pairIjjESaIS1_EE17_M_realloc_insertIJRjS5_EEEvN9__gnu_cxx17__normal_iteratorIPS1_S3_EEDpOT_@Base 0
@@ -120,8 +120,8 @@ libLLVMSPIRVLib.so.14 #PACKAGE# #MINVER#
  (optional=templinst)_ZNSt6vectorIiSaIiEE12emplace_backIJiEEEvDpOT_@Base 0
  (optional=templinst)_ZNSt6vectorIiSaIiEE17_M_realloc_insertIJiEEEvN9__gnu_cxx17__normal_iteratorIPiS1_EEDpOT_@Base 0
  (optional=templinst)_ZNSt6vectorIjSaIjEE12emplace_backIJjEEEvDpOT_@Base 0
- (optional=templinst|arch=armel armhf i386 mipsel powerpc x32)_ZNSt6vectorIjSaIjEE14_M_fill_insertEN9__gnu_cxx17__normal_iteratorIPjS1_EEjRKj@Base 12
- (optional=templinst|arch=!armel !armhf !i386 !mipsel !powerpc !x32)_ZNSt6vectorIjSaIjEE14_M_fill_insertEN9__gnu_cxx17__normal_iteratorIPjS1_EEmRKj@Base 12
+ (optional=templinst|arch=armel armhf hurd-i386 i386 mipsel powerpc x32)_ZNSt6vectorIjSaIjEE14_M_fill_insertEN9__gnu_cxx17__normal_iteratorIPjS1_EEjRKj@Base 12
+ (optional=templinst|arch=!armel !armhf !hurd-i386 !i386 !mipsel !powerpc !x32)_ZNSt6vectorIjSaIjEE14_M_fill_insertEN9__gnu_cxx17__normal_iteratorIPjS1_EEmRKj@Base 12
  (optional=templinst|subst)_ZNSt6vectorIjSaIjEE17_M_default_appendE{size_t}@Base 0
  (optional=templinst)_ZNSt6vectorIjSaIjEE17_M_realloc_insertIJRKjEEEvN9__gnu_cxx17__normal_iteratorIPjS1_EEDpOT_@Base 0
  (optional=templinst)_ZNSt6vectorIjSaIjEE17_M_realloc_insertIJjEEEvN9__gnu_cxx17__normal_iteratorIPjS1_EEDpOT_@Base 0
@@ -481,7 +481,7 @@ libLLVMSPIRVLib.so.14 #PACKAGE# #MINVER#
  _ZTINSt8__detail15_BracketMatcherINSt7__cxx1112regex_traitsIcEELb1ELb1EEE@Base 13
  (arch=armel riscv64)_ZTISt11_Mutex_baseILN9__gnu_cxx12_Lock_policyE1EE@Base 13
  (arch=!armel !riscv64)_ZTISt11_Mutex_baseILN9__gnu_cxx12_Lock_policyE2EE@Base 13
- (arch=armel riscv64)_ZTISt15_Sp_counted_ptrIPN5SPIRV9SPIRVLineELN9__gnu_cxx12_Lock_policyE1EE@Base 13
+#MISSING: 14.0.0# (arch=armel riscv64)_ZTISt15_Sp_counted_ptrIPN5SPIRV9SPIRVLineELN9__gnu_cxx12_Lock_policyE1EE@Base 13
 #MISSING: 14.0.0# (arch=!armel !riscv64)_ZTISt15_Sp_counted_ptrIPN5SPIRV9SPIRVLineELN9__gnu_cxx12_Lock_policyE2EE@Base 13
  (arch=armel riscv64)_ZTISt16_Sp_counted_baseILN9__gnu_cxx12_Lock_policyE1EE@Base 13
  (arch=!armel !riscv64)_ZTISt16_Sp_counted_baseILN9__gnu_cxx12_Lock_policyE2EE@Base 13
@@ -507,14 +507,14 @@ libLLVMSPIRVLib.so.14 #PACKAGE# #MINVER#
  _ZTSNSt8__detail15_BracketMatcherINSt7__cxx1112regex_traitsIcEELb1ELb1EEE@Base 13
  (arch=armel riscv64)_ZTSSt11_Mutex_baseILN9__gnu_cxx12_Lock_policyE1EE@Base 13
  (arch=!armel !riscv64)_ZTSSt11_Mutex_baseILN9__gnu_cxx12_Lock_policyE2EE@Base 13
- (arch=armel riscv64)_ZTSSt15_Sp_counted_ptrIPN5SPIRV9SPIRVLineELN9__gnu_cxx12_Lock_policyE1EE@Base 13
+#MISSING: 14.0.0# (arch=armel riscv64)_ZTSSt15_Sp_counted_ptrIPN5SPIRV9SPIRVLineELN9__gnu_cxx12_Lock_policyE1EE@Base 13
 #MISSING: 14.0.0# (arch=!armel !riscv64)_ZTSSt15_Sp_counted_ptrIPN5SPIRV9SPIRVLineELN9__gnu_cxx12_Lock_policyE2EE@Base 13
  (arch=armel riscv64)_ZTSSt16_Sp_counted_baseILN9__gnu_cxx12_Lock_policyE1EE@Base 13
  (arch=!armel !riscv64)_ZTSSt16_Sp_counted_baseILN9__gnu_cxx12_Lock_policyE2EE@Base 13
  _ZTSSt19_Sp_make_shared_tag@Base 13
  (arch=armel riscv64)_ZTSSt23_Sp_counted_ptr_inplaceINSt8__detail4_NFAINSt7__cxx1112regex_traitsIcEEEESaIvELN9__gnu_cxx12_Lock_policyE1EE@Base 13
  (arch=!armel !riscv64)_ZTSSt23_Sp_counted_ptr_inplaceINSt8__detail4_NFAINSt7__cxx1112regex_traitsIcEEEESaIvELN9__gnu_cxx12_Lock_policyE2EE@Base 13
- (arch=armel riscv64)_ZTVSt15_Sp_counted_ptrIPN5SPIRV9SPIRVLineELN9__gnu_cxx12_Lock_policyE1EE@Base 0
+#MISSING: 14.0.0# (arch=armel riscv64)_ZTVSt15_Sp_counted_ptrIPN5SPIRV9SPIRVLineELN9__gnu_cxx12_Lock_policyE1EE@Base 0
 #MISSING: 14.0.0# (arch=!armel !riscv64)_ZTVSt15_Sp_counted_ptrIPN5SPIRV9SPIRVLineELN9__gnu_cxx12_Lock_policyE2EE@Base 0
  (arch=armel riscv64)_ZTVSt23_Sp_counted_ptr_inplaceINSt8__detail4_NFAINSt7__cxx1112regex_traitsIcEEEESaIvELN9__gnu_cxx12_Lock_policyE1EE@Base 0
  (arch=!armel !riscv64)_ZTVSt23_Sp_counted_ptr_inplaceINSt8__detail4_NFAINSt7__cxx1112regex_traitsIcEEEESaIvELN9__gnu_cxx12_Lock_policyE2EE@Base 0

@@ -1,3 +1,9 @@
+spirv-llvm-translator-14 (14.0.0-5) UNRELEASED; urgency=medium
+
+  * Update .symbols control file.
+
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 26 Oct 2022 08:33:50 +0200
+
 spirv-llvm-translator-14 (14.0.0-4) unstable; urgency=medium
 
   * Build with -fvisibility=hidden -fvisibility-inlines-hidden.
