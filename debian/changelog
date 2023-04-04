@@ -1,6 +1,7 @@
 spirv-llvm-translator-16 (15.0.0-3) UNRELEASED; urgency=medium
 
   * Fork source package as spirv-llvm-translator-16.
+  * Rename binary packages: *15* => *16*.
 
  -- Andreas Beckmann <anbe@debian.org>  Tue, 04 Apr 2023 10:08:47 +0200
 
