@@ -1,6 +1,7 @@
 spirv-llvm-translator-16 (16.0.0-1) UNRELEASED; urgency=medium
 
   * New upstream release.
+  * Refresh patches.
   * Fork source package as spirv-llvm-translator-16.
   * Rename binary packages: *15* => *16*.
 
