@@ -3,19 +3,22 @@ Upstream-Name: spirv-llvm-translator
 Source: https://github.com/KhronosGroup/SPIRV-LLVM-Translator
 
 Files: *
-Copyright: 2014 Advanced Micro Devices, Inc.
-           2018-2021 Intel Corporation
+Copyright:
+ (c) 2014 Advanced Micro Devices, Inc. All rights reserved.
+ (c) 2018-2021 Intel Corporation. All rights reserved.
+ (c) 2022 The Khronos Group Inc.
 License: BSD-3-clause
 
 Files:
  lib/SPIRV/libSPIRV/OpenCL.std.h
  lib/SPIRV/libSPIRV/spirv_internal.hpp
-Copyright: 2015-2020 The Khronos Group Inc.
+Copyright:
+ (c) 2015-2020 The Khronos Group Inc.
 License: Expat
 
 Files: debian/*
 Copyright: 2019 Timo Aaltonen <tjaalton@debian.org>
-           © 2022 Andreas Beckmann <anbe@debian.org>
+ © 2022-2023 Andreas Beckmann <anbe@debian.org>
 License: BSD-3-clause
 
 License: BSD-3-clause
