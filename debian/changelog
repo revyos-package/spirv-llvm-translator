@@ -5,6 +5,7 @@ spirv-llvm-translator-16 (16.0.0-1) UNRELEASED; urgency=medium
   * Bump spirv-headers build-dependency to 1.6.1+1.3.243.
   * Fork source package as spirv-llvm-translator-16.
   * Rename binary packages: *15* => *16*.
+  * Build with llvm 16.
 
  -- Andreas Beckmann <anbe@debian.org>  Tue, 04 Apr 2023 10:23:55 +0200
 
