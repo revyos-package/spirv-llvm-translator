@@ -1,4 +1,4 @@
-spirv-llvm-translator-16 (16.0.0-1) UNRELEASED; urgency=medium
+spirv-llvm-translator-16 (16.0.0-1) experimental; urgency=medium
 
   * New upstream release.
   * Refresh patches.
@@ -7,8 +7,9 @@ spirv-llvm-translator-16 (16.0.0-1) UNRELEASED; urgency=medium
   * Rename binary packages: *15* => *16*.
   * Build with llvm 16.
   * Update .symbols control file.
+  * Upload to experimental.
 
- -- Andreas Beckmann <anbe@debian.org>  Tue, 04 Apr 2023 10:23:55 +0200
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 20 Apr 2023 18:57:02 +0200
 
 spirv-llvm-translator-15 (15.0.0-2) unstable; urgency=medium
 
