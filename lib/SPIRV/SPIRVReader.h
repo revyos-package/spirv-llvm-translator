@@ -41,6 +41,7 @@
 #ifndef SPIRVREADER_H
 #define SPIRVREADER_H
 
+#include "SPIRVBuiltinHelper.h"
 #include "SPIRVInternal.h"
 #include "SPIRVModule.h"
 
@@ -74,17 +75,21 @@ class SPIRVConstantSampler;
 class SPIRVConstantPipeStorage;
 class SPIRVLoopMerge;
 class SPIRVToLLVMDbgTran;
-class SPIRVToLLVM {
+class SPIRVToLLVM : private BuiltinCallHelper {
 public:
   SPIRVToLLVM(Module *LLVMModule, SPIRVModule *TheSPIRVModule);
 
   static const StringSet<> BuiltInConstFunc;
 
-  Type *transType(SPIRVType *BT, bool IsClassMember = false);
+  /// Translate the SPIR-V type into an LLVM type. If UseTypedPointerTypes is
+  /// true, then generate a TypedPointerType instead of a PointerType. The
+  /// intended use of TypedPointerTypes is for name mangling, so pointer types
+  /// that occur as array members or struct members will not be represented with
+  /// TypedPointerType, even when UseTypedPointerTypes is true.
+  Type *transType(SPIRVType *BT, bool UseTypedPointerTypes = false);
   std::string transTypeToOCLTypeName(SPIRVType *BT, bool IsSigned = true);
-  std::vector<Type *> transTypeVector(const std::vector<SPIRVType *> &);
-  std::vector<PointerIndirectPair>
-  getPointerElementTypes(llvm::ArrayRef<SPIRVType *> Tys);
+  std::vector<Type *> transTypeVector(const std::vector<SPIRVType *> &,
+                                      bool UseTypedPointerTypes = false);
   bool translate();
   bool transAddressingModel();
 
@@ -150,6 +155,14 @@ public:
   typedef std::map<const BasicBlock *, const SPIRVValue *>
       SPIRVToLLVMLoopMetadataMap;
 
+  // Store all the allocations to Struct Types that are further
+  // accessed inside GetElementPtr instruction or in ptr.annotation intrinsics.
+  // For every structure we save the accessed structure field index and the
+  // last corresponding translated LLVM instruction.
+  typedef std::unordered_map<Value *,
+                             std::unordered_map<SPIRVWord, Instruction *>>
+      TypeToGEPOrUseMap;
+
 private:
   Module *M;
   LLVMContext *Context;
@@ -180,6 +193,8 @@ private:
   SPIRVToLLVMMDAliasInstMap MDAliasDomainMap;
   SPIRVToLLVMMDAliasInstMap MDAliasScopeMap;
   SPIRVToLLVMMDAliasInstMap MDAliasListMap;
+
+  TypeToGEPOrUseMap GEPOrUseMap;
 
   Type *mapType(SPIRVType *BT, Type *T);
 
@@ -212,11 +227,6 @@ private:
   Instruction *transOCLBuiltinPostproc(SPIRVInstruction *BI, CallInst *CI,
                                        BasicBlock *BB,
                                        const std::string &DemangledName);
-  std::string transOCLImageTypeName(SPIRV::SPIRVTypeImage *ST);
-  std::string transOCLSampledImageTypeName(SPIRV::SPIRVTypeSampledImage *ST);
-  std::string transVMEImageTypeName(SPIRV::SPIRVTypeVmeImageINTEL *VT);
-  std::string transPipeTypeName(SPIRV::SPIRVTypePipe *ST);
-  std::string transOCLPipeStorageTypeName(SPIRV::SPIRVTypePipeStorage *PST);
   std::string transOCLImageTypeAccessQualifier(SPIRV::SPIRVTypeImage *ST);
   std::string transOCLPipeTypeAccessQualifier(SPIRV::SPIRVTypePipe *ST);
   std::string transVCTypeName(SPIRVTypeBufferSurfaceINTEL *PST);
