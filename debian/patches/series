@@ -1,1 +1,2 @@
+0001-Fix-standalone-builds-with-LLVM_LINK_LLVM_DYLIB-ON-1.patch
 visibility-hidden.patch
