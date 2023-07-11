@@ -16,7 +16,7 @@ Build-Depends: debhelper-compat (= 13),
 # keep the clang/llvm version in sync, don't forget debian/tests/control
  clang-14 <!nocheck>,
 Rules-Requires-Root: no
-Standards-Version: 4.6.1
+Standards-Version: 4.6.2
 Homepage: https://github.com/KhronosGroup/SPIRV-LLVM-Translator
 Vcs-Browser: https://salsa.debian.org/opencl-team/spirv-llvm-translator
 Vcs-Git: https://salsa.debian.org/opencl-team/spirv-llvm-translator.git -b llvm14/main
