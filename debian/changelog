@@ -1,9 +1,9 @@
-spirv-llvm-translator-14 (14.0.0-6) UNRELEASED; urgency=medium
+spirv-llvm-translator-14 (14.0.0-6) unstable; urgency=medium
 
   * Fix compatibility with newer spirv-as.  (Closes: #1040055)
   * Bump Standards-Version to 4.6.2.
 
- -- Andreas Beckmann <anbe@debian.org>  Tue, 11 Jul 2023 13:52:50 +0200
+ -- Andreas Beckmann <anbe@debian.org>  Tue, 11 Jul 2023 14:03:54 +0200
 
 spirv-llvm-translator-14 (14.0.0-5) unstable; urgency=medium
 
