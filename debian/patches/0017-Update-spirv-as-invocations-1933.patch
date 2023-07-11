@@ -1,7 +1,7 @@
-From 80917d1b0c91c39f91f8b8b7cd5a4681bcfb5c16 Mon Sep 17 00:00:00 2001
+From 068260b61669d7b3e50ce82b19737be548e0762f Mon Sep 17 00:00:00 2001
 From: Dmitry Sidorov <dmitry.sidorov@intel.com>
-Date: Fri, 31 Mar 2023 14:00:03 +0200
-Subject: [PATCH 090/141] Update spirv-as invocations (#1932)
+Date: Fri, 31 Mar 2023 13:40:26 +0200
+Subject: [PATCH 17/66] Update spirv-as invocations (#1933)
 
 After SPIRV-Tools commit 2e0f4b52 ("tools: refactorize tools flags
 parsing. (#5111)", 2023-02-27), spirv-as needs to be told explicitly
