@@ -1,3 +1,4 @@
 0042-Fix-some-typos.patch
 0058-CMake-Enable-LLVM_BUILD_TOOLS-for-out-of-tree-builds.patch
+0090-Update-spirv-as-invocations-1932.patch
 visibility-hidden.patch
