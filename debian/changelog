@@ -18,6 +18,12 @@ spirv-llvm-translator-16 (16.0.0-1) experimental; urgency=medium
 
  -- Andreas Beckmann <anbe@debian.org>  Thu, 20 Apr 2023 18:57:02 +0200
 
+spirv-llvm-translator-15 (15.0.0-3) unstable; urgency=medium
+
+  * Fix compatibility with newer spirv-as.  (Closes: #1040056)
+
+ -- Andreas Beckmann <anbe@debian.org>  Tue, 11 Jul 2023 15:05:17 +0200
+
 spirv-llvm-translator-15 (15.0.0-2) unstable; urgency=medium
 
   * Merge changes from spirv-llvm-translator-14 14.0.0-5.
@@ -34,6 +40,13 @@ spirv-llvm-translator-15 (15.0.0-1) unstable; urgency=medium
   * Build with llvm 15.
 
  -- Andreas Beckmann <anbe@debian.org>  Mon, 03 Oct 2022 02:09:37 +0200
+
+spirv-llvm-translator-14 (14.0.0-6) unstable; urgency=medium
+
+  * Fix compatibility with newer spirv-as.  (Closes: #1040055)
+  * Bump Standards-Version to 4.6.2.
+
+ -- Andreas Beckmann <anbe@debian.org>  Tue, 11 Jul 2023 14:03:54 +0200
 
 spirv-llvm-translator-14 (14.0.0-5) unstable; urgency=medium
 
