@@ -8,6 +8,7 @@ Uploaders:
 Build-Depends: debhelper-compat (= 13),
  dh-sequence-pkgkde-symbolshelper,
  cmake,
+ gcc (>= 4:13),
  libclang-14-dev,
  llvm-14-dev,
  pkgconf,
