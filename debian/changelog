@@ -1,3 +1,14 @@
+spirv-llvm-translator-15 (15.0.0-4) UNRELEASED; urgency=medium
+
+  [ Andreas Beckmann ]
+  * Update .symbols control file for gcc-13 builds.
+
+  [ Gianfranco Costamagna ]
+  * Mark some more symbols as optional as they don't appear on Ubuntu (LTO?).
+    (Closes: #1042819)
+
+ -- Andreas Beckmann <anbe@debian.org>  Tue, 01 Aug 2023 21:40:48 +0200
+
 spirv-llvm-translator-15 (15.0.0-3) unstable; urgency=medium
 
   * Fix compatibility with newer spirv-as.  (Closes: #1040056)
@@ -20,6 +31,20 @@ spirv-llvm-translator-15 (15.0.0-1) unstable; urgency=medium
   * Build with llvm 15.
 
  -- Andreas Beckmann <anbe@debian.org>  Mon, 03 Oct 2022 02:09:37 +0200
+
+spirv-llvm-translator-14 (14.0.0-8) unstable; urgency=medium
+
+  [ Gianfranco Costamagna ]
+  * Mark some more symbols as optional as they don't appear on Ubuntu (LTO?).
+    (Closes: #1042819)
+
+ -- Andreas Beckmann <anbe@debian.org>  Tue, 01 Aug 2023 14:45:06 +0200
+
+spirv-llvm-translator-14 (14.0.0-7) unstable; urgency=medium
+
+  * Update .symbols control file for gcc-13 builds.
+
+ -- Andreas Beckmann <anbe@debian.org>  Mon, 31 Jul 2023 11:05:53 +0200
 
 spirv-llvm-translator-14 (14.0.0-6) unstable; urgency=medium
 
