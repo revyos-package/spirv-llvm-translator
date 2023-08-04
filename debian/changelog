@@ -1,4 +1,4 @@
-spirv-llvm-translator-16 (16.0.0-3) UNRELEASED; urgency=medium
+spirv-llvm-translator-16 (16.0.0-3) unstable; urgency=medium
 
   [ Andreas Beckmann ]
   * Update .symbols control file for gcc-13 builds.  (Closes: #1042192)
@@ -7,7 +7,7 @@ spirv-llvm-translator-16 (16.0.0-3) UNRELEASED; urgency=medium
   * Mark some more symbols as optional as they don't appear on Ubuntu (LTO?).
     (Closes: #1042819)
 
- -- Andreas Beckmann <anbe@debian.org>  Thu, 03 Aug 2023 11:54:47 +0200
+ -- Andreas Beckmann <anbe@debian.org>  Fri, 04 Aug 2023 12:09:10 +0200
 
 spirv-llvm-translator-16 (16.0.0-2) unstable; urgency=medium
 
