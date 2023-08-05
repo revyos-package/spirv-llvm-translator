@@ -1,3 +1,11 @@
+spirv-llvm-translator-16 (16.0.0-4) UNRELEASED; urgency=medium
+
+  [ Gianfranco Costamagna ]
+  * Mark more symbols as optional as they don't appear with LTO.
+    (Closes: #1043047)
+
+ -- Andreas Beckmann <anbe@debian.org>  Sat, 05 Aug 2023 11:44:58 +0200
+
 spirv-llvm-translator-16 (16.0.0-3) unstable; urgency=medium
 
   [ Andreas Beckmann ]

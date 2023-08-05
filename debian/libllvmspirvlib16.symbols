@@ -42,7 +42,7 @@ libLLVMSPIRVLib.so.16 #PACKAGE# #MINVER#
  _ZN4llvm39initializeSPIRVLowerConstExprLegacyPassERNS_12PassRegistryE@Base 13
  _ZN4llvm39initializeSPIRVLowerOCLBlocksLegacyPassERNS_12PassRegistryE@Base 13
  _ZN4llvm39initializeSPIRVRegularizeLLVMLegacyPassERNS_12PassRegistryE@Base 13
- _ZN4llvm3Any6TypeIdIPKNS_6ModuleEE2IdE@Base 16
+ (optional=lto)_ZN4llvm3Any6TypeIdIPKNS_6ModuleEE2IdE@Base 16
 #MISSING: 16# _ZN4llvm44initializeSPIRVLowerSaddIntrinsicsLegacyPassERNS_12PassRegistryE@Base 15
  _ZN4llvm46createSPIRVLowerBitCastToNonStandardTypeLegacyERKN5SPIRV14TranslatorOptsE@Base 14
  _ZN4llvm46initializeSPIRVLowerSaddWithOverflowLegacyPassERNS_12PassRegistryE@Base 16
@@ -425,8 +425,8 @@ libLLVMSPIRVLib.so.16 #PACKAGE# #MINVER#
  (optional=templinst|subst)_ZSt17__rotate_adaptiveIN9__gnu_cxx17__normal_iteratorIPSt4pairIjjESt6vectorIS3_SaIS3_EEEES4_{ssize_t}ET_S9_S9_S9_T1_SA_T0_SA_@Base 13
 #MISSING: 16.0.0-3~gcc13# _ZSt19piecewise_construct@Base 16
 #MISSING: 14.0.0-7~gcc13# (optional=templinst|arch=amd64 arm64 x32)_ZStplIcSt11char_traitsIcESaIcEENSt7__cxx1112basic_stringIT_T0_T1_EEPKS5_RKS8_@Base 0
- _ZTIN4llvm3Any11StorageBaseE@Base 16
- _ZTIN4llvm3Any11StorageImplIPKNS_6ModuleEEE@Base 16
+ (optional=lto)_ZTIN4llvm3Any11StorageBaseE@Base 16
+ (optional=lto)_ZTIN4llvm3Any11StorageImplIPKNS_6ModuleEEE@Base 16
  (arch=armel riscv64)_ZTIN9__gnu_cxx7__mutexE@Base 13
  _ZTINSt8__detail11_AnyMatcherINSt7__cxx1112regex_traitsIcEELb0ELb0ELb0EEE@Base 13
  _ZTINSt8__detail11_AnyMatcherINSt7__cxx1112regex_traitsIcEELb0ELb0ELb1EEE@Base 13
@@ -451,8 +451,8 @@ libLLVMSPIRVLib.so.16 #PACKAGE# #MINVER#
  (arch=armel armhf)_ZTISt19_Sp_make_shared_tag@Base 13
  (optional=templinst|arch=armel riscv64)_ZTISt23_Sp_counted_ptr_inplaceINSt8__detail4_NFAINSt7__cxx1112regex_traitsIcEEEESaIvELN9__gnu_cxx12_Lock_policyE1EE@Base 13
  (optional=templinst|arch=!armel !riscv64)_ZTISt23_Sp_counted_ptr_inplaceINSt8__detail4_NFAINSt7__cxx1112regex_traitsIcEEEESaIvELN9__gnu_cxx12_Lock_policyE2EE@Base 13
- _ZTSN4llvm3Any11StorageBaseE@Base 16
- _ZTSN4llvm3Any11StorageImplIPKNS_6ModuleEEE@Base 16
+ (optional=lto)_ZTSN4llvm3Any11StorageBaseE@Base 16
+ (optional=lto)_ZTSN4llvm3Any11StorageImplIPKNS_6ModuleEEE@Base 16
  (arch=armel riscv64)_ZTSN9__gnu_cxx7__mutexE@Base 13
  _ZTSNSt8__detail11_AnyMatcherINSt7__cxx1112regex_traitsIcEELb0ELb0ELb0EEE@Base 13
  _ZTSNSt8__detail11_AnyMatcherINSt7__cxx1112regex_traitsIcEELb0ELb0ELb1EEE@Base 13
@@ -477,7 +477,7 @@ libLLVMSPIRVLib.so.16 #PACKAGE# #MINVER#
  _ZTSSt19_Sp_make_shared_tag@Base 13
  (optional=templinst|arch=armel riscv64)_ZTSSt23_Sp_counted_ptr_inplaceINSt8__detail4_NFAINSt7__cxx1112regex_traitsIcEEEESaIvELN9__gnu_cxx12_Lock_policyE1EE@Base 13
  (optional=templinst|arch=!armel !riscv64)_ZTSSt23_Sp_counted_ptr_inplaceINSt8__detail4_NFAINSt7__cxx1112regex_traitsIcEEEESaIvELN9__gnu_cxx12_Lock_policyE2EE@Base 13
- _ZTVN4llvm3Any11StorageImplIPKNS_6ModuleEEE@Base 16
+ (optional=lto)_ZTVN4llvm3Any11StorageImplIPKNS_6ModuleEEE@Base 16
  (optional=templinst|arch=armel riscv64)_ZTVSt23_Sp_counted_ptr_inplaceINSt8__detail4_NFAINSt7__cxx1112regex_traitsIcEEEESaIvELN9__gnu_cxx12_Lock_policyE1EE@Base 0
  (optional=templinst|arch=!armel !riscv64)_ZTVSt23_Sp_counted_ptr_inplaceINSt8__detail4_NFAINSt7__cxx1112regex_traitsIcEEEESaIvELN9__gnu_cxx12_Lock_policyE2EE@Base 0
  (optional=templinst)_ZZNKSt7__cxx1112regex_traitsIcE16lookup_classnameIPKcEENS1_10_RegexMaskET_S6_bE12__classnames@Base 0
