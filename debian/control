@@ -22,7 +22,7 @@ Homepage: https://github.com/KhronosGroup/SPIRV-LLVM-Translator
 Vcs-Browser: https://salsa.debian.org/opencl-team/spirv-llvm-translator
 Vcs-Git: https://salsa.debian.org/opencl-team/spirv-llvm-translator.git -b llvm17/main
 
-Package: libllvmspirvlib16
+Package: libllvmspirvlib17
 Architecture: any
 Multi-Arch: same
 Section: libs
@@ -36,11 +36,11 @@ Description: bi-directional translator for LLVM/SPIRV -- shared library
  .
  This package includes the shared library.
 
-Package: libllvmspirvlib-16-dev
+Package: libllvmspirvlib-17-dev
 Architecture: any
 Multi-Arch: same
 Depends:
- libllvmspirvlib16 (= ${binary:Version}),
+ libllvmspirvlib17 (= ${binary:Version}),
  ${misc:Depends}
 Conflicts:
  libllvmspirvlib-x.y-dev,
@@ -58,10 +58,10 @@ Description: bi-directional translator for LLVM/SPIRV -- development files
  .
  This package includes static libs and headers for development.
 
-Package: llvm-spirv-16
+Package: llvm-spirv-17
 Architecture: any
 Depends:
- libllvmspirvlib16 (= ${binary:Version}),
+ libllvmspirvlib17 (= ${binary:Version}),
  ${shlibs:Depends},
  ${misc:Depends}
 Description: bi-directional translator for LLVM/SPIRV
@@ -69,4 +69,4 @@ Description: bi-directional translator for LLVM/SPIRV
  package includes a library and a tool for translation between LLVM IR
  and SPIR-V.
  .
- This package includes the llvm-spirv-16 binary.
+ This package includes the llvm-spirv-17 binary.
