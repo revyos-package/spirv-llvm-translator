@@ -1,9 +1,10 @@
-spirv-llvm-translator-17 (16.0.0-5) UNRELEASED; urgency=medium
+spirv-llvm-translator-17 (17.0.0-1) UNRELEASED; urgency=medium
 
+  * New upstream release.
   * Fork source package as spirv-llvm-translator-17.
   * Rename binary packages: *16* => *17*.
 
- -- Andreas Beckmann <anbe@debian.org>  Sun, 24 Sep 2023 00:36:48 +0200
+ -- Andreas Beckmann <anbe@debian.org>  Sun, 24 Sep 2023 02:33:13 +0200
 
 spirv-llvm-translator-16 (16.0.0-5) unstable; urgency=medium
 
