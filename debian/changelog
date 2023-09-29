@@ -1,9 +1,9 @@
-spirv-llvm-translator-16 (16.0.0-5) UNRELEASED; urgency=medium
+spirv-llvm-translator-16 (16.0.0-5) unstable; urgency=medium
 
   * Restrict watch file to 16.* releases.
   * Update .symbols control file.
 
- -- Andreas Beckmann <anbe@debian.org>  Sun, 24 Sep 2023 00:36:48 +0200
+ -- Andreas Beckmann <anbe@debian.org>  Fri, 29 Sep 2023 14:21:37 +0200
 
 spirv-llvm-translator-16 (16.0.0-4) unstable; urgency=medium
 
