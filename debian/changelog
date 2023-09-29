@@ -1,6 +1,7 @@
 spirv-llvm-translator-16 (16.0.0-5) UNRELEASED; urgency=medium
 
   * Restrict watch file to 16.* releases.
+  * Update .symbols control file.
 
  -- Andreas Beckmann <anbe@debian.org>  Sun, 24 Sep 2023 00:36:48 +0200
 
