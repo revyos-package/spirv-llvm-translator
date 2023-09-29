@@ -898,6 +898,8 @@ SPIRAddressSpace getOCLOpaqueTypeAddrSpace(Op OpCode) {
   case OpTypeSampler:
     return SPIRV_SAMPLER_T_ADDR_SPACE;
   case internal::OpTypeJointMatrixINTEL:
+  case internal::OpTypeJointMatrixINTELv2:
+  case OpTypeCooperativeMatrixKHR:
     return SPIRAS_Global;
   default:
     if (isSubgroupAvcINTELTypeOpCode(OpCode))
@@ -1328,36 +1330,13 @@ std::unique_ptr<SPIRV::BuiltinFuncMangleInfo> makeMangler(Function &F) {
   return std::make_unique<OCLBuiltinFuncMangleInfo>(&F);
 }
 
-static StringRef getStructName(Type *Ty) {
-  if (auto *STy = dyn_cast<StructType>(Ty))
-    return STy->isLiteral() ? "" : Ty->getStructName();
-  return "";
-}
-
-Value *unwrapSpecialTypeInitializer(Value *V) {
-  if (auto *BC = dyn_cast<BitCastOperator>(V)) {
-    Type *DestTy = BC->getDestTy();
-    Type *SrcTy = BC->getSrcTy();
-    if (SrcTy->isPointerTy() && !SrcTy->isOpaquePointerTy()) {
-      StringRef SrcName =
-          getStructName(SrcTy->getNonOpaquePointerElementType());
-      StringRef DestName =
-          getStructName(DestTy->getNonOpaquePointerElementType());
-      if (DestName == getSPIRVTypeName(kSPIRVTypeName::PipeStorage) &&
-          SrcName == getSPIRVTypeName(kSPIRVTypeName::ConstantPipeStorage))
-        return BC->getOperand(0);
-      if (DestName == getSPIRVTypeName(kSPIRVTypeName::Sampler) &&
-          SrcName == getSPIRVTypeName(kSPIRVTypeName::ConstantSampler))
-        return BC->getOperand(0);
-    }
-  }
-  return nullptr;
-}
-
 bool isSamplerTy(Type *Ty) {
   if (auto *TPT = dyn_cast_or_null<TypedPointerType>(Ty)) {
     auto *STy = dyn_cast_or_null<StructType>(TPT->getElementType());
     return STy && STy->hasName() && STy->getName() == kSPR2TypeName::Sampler;
+  }
+  if (auto *TET = dyn_cast_or_null<TargetExtType>(Ty)) {
+    return TET->getName() == "spirv.Sampler";
   }
   return false;
 }

@@ -413,6 +413,17 @@ bool SPIRVRegularizeLLVMBase::regularize() {
           if (isa<PossiblyExactOperator>(BO) && BO->isExact())
             BO->setIsExact(false);
         }
+
+        // FIXME: This is not valid handling for freeze instruction
+        if (auto *FI = dyn_cast<FreezeInst>(&II)) {
+          auto *V = FI->getOperand(0);
+          if (isa<UndefValue>(V))
+            V = Constant::getNullValue(V->getType());
+          FI->replaceAllUsesWith(V);
+          FI->dropAllReferences();
+          ToErase.push_back(FI);
+        }
+
         // Remove metadata not supported by SPIRV
         static const char *MDs[] = {
             "fpmath",
@@ -422,31 +433,6 @@ bool SPIRVRegularizeLLVMBase::regularize() {
         for (auto &MDName : MDs) {
           if (II.getMetadata(MDName)) {
             II.setMetadata(MDName, nullptr);
-          }
-        }
-        // Add an additional bitcast in case address space cast also changes
-        // pointer element type.
-        if (auto *ASCast = dyn_cast<AddrSpaceCastInst>(&II)) {
-          Type *DestTy = ASCast->getDestTy();
-          Type *SrcTy = ASCast->getSrcTy();
-          if (!II.getContext().supportsTypedPointers())
-            continue;
-          if (DestTy->getScalarType()->getNonOpaquePointerElementType() !=
-              SrcTy->getScalarType()->getNonOpaquePointerElementType()) {
-            Type *InterTy = PointerType::getWithSamePointeeType(
-                cast<PointerType>(DestTy->getScalarType()),
-                cast<PointerType>(SrcTy->getScalarType())
-                    ->getPointerAddressSpace());
-            if (DestTy->isVectorTy())
-              InterTy = VectorType::get(
-                  InterTy, cast<VectorType>(DestTy)->getElementCount());
-            BitCastInst *NewBCast = new BitCastInst(
-                ASCast->getPointerOperand(), InterTy, /*NameStr=*/"", ASCast);
-            AddrSpaceCastInst *NewASCast =
-                new AddrSpaceCastInst(NewBCast, DestTy, /*NameStr=*/"", ASCast);
-            ToErase.push_back(ASCast);
-            ASCast->dropAllReferences();
-            ASCast->replaceAllUsesWith(NewASCast);
           }
         }
         if (auto Cmpxchg = dyn_cast<AtomicCmpXchgInst>(&II)) {

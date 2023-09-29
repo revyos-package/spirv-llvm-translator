@@ -115,6 +115,9 @@ SPIRVType *SPIRVType::getVectorComponentType() const {
     return static_cast<const SPIRVTypeVector *>(this)->getComponentType();
   if (OpCode == internal::OpTypeJointMatrixINTEL)
     return static_cast<const SPIRVTypeJointMatrixINTEL *>(this)->getCompType();
+  if (OpCode == OpTypeCooperativeMatrixKHR)
+    return static_cast<const SPIRVTypeCooperativeMatrixKHR *>(this)
+        ->getCompType();
   assert(0 && "getVectorComponentType(): Not a vector or joint matrix type");
   return nullptr;
 }
@@ -156,7 +159,7 @@ bool SPIRVType::isTypeBool() const { return OpCode == OpTypeBool; }
 
 bool SPIRVType::isTypeComposite() const {
   return isTypeVector() || isTypeArray() || isTypeStruct() ||
-         isTypeJointMatrixINTEL();
+         isTypeJointMatrixINTEL() || isTypeCooperativeMatrixKHR();
 }
 
 bool SPIRVType::isTypeFloat(unsigned Bits) const {
@@ -199,7 +202,12 @@ bool SPIRVType::isTypeStruct() const { return OpCode == OpTypeStruct; }
 bool SPIRVType::isTypeVector() const { return OpCode == OpTypeVector; }
 
 bool SPIRVType::isTypeJointMatrixINTEL() const {
-  return OpCode == internal::OpTypeJointMatrixINTEL;
+  return OpCode == internal::OpTypeJointMatrixINTEL ||
+         OpCode == internal::OpTypeJointMatrixINTELv2;
+}
+
+bool SPIRVType::isTypeCooperativeMatrixKHR() const {
+  return OpCode == OpTypeCooperativeMatrixKHR;
 }
 
 bool SPIRVType::isTypeVectorBool() const {
@@ -279,13 +287,20 @@ void SPIRVTypeForwardPointer::decode(std::istream &I) {
 }
 
 SPIRVTypeJointMatrixINTEL::SPIRVTypeJointMatrixINTEL(
-    SPIRVModule *M, SPIRVId TheId, SPIRVType *CompType,
+    SPIRVModule *M, SPIRVId TheId, Op OC, SPIRVType *CompType,
     std::vector<SPIRVValue *> Args)
     : SPIRVType(M, FixedWC + Args.size(), OC, TheId), CompType(CompType),
-      Args(Args) {}
+      Args(std::move(Args)) {}
+
+SPIRVTypeJointMatrixINTEL::SPIRVTypeJointMatrixINTEL(
+    SPIRVModule *M, SPIRVId TheId, SPIRVType *CompType,
+    std::vector<SPIRVValue *> Args)
+    : SPIRVType(M, FixedWC + Args.size(), internal::OpTypeJointMatrixINTEL,
+                TheId),
+      CompType(CompType), Args(std::move(Args)) {}
 
 SPIRVTypeJointMatrixINTEL::SPIRVTypeJointMatrixINTEL()
-    : SPIRVType(OC), CompType(nullptr),
+    : SPIRVType(internal::OpTypeJointMatrixINTEL), CompType(nullptr),
       Args({nullptr, nullptr, nullptr, nullptr}) {}
 
 void SPIRVTypeJointMatrixINTEL::encode(spv_ostream &O) const {
@@ -294,6 +309,26 @@ void SPIRVTypeJointMatrixINTEL::encode(spv_ostream &O) const {
 }
 
 void SPIRVTypeJointMatrixINTEL::decode(std::istream &I) {
+  auto Decoder = getDecoder(I);
+  Decoder >> Id >> CompType >> Args;
+}
+
+SPIRVTypeCooperativeMatrixKHR::SPIRVTypeCooperativeMatrixKHR(
+    SPIRVModule *M, SPIRVId TheId, SPIRVType *CompType,
+    std::vector<SPIRVValue *> Args)
+    : SPIRVType(M, FixedWC, OpTypeCooperativeMatrixKHR, TheId),
+      CompType(CompType), Args(std::move(Args)) {}
+
+SPIRVTypeCooperativeMatrixKHR::SPIRVTypeCooperativeMatrixKHR()
+    : SPIRVType(OpTypeCooperativeMatrixKHR), CompType(nullptr),
+      Args({nullptr, nullptr, nullptr, nullptr}) {}
+
+void SPIRVTypeCooperativeMatrixKHR::encode(spv_ostream &O) const {
+  auto Encoder = getEncoder(O);
+  Encoder << Id << CompType << Args;
+}
+
+void SPIRVTypeCooperativeMatrixKHR::decode(std::istream &I) {
   auto Decoder = getDecoder(I);
   Decoder >> Id >> CompType >> Args;
 }
