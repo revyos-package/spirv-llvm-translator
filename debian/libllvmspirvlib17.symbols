@@ -480,10 +480,10 @@ libLLVMSPIRVLib.so.17 #PACKAGE# #MINVER#
  _ZTSSt19_Sp_make_shared_tag@Base 13
  (optional=templinst|arch=armel riscv64)_ZTSSt23_Sp_counted_ptr_inplaceINSt8__detail4_NFAINSt7__cxx1112regex_traitsIcEEEESaIvELN9__gnu_cxx12_Lock_policyE1EE@Base 13
  (optional=templinst|arch=!armel !riscv64)_ZTSSt23_Sp_counted_ptr_inplaceINSt8__detail4_NFAINSt7__cxx1112regex_traitsIcEEEESaIvELN9__gnu_cxx12_Lock_policyE2EE@Base 13
- _ZTVN4llvm3Any11StorageBaseE@Base 17
+ (optional=lto)_ZTVN4llvm3Any11StorageBaseE@Base 17
  (optional=lto)_ZTVN4llvm3Any11StorageImplIPKNS_6ModuleEEE@Base 16
- (arch=riscv64)_ZTVSt16_Sp_counted_baseILN9__gnu_cxx12_Lock_policyE1EE@Base 17
- (arch=!riscv64)_ZTVSt16_Sp_counted_baseILN9__gnu_cxx12_Lock_policyE2EE@Base 17
+ (optional=lto|arch=riscv64)_ZTVSt16_Sp_counted_baseILN9__gnu_cxx12_Lock_policyE1EE@Base 17
+ (optional=lto|arch=!riscv64)_ZTVSt16_Sp_counted_baseILN9__gnu_cxx12_Lock_policyE2EE@Base 17
  (optional=templinst|arch=armel riscv64)_ZTVSt23_Sp_counted_ptr_inplaceINSt8__detail4_NFAINSt7__cxx1112regex_traitsIcEEEESaIvELN9__gnu_cxx12_Lock_policyE1EE@Base 0
  (optional=templinst|arch=!armel !riscv64)_ZTVSt23_Sp_counted_ptr_inplaceINSt8__detail4_NFAINSt7__cxx1112regex_traitsIcEEEESaIvELN9__gnu_cxx12_Lock_policyE2EE@Base 0
  (optional=templinst)_ZZNKSt7__cxx1112regex_traitsIcE16lookup_classnameIPKcEENS1_10_RegexMaskET_S6_bE12__classnames@Base 0
