@@ -1,10 +1,10 @@
-spirv-llvm-translator-17 (17.0.0-3) UNRELEASED; urgency=medium
+spirv-llvm-translator-17 (17.0.0-3) unstable; urgency=medium
 
   [ Gianfranco Costamagna ]
   * Mark some new symbols as optional as they don't appear with LTO.
     (Closes: #1055378)
 
- -- Andreas Beckmann <anbe@debian.org>  Tue, 07 Nov 2023 09:41:28 +0100
+ -- Andreas Beckmann <anbe@debian.org>  Tue, 07 Nov 2023 09:53:24 +0100
 
 spirv-llvm-translator-17 (17.0.0-2) unstable; urgency=medium
 
