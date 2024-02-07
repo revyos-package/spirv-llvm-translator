@@ -1,7 +1,8 @@
 From cce9a2f130070d799000cac42fe24789d2b777ab Mon Sep 17 00:00:00 2001
 From: Sven van Haastregt <sven.vanhaastregt@arm.com>
 Date: Wed, 15 Jun 2022 15:46:45 +0100
-Subject: [PATCH 58/71] [CMake] Enable LLVM_BUILD_TOOLS for out-of-tree builds
+Subject: [PATCH 058/172] [CMake] Enable LLVM_BUILD_TOOLS for out-of-tree
+ builds
 
 This ensures the llvm-spirv tool is added to the "all" target, so that
 it is included when installing the project.

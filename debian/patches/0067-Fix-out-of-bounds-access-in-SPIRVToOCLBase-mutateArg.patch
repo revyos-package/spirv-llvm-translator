@@ -1,0 +1,38 @@
+From 2e9f1262688462caf5035d73e6b60b0749eaef80 Mon Sep 17 00:00:00 2001
+From: Daniel Woodworth <daniel.woodworth@intel.com>
+Date: Wed, 13 Jul 2022 17:07:29 -0400
+Subject: [PATCH 067/172] Fix out of bounds access in
+ SPIRVToOCLBase::mutateArgsForImageOperands
+
+When called from visitCallSPIRVImageReadBuiltIn, Args only has three
+elements and ImOpArgIndex is 2. This has been causing this function to
+"update" an argument past the end of the vector, which caused a crash
+when running transcoding/image_signedness.ll on Windows because the
+debug build in Windows has bounds checking on std::vector.
+
+With this change, it should update the correct (and not past the end)
+argument instead and satisfy the Windows bounds checks.
+
+(cherry picked from commit 6904b388c1a115dbb634b9a194091af84e191a39)
+---
+ lib/SPIRV/SPIRVToOCL.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/lib/SPIRV/SPIRVToOCL.cpp b/lib/SPIRV/SPIRVToOCL.cpp
+index 884ddb54..7711d73c 100644
+--- a/lib/SPIRV/SPIRVToOCL.cpp
++++ b/lib/SPIRV/SPIRVToOCL.cpp
+@@ -785,8 +785,8 @@ void SPIRVToOCLBase::mutateArgsForImageOperands(std::vector<Value *> &Args,
+       if (ImOpValue & ImageOperandsMask::ImageOperandsZeroExtendMask)
+         IsSigned = false;
+       ImOpValue &= ~SignZeroExtMasks;
+-      Args[3] = getInt32(M, ImOpValue);
+-      ImOp = cast<ConstantInt>(Args[3]);
++      Args[ImOpArgIndex] = getInt32(M, ImOpValue);
++      ImOp = cast<ConstantInt>(Args[ImOpArgIndex]);
+     }
+     // Drop "Image Operands" argument.
+     Args.erase(Args.begin() + ImOpArgIndex);
+-- 
+2.20.1
+

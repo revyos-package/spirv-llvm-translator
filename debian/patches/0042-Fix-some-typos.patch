@@ -1,7 +1,7 @@
 From a4ca777cdfc7e2294595708f325d90c8c664641c Mon Sep 17 00:00:00 2001
 From: Sven van Haastregt <sven.vanhaastregt@arm.com>
 Date: Tue, 31 May 2022 15:04:59 +0100
-Subject: [PATCH 42/71] Fix some typos
+Subject: [PATCH 042/172] Fix some typos
 
 (cherry picked from commit 24c5671d54f899f159047779097865822ea302c5)
 ---

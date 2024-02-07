@@ -1,0 +1,76 @@
+From 56300a9abbb7ef4efc3192ca2c3604802eab5b99 Mon Sep 17 00:00:00 2001
+From: Sven van Haastregt <sven.vanhaastregt@arm.com>
+Date: Mon, 8 Aug 2022 21:13:33 +0100
+Subject: [PATCH 069/172] Restore argument tracing in OCLTypeToSPIRV
+
+Commit 4a9c78ee ("Prepare SPIRVWriter for type conversion without
+opaque pointers. (#1499)", 2022-06-20) removed `getArgIndex` in favor
+of passing `Idx`, but this leads to incorrect adaptation of argument
+types if sampler arguments are not in the same position between
+different functions.
+
+We might be able to drop `adaptArgumentsBySamplerUse` entirely, as we
+don't represent samplers as i32 anymore; but for now just fix the
+regression.
+
+Fixes https://github.com/KhronosGroup/SPIRV-LLVM-Translator/issues/1562
+
+(cherry picked from commit 87f8a58252ff91a75c524362f3dd4d452872108e)
+---
+ lib/SPIRV/OCLTypeToSPIRV.cpp    |  2 +-
+ test/image-user-sampler-args.ll | 30 ++++++++++++++++++++++++++++++
+ 2 files changed, 31 insertions(+), 1 deletion(-)
+ create mode 100644 test/image-user-sampler-args.ll
+
+diff --git a/lib/SPIRV/OCLTypeToSPIRV.cpp b/lib/SPIRV/OCLTypeToSPIRV.cpp
+index 80e9c399..8881d367 100644
+--- a/lib/SPIRV/OCLTypeToSPIRV.cpp
++++ b/lib/SPIRV/OCLTypeToSPIRV.cpp
+@@ -184,7 +184,7 @@ void OCLTypeToSPIRVBase::adaptArgumentsBySamplerUse(Module &M) {
+       addAdaptedType(SamplerArg, getSamplerStructType(&M), SPIRAS_Constant);
+       auto Caller = cast<Argument>(SamplerArg)->getParent();
+       addWork(Caller);
+-      TraceArg(Caller, Idx);
++      TraceArg(Caller, cast<Argument>(SamplerArg)->getArgNo());
+     }
+   };
+ 
+diff --git a/test/image-user-sampler-args.ll b/test/image-user-sampler-args.ll
+new file mode 100644
+index 00000000..07790125
+--- /dev/null
++++ b/test/image-user-sampler-args.ll
+@@ -0,0 +1,30 @@
++; RUN: llvm-as %s -o %t.bc
++; RUN: llvm-spirv %t.bc
++; RUN: spirv-val %t.spv
++
++target datalayout = "e-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024"
++target triple = "spirv64"
++
++%opencl.image2d_ro_t = type opaque
++%opencl.sampler_t = type opaque
++
++define internal spir_func <4 x float> @user_fn(%opencl.image2d_ro_t addrspace(1)* %I, %opencl.sampler_t addrspace(2)* %S, <2 x float> %Pos) {
++entry:
++  %call = tail call spir_func <4 x float> @_Z11read_imagef14ocl_image2d_ro11ocl_samplerDv2_f(%opencl.image2d_ro_t addrspace(1)* %I, %opencl.sampler_t addrspace(2)* %S, <2 x float> noundef %Pos) #0
++  ret <4 x float> %call
++}
++
++declare spir_func <4 x float> @_Z11read_imagef14ocl_image2d_ro11ocl_samplerDv2_f(%opencl.image2d_ro_t addrspace(1)*, %opencl.sampler_t addrspace(2)*, <2 x float>) local_unnamed_addr
++
++define hidden spir_kernel void @kernel_fn(float addrspace(1)* %0, %opencl.image2d_ro_t addrspace(1)* %1, %opencl.sampler_t addrspace(2)* %2, i32 %3, i32 %4) local_unnamed_addr {
++entry:
++  %5 = call spir_func <4 x float> @user_fn(%opencl.image2d_ro_t addrspace(1)* %1, %opencl.sampler_t addrspace(2)* %2, <2 x float> undef)
++  %add16 = add nsw i32 undef, undef
++  ret void
++}
++
++attributes #0 = { convergent nounwind readonly willreturn }
++
++!opencl.ocl.version = !{!0}
++
++!0 = !{i32 2, i32 0}
+-- 
+2.20.1
+

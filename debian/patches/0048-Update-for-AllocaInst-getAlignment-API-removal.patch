@@ -1,0 +1,29 @@
+From 7882487b1545f2f797e51587074cbf41ec0a1ba7 Mon Sep 17 00:00:00 2001
+From: Sven van Haastregt <sven.vanhaastregt@arm.com>
+Date: Tue, 14 Jun 2022 12:49:08 +0100
+Subject: [PATCH 048/172] Update for AllocaInst::getAlignment API removal
+
+Update for LLVM commit b4cf74dc9e85 ("[NFC] Remove dead code",
+2022-06-14) which removed the getAlignment method.
+
+(cherry picked from commit 1c435a82c1b6a3f3570bbdb67d23c878bb779670)
+---
+ lib/SPIRV/SPIRVWriter.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
+index 807df1a0..207194f8 100644
+--- a/lib/SPIRV/SPIRVWriter.cpp
++++ b/lib/SPIRV/SPIRVWriter.cpp
+@@ -2362,7 +2362,7 @@ bool LLVMToSPIRVBase::transDecoration(Value *V, SPIRVValue *BV) {
+ 
+ bool LLVMToSPIRVBase::transAlign(Value *V, SPIRVValue *BV) {
+   if (auto AL = dyn_cast<AllocaInst>(V)) {
+-    BM->setAlignment(BV, AL->getAlignment());
++    BM->setAlignment(BV, AL->getAlign().value());
+     return true;
+   }
+   if (auto GV = dyn_cast<GlobalVariable>(V)) {
+-- 
+2.20.1
+

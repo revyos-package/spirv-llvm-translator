@@ -1,0 +1,87 @@
+From 582a3024c0c2d624a40fa2731d74b2c9ca3b94ab Mon Sep 17 00:00:00 2001
+From: "Maksimova, Viktoria" <viktoria.maksimova@intel.com>
+Date: Thu, 11 Jan 2024 06:06:49 -0800
+Subject: [PATCH 167/172] Fix GEP generation
+
+---
+ lib/SPIRV/SPIRVReader.cpp                      |  4 ++--
+ ...mposite_construct_array_non_constant.spvasm | 18 +++++++++---------
+ ...composite_construct_struct_non_constant.spt | 10 +++++-----
+ 3 files changed, 16 insertions(+), 16 deletions(-)
+
+diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
+index 388f36fc..8d223a07 100644
+--- a/lib/SPIRV/SPIRVReader.cpp
++++ b/lib/SPIRV/SPIRVReader.cpp
+@@ -2176,7 +2176,7 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
+       // store the result of argument
+       for (size_t I = 0; I < Constituents.size(); I++) {
+         auto *GEP = GetElementPtrInst::Create(
+-            Constituents[I]->getType(), Alloca, {getInt32(M, I)}, "gep", BB);
++            AT, Alloca, {getInt32(M, 0), getInt32(M, I)}, "gep", BB);
+         GEP->setIsInBounds(true);
+         new StoreInst(Constituents[I], GEP, false, BB);
+       }
+@@ -2195,7 +2195,7 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
+       // store the result of argument
+       for (size_t I = 0; I < Constituents.size(); I++) {
+         auto *GEP = GetElementPtrInst::Create(
+-            Constituents[I]->getType(), Alloca, {getInt32(M, I)}, "gep", BB);
++            ST, Alloca, {getInt32(M, 0), getInt32(M, I)}, "gep", BB);
+         GEP->setIsInBounds(true);
+         new StoreInst(Constituents[I], GEP, false, BB);
+       }
+diff --git a/test/composite_construct_array_non_constant.spvasm b/test/composite_construct_array_non_constant.spvasm
+index 33a72fb0..83bff13d 100644
+--- a/test/composite_construct_array_non_constant.spvasm
++++ b/test/composite_construct_array_non_constant.spvasm
+@@ -7,16 +7,16 @@
+ 
+ ; CHECK: define spir_func [4 x i8] @non_constant_array_elements(i8 %[[#ARG0:]], i8 %[[#ARG1:]])
+ ; CHECK: %[[#ArrayPtr:]] = alloca [4 x i8]
+-; CHECK: %[[GEP:[0-9a-z.]+]] = getelementptr inbounds i8, ptr %[[#ArrayPtr]], i32 0
+-; CHECK: store i8 %[[#ARG1]], ptr %[[GEP]]
+-; CHECK: %[[GEP1:[0-9a-z.]+]] = getelementptr inbounds i8, ptr %[[#ArrayPtr]], i32 1
+-; CHECK: store i8 %[[#ARG0]], ptr %[[GEP1]]
+-; CHECK: %[[GEP2:[0-9a-z.]+]] = getelementptr inbounds i8, ptr %[[#ArrayPtr]], i32 2
+-; CHECK: store i8 0, ptr %[[GEP2]]
+-; CHECK: %[[GEP3:[0-9a-z.]+]] = getelementptr inbounds i8, ptr %[[#ArrayPtr]], i32 3
+-; CHECK: store i8 10, ptr %[[GEP3]]
++; CHECK: %[[GEP:[0-9a-z.]+]] = getelementptr inbounds [4 x i8], [4 x i8]* %[[#ArrayPtr]], i32 0, i32 0
++; CHECK: store i8 %[[#ARG1]], i8* %[[GEP]]
++; CHECK: %[[GEP1:[0-9a-z.]+]] = getelementptr inbounds [4 x i8], [4 x i8]* %[[#ArrayPtr]], i32 0, i32 1
++; CHECK: store i8 %[[#ARG0]], i8* %[[GEP1]]
++; CHECK: %[[GEP2:[0-9a-z.]+]] = getelementptr inbounds [4 x i8], [4 x i8]* %[[#ArrayPtr]], i32 0, i32 2
++; CHECK: store i8 0, i8* %[[GEP2]]
++; CHECK: %[[GEP3:[0-9a-z.]+]] = getelementptr inbounds [4 x i8], [4 x i8]* %[[#ArrayPtr]], i32 0, i32 3
++; CHECK: store i8 10, i8* %[[GEP3]]
+ 
+-; CHECK: %[[LoadArr:[0-9a-z.]+]] = load [4 x i8], ptr %[[#ArrayPtr]]
++; CHECK: %[[LoadArr:[0-9a-z.]+]] = load [4 x i8], [4 x i8]* %[[#ArrayPtr]]
+ ; CHECK: ret [4 x i8] %[[LoadArr]]
+ 
+ ; SPIR-V
+diff --git a/test/composite_construct_struct_non_constant.spt b/test/composite_construct_struct_non_constant.spt
+index 6a702966..69a204b4 100644
+--- a/test/composite_construct_struct_non_constant.spt
++++ b/test/composite_construct_struct_non_constant.spt
+@@ -6,11 +6,11 @@
+ 
+ ; CHECK: %[[StructTy:[0-9a-z.]+]] = type { float, i32 }
+ ; CHECK: %[[#StructPtr:]] = alloca %[[StructTy]]
+-; CHECK: %[[GEP:[0-9a-z.]+]] = getelementptr inbounds float, ptr %[[#StructPtr]], i32 0
+-; CHECK: store float %[[#]], ptr %[[GEP]]
+-; CHECK: %[[GEP1:[0-9a-z.]+]] = getelementptr inbounds i32, ptr %[[#StructPtr]], i32 1
+-; CHECK: store i32 %[[#]], ptr %[[GEP1]]
+-; CHECK: %[[LoadStr:[0-9a-z.]+]] = load %[[StructTy]], ptr %[[#StructPtr]]
++; CHECK: %[[GEP:[0-9a-z.]+]] = getelementptr inbounds %[[StructTy]], %[[StructTy]]* %[[#StructPtr]], i32 0, i32 0
++; CHECK: store float %[[#]], float* %[[GEP]]
++; CHECK: %[[GEP1:[0-9a-z.]+]] = getelementptr inbounds %[[StructTy]], %[[StructTy]]* %[[#StructPtr]], i32 0, i32 1
++; CHECK: store i32 %[[#]], i32* %[[GEP1]]
++; CHECK: %[[LoadStr:[0-9a-z.]+]] = load %[[StructTy]], %[[StructTy]]* %[[#StructPtr]]
+ ; CHECK: ret %[[StructTy]] %[[LoadStr]]
+ 
+ 119734787 65536 393230 23 0
+-- 
+2.20.1
+

@@ -1,0 +1,28 @@
+From 5522abe9f2ccfb08ba9d96824abf5a610815ffe7 Mon Sep 17 00:00:00 2001
+From: Sven van Haastregt <sven.vanhaastregt@arm.com>
+Date: Thu, 19 May 2022 10:58:40 +0100
+Subject: [PATCH 036/172] [NFC] Avoid excess runs of OCLTypeToSPIRV
+
+OCLTypeToSPIRV is an analysis required by other passes, so we don't
+need to run it explicitly.
+
+(cherry picked from commit 3cbf128f157eb82ac7eced76029842beff7bd828)
+---
+ lib/SPIRV/SPIRVWriter.cpp | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
+index 2ff0877e..990ea982 100644
+--- a/lib/SPIRV/SPIRVWriter.cpp
++++ b/lib/SPIRV/SPIRVWriter.cpp
+@@ -5036,7 +5036,6 @@ void addPassesForSPIRV(legacy::PassManager &PassMgr,
+   if (Opts.isSPIRVMemToRegEnabled())
+     PassMgr.add(createPromoteMemoryToRegisterPass());
+   PassMgr.add(createPreprocessMetadataLegacy());
+-  PassMgr.add(createOCLTypeToSPIRVLegacy());
+   PassMgr.add(createSPIRVLowerOCLBlocksLegacy());
+   PassMgr.add(createOCLToSPIRVLegacy());
+   PassMgr.add(createSPIRVRegularizeLLVMLegacy());
+-- 
+2.20.1
+

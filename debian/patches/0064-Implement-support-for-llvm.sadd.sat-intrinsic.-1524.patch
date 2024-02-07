@@ -1,0 +1,561 @@
+From af7b7867e11d5939a27493c0d40f8d49f98f218d Mon Sep 17 00:00:00 2001
+From: Joshua Cranmer <joshua.cranmer@intel.com>
+Date: Fri, 8 Jul 2022 06:24:24 -0400
+Subject: [PATCH 064/172] Implement support for @llvm.sadd.sat intrinsic.
+ (#1524)
+
+* Implement support for @llvm.sadd.sat intrinsic.
+* Rename LowerSaddWithOverflow to LowerSaddIntrinsics.
+
+(cherry picked from commit 0af7e643bb8eb4c94ef336ef0f4ae3a10321e763)
+---
+ include/LLVMSPIRVLib.h                        |   4 +-
+ lib/SPIRV/CMakeLists.txt                      |   2 +-
+ lib/SPIRV/SPIRVLowerSaddIntrinsics.cpp        | 192 ++++++++++++++++++
+ ...hOverflow.h => SPIRVLowerSaddIntrinsics.h} |  33 ++-
+ lib/SPIRV/SPIRVLowerSaddWithOverflow.cpp      | 149 --------------
+ lib/SPIRV/SPIRVWriter.cpp                     |   4 +-
+ test/llvm-intrinsics/sadd.sat.ll              |  42 ++++
+ 7 files changed, 255 insertions(+), 171 deletions(-)
+ create mode 100644 lib/SPIRV/SPIRVLowerSaddIntrinsics.cpp
+ rename lib/SPIRV/{SPIRVLowerSaddWithOverflow.h => SPIRVLowerSaddIntrinsics.h} (71%)
+ delete mode 100644 lib/SPIRV/SPIRVLowerSaddWithOverflow.cpp
+ create mode 100644 test/llvm-intrinsics/sadd.sat.ll
+
+diff --git a/include/LLVMSPIRVLib.h b/include/LLVMSPIRVLib.h
+index b935a6ea..c6723b4f 100644
+--- a/include/LLVMSPIRVLib.h
++++ b/include/LLVMSPIRVLib.h
+@@ -57,7 +57,7 @@ void initializeSPIRVLowerBoolLegacyPass(PassRegistry &);
+ void initializeSPIRVLowerConstExprLegacyPass(PassRegistry &);
+ void initializeSPIRVLowerOCLBlocksLegacyPass(PassRegistry &);
+ void initializeSPIRVLowerMemmoveLegacyPass(PassRegistry &);
+-void initializeSPIRVLowerSaddWithOverflowLegacyPass(PassRegistry &);
++void initializeSPIRVLowerSaddIntrinsicsLegacyPass(PassRegistry &);
+ void initializeSPIRVRegularizeLLVMLegacyPass(PassRegistry &);
+ void initializeSPIRVToOCL12LegacyPass(PassRegistry &);
+ void initializeSPIRVToOCL20LegacyPass(PassRegistry &);
+@@ -183,7 +183,7 @@ ModulePass *createSPIRVLowerOCLBlocksLegacy();
+ ModulePass *createSPIRVLowerMemmoveLegacy();
+ 
+ /// Create a pass for lowering llvm.sadd.with.overflow
+-ModulePass *createSPIRVLowerSaddWithOverflowLegacy();
++ModulePass *createSPIRVLowerSaddIntrinsicsLegacy();
+ 
+ /// Create a pass for regularize LLVM module to be translated to SPIR-V.
+ ModulePass *createSPIRVRegularizeLLVMLegacy();
+diff --git a/lib/SPIRV/CMakeLists.txt b/lib/SPIRV/CMakeLists.txt
+index 9448b569..f5942881 100644
+--- a/lib/SPIRV/CMakeLists.txt
++++ b/lib/SPIRV/CMakeLists.txt
+@@ -14,7 +14,7 @@ add_llvm_library(LLVMSPIRVLib
+   SPIRVLowerConstExpr.cpp
+   SPIRVLowerMemmove.cpp
+   SPIRVLowerOCLBlocks.cpp
+-  SPIRVLowerSaddWithOverflow.cpp
++  SPIRVLowerSaddIntrinsics.cpp
+   SPIRVReader.cpp
+   SPIRVRegularizeLLVM.cpp
+   SPIRVToLLVMDbgTran.cpp
+diff --git a/lib/SPIRV/SPIRVLowerSaddIntrinsics.cpp b/lib/SPIRV/SPIRVLowerSaddIntrinsics.cpp
+new file mode 100644
+index 00000000..c414a149
+--- /dev/null
++++ b/lib/SPIRV/SPIRVLowerSaddIntrinsics.cpp
+@@ -0,0 +1,192 @@
++//===- SPIRVLowerSaddIntrinsics.cpp - Lower llvm.sadd.* -------------------===//
++//
++//                     The LLVM/SPIRV Translator
++//
++// This file is distributed under the University of Illinois Open Source
++// License. See LICENSE.TXT for details.
++//
++// Copyright (c) 2020 Intel Corporation. All rights reserved.
++//
++// Permission is hereby granted, free of charge, to any person obtaining a
++// copy of this software and associated documentation files (the "Software"),
++// to deal with the Software without restriction, including without limitation
++// the rights to use, copy, modify, merge, publish, distribute, sublicense,
++// and/or sell copies of the Software, and to permit persons to whom the
++// Software is furnished to do so, subject to the following conditions:
++//
++// Redistributions of source code must retain the above copyright notice,
++// this list of conditions and the following disclaimers.
++// Redistributions in binary form must reproduce the above copyright notice,
++// this list of conditions and the following disclaimers in the documentation
++// and/or other materials provided with the distribution.
++// Neither the names of Intel Corporation, nor the names of its
++// contributors may be used to endorse or promote products derived from this
++// Software without specific prior written permission.
++// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++// CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH
++// THE SOFTWARE.
++//
++//===----------------------------------------------------------------------===//
++//
++// This file implements lowering of llvm.sadd.* into basic LLVM
++// operations. Probably, in the future this pass can be generalized for other
++// function calls
++//
++//===----------------------------------------------------------------------===//
++#define DEBUG_TYPE "spv-lower-llvm_sadd_intrinsics"
++
++#include "SPIRVLowerSaddIntrinsics.h"
++#include "LLVMSaddWithOverflow.h"
++
++#include "LLVMSPIRVLib.h"
++#include "SPIRVError.h"
++#include "libSPIRV/SPIRVDebug.h"
++
++#include "llvm/IR/IRBuilder.h"
++#include "llvm/IR/IntrinsicInst.h"
++#include "llvm/IR/Module.h"
++#include "llvm/IRReader/IRReader.h"
++#include "llvm/Linker/Linker.h"
++#include "llvm/Support/SourceMgr.h"
++
++using namespace llvm;
++using namespace SPIRV;
++
++namespace SPIRV {
++
++void SPIRVLowerSaddIntrinsicsBase::replaceSaddOverflow(Function &F) {
++  assert(F.getIntrinsicID() == Intrinsic::sadd_with_overflow);
++
++  StringRef IntrinsicName = F.getName();
++  std::string FuncName = "llvm_sadd_with_overflow_i";
++  if (IntrinsicName.endswith(".i16"))
++    FuncName += "16";
++  else if (IntrinsicName.endswith(".i32"))
++    FuncName += "32";
++  else if (IntrinsicName.endswith(".i64"))
++    FuncName += "64";
++  else {
++    assert(false &&
++           "Unsupported overloading of llvm.sadd.with.overflow intrinsic");
++    return;
++  }
++
++  // Redirect @llvm.sadd.with.overflow.* call to the function we have in
++  // the loaded module @llvm_sadd_with_overflow_*
++  Function *ReplacementFunc = Mod->getFunction(FuncName);
++  if (!ReplacementFunc) { // This function needs linking.
++    Mod->getOrInsertFunction(FuncName, F.getFunctionType());
++    // Read LLVM IR with the intrinsic's implementation
++    SMDiagnostic Err;
++    auto MB = MemoryBuffer::getMemBuffer(LLVMSaddWithOverflow);
++    auto SaddWithOverflowModule =
++        parseIR(MB->getMemBufferRef(), Err, *Context,
++                [&](StringRef) { return Mod->getDataLayoutStr(); });
++    if (!SaddWithOverflowModule) {
++      std::string ErrMsg;
++      raw_string_ostream ErrStream(ErrMsg);
++      Err.print("", ErrStream);
++      SPIRVErrorLog EL;
++      EL.checkError(false, SPIRVEC_InvalidLlvmModule, ErrMsg);
++      return;
++    }
++
++    // Link in the intrinsic's implementation.
++    if (!Linker::linkModules(*Mod, std::move(SaddWithOverflowModule),
++                             Linker::LinkOnlyNeeded))
++      TheModuleIsModified = true;
++
++    ReplacementFunc = Mod->getFunction(FuncName);
++    assert(ReplacementFunc && "How did we not link in the necessary function?");
++  }
++
++  F.replaceAllUsesWith(ReplacementFunc);
++}
++
++void SPIRVLowerSaddIntrinsicsBase::replaceSaddSat(Function &F) {
++  assert(F.getIntrinsicID() == Intrinsic::sadd_sat);
++
++  SmallVector<IntrinsicInst *, 4> Intrinsics;
++  for (User *U : F.users()) {
++    if (auto *II = dyn_cast<IntrinsicInst>(U))
++      Intrinsics.push_back(II);
++  }
++
++  // Get the corresponding sadd_with_overflow intrinsic for the sadd_sat.
++  Type *IntTy = F.getFunctionType()->getReturnType();
++  Function *SaddO =
++      Intrinsic::getDeclaration(Mod, Intrinsic::sadd_with_overflow, IntTy);
++
++  // Replace all uses of the intrinsic with equivalent code relying on
++  // sadd_with_overflow
++  IRBuilder<> Builder(F.getContext());
++  unsigned BitWidth = IntTy->getIntegerBitWidth();
++  Value *IntMin = Builder.getInt(APInt::getSignedMinValue(BitWidth));
++  Value *ShiftWidth = Builder.getIntN(BitWidth, BitWidth - 1);
++
++  for (IntrinsicInst *II : Intrinsics) {
++    Builder.SetInsertPoint(II);
++    // {res, overflow} = @llvm.sadd_with_overflow(a, b)
++    // sadd_sat(a, b) => overflow ? (res >> bitwidth) ^ intmin : res;
++    Value *StructRes =
++        Builder.CreateCall(SaddO, {II->getArgOperand(0), II->getArgOperand(1)});
++    Value *Sum = Builder.CreateExtractValue(StructRes, 0);
++    Value *Overflow = Builder.CreateExtractValue(StructRes, 1);
++    Value *OverflowedRes =
++        Builder.CreateXor(Builder.CreateAShr(Sum, ShiftWidth), IntMin);
++    Value *Result = Builder.CreateSelect(Overflow, OverflowedRes, Sum);
++    II->replaceAllUsesWith(Result);
++    II->eraseFromParent();
++  }
++
++  // Now replace the sadd_with_overflow intrinsic itself.
++  replaceSaddOverflow(*SaddO);
++}
++
++bool SPIRVLowerSaddIntrinsicsBase::runLowerSaddIntrinsics(Module &M) {
++  Context = &M.getContext();
++  Mod = &M;
++  for (Function &F : M) {
++    Intrinsic::ID IntrinId = F.getIntrinsicID();
++    if (IntrinId == Intrinsic::sadd_with_overflow)
++      replaceSaddOverflow(F);
++    else if (IntrinId == Intrinsic::sadd_sat)
++      replaceSaddSat(F);
++  }
++
++  verifyRegularizationPass(M, "SPIRVLowerSaddIntrinsics");
++  return TheModuleIsModified;
++}
++
++llvm::PreservedAnalyses
++SPIRVLowerSaddIntrinsicsPass::run(llvm::Module &M,
++                                  llvm::ModuleAnalysisManager &MAM) {
++  return runLowerSaddIntrinsics(M) ? llvm::PreservedAnalyses::none()
++                                   : llvm::PreservedAnalyses::all();
++}
++
++SPIRVLowerSaddIntrinsicsLegacy::SPIRVLowerSaddIntrinsicsLegacy()
++    : ModulePass(ID) {
++  initializeSPIRVLowerSaddIntrinsicsLegacyPass(
++      *PassRegistry::getPassRegistry());
++}
++
++bool SPIRVLowerSaddIntrinsicsLegacy::runOnModule(Module &M) {
++  return runLowerSaddIntrinsics(M);
++}
++
++char SPIRVLowerSaddIntrinsicsLegacy::ID = 0;
++
++} // namespace SPIRV
++
++INITIALIZE_PASS(SPIRVLowerSaddIntrinsicsLegacy,
++                "spv-lower-llvm_sadd_intrinsics",
++                "Lower llvm.sadd.* intrinsics", false, false)
++
++ModulePass *llvm::createSPIRVLowerSaddIntrinsicsLegacy() {
++  return new SPIRVLowerSaddIntrinsicsLegacy();
++}
+diff --git a/lib/SPIRV/SPIRVLowerSaddWithOverflow.h b/lib/SPIRV/SPIRVLowerSaddIntrinsics.h
+similarity index 71%
+rename from lib/SPIRV/SPIRVLowerSaddWithOverflow.h
+rename to lib/SPIRV/SPIRVLowerSaddIntrinsics.h
+index 32297517..01dc409d 100644
+--- a/lib/SPIRV/SPIRVLowerSaddWithOverflow.h
++++ b/lib/SPIRV/SPIRVLowerSaddIntrinsics.h
+@@ -1,4 +1,4 @@
+-//===- SPIRVLowerSaddWithOverflowBase.h - sadd lowering  --------*- C++ -*-===//
++//===- SPIRVLowerSaddIntrinsics.h - sadd lowering  --------------*- C++ -*-===//
+ //
+ //                     The LLVM/SPIR-V Translator
+ //
+@@ -32,42 +32,41 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
+-#ifndef SPIRV_SPIRVLOWERSADDWITHOVERFLOW_H
+-#define SPIRV_SPIRVLOWERSADDWITHOVERFLOW_H
++#ifndef SPIRV_SPIRVLOWERSADDINTRINSICS_H
++#define SPIRV_SPIRVLOWERSADDINTRINSICS_H
+ 
+-#include "llvm/IR/InstVisitor.h"
+ #include "llvm/IR/PassManager.h"
+ #include "llvm/Pass.h"
+ 
+ namespace SPIRV {
+ 
+-class SPIRVLowerSaddWithOverflowBase
+-    : public llvm::InstVisitor<SPIRVLowerSaddWithOverflowBase> {
++class SPIRVLowerSaddIntrinsicsBase {
+ public:
+-  SPIRVLowerSaddWithOverflowBase() : Context(nullptr), Mod(nullptr) {}
+-  virtual ~SPIRVLowerSaddWithOverflowBase() {}
+-  virtual void visitIntrinsicInst(llvm::CallInst &I);
++  SPIRVLowerSaddIntrinsicsBase() : Context(nullptr), Mod(nullptr) {}
+ 
+-  bool runLowerSaddWithOverflow(llvm::Module &M);
++  bool runLowerSaddIntrinsics(llvm::Module &M);
+ 
+ private:
++  void replaceSaddOverflow(llvm::Function &F);
++  void replaceSaddSat(llvm::Function &F);
++
+   llvm::LLVMContext *Context;
+   llvm::Module *Mod;
+   bool TheModuleIsModified = false;
+ };
+ 
+-class SPIRVLowerSaddWithOverflowPass
+-    : public llvm::PassInfoMixin<SPIRVLowerSaddWithOverflowPass>,
+-      public SPIRVLowerSaddWithOverflowBase {
++class SPIRVLowerSaddIntrinsicsPass
++    : public llvm::PassInfoMixin<SPIRVLowerSaddIntrinsicsPass>,
++      public SPIRVLowerSaddIntrinsicsBase {
+ public:
+   llvm::PreservedAnalyses run(llvm::Module &M,
+                               llvm::ModuleAnalysisManager &MAM);
+ };
+ 
+-class SPIRVLowerSaddWithOverflowLegacy : public llvm::ModulePass,
+-                                         public SPIRVLowerSaddWithOverflowBase {
++class SPIRVLowerSaddIntrinsicsLegacy : public llvm::ModulePass,
++                                       public SPIRVLowerSaddIntrinsicsBase {
+ public:
+-  SPIRVLowerSaddWithOverflowLegacy();
++  SPIRVLowerSaddIntrinsicsLegacy();
+ 
+   bool runOnModule(llvm::Module &M) override;
+ 
+@@ -76,4 +75,4 @@ public:
+ 
+ } // namespace SPIRV
+ 
+-#endif // SPIRV_SPIRVLOWERSADDWITHOVERFLOW_H
++#endif // SPIRV_SPIRVLOWERSADDINTRINSICS_H
+diff --git a/lib/SPIRV/SPIRVLowerSaddWithOverflow.cpp b/lib/SPIRV/SPIRVLowerSaddWithOverflow.cpp
+deleted file mode 100644
+index 3695b024..00000000
+--- a/lib/SPIRV/SPIRVLowerSaddWithOverflow.cpp
++++ /dev/null
+@@ -1,149 +0,0 @@
+-//===- SPIRVLowerSaddWithOverflow.cpp - Lower llvm.sadd.with.overflow -----===//
+-//
+-//                     The LLVM/SPIRV Translator
+-//
+-// This file is distributed under the University of Illinois Open Source
+-// License. See LICENSE.TXT for details.
+-//
+-// Copyright (c) 2020 Intel Corporation. All rights reserved.
+-//
+-// Permission is hereby granted, free of charge, to any person obtaining a
+-// copy of this software and associated documentation files (the "Software"),
+-// to deal with the Software without restriction, including without limitation
+-// the rights to use, copy, modify, merge, publish, distribute, sublicense,
+-// and/or sell copies of the Software, and to permit persons to whom the
+-// Software is furnished to do so, subject to the following conditions:
+-//
+-// Redistributions of source code must retain the above copyright notice,
+-// this list of conditions and the following disclaimers.
+-// Redistributions in binary form must reproduce the above copyright notice,
+-// this list of conditions and the following disclaimers in the documentation
+-// and/or other materials provided with the distribution.
+-// Neither the names of Intel Corporation, nor the names of its
+-// contributors may be used to endorse or promote products derived from this
+-// Software without specific prior written permission.
+-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+-// CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH
+-// THE SOFTWARE.
+-//
+-//===----------------------------------------------------------------------===//
+-//
+-// This file implements lowering of llvm.sadd.with.overflow.* into basic LLVM
+-// operations. Probably, in the future this pass can be generalized for other
+-// function calls
+-//
+-//===----------------------------------------------------------------------===//
+-#define DEBUG_TYPE "spv-lower-llvm_sadd_with_overflow"
+-
+-#include "SPIRVLowerSaddWithOverflow.h"
+-#include "LLVMSaddWithOverflow.h"
+-
+-#include "LLVMSPIRVLib.h"
+-#include "SPIRVError.h"
+-#include "libSPIRV/SPIRVDebug.h"
+-
+-#include "llvm/IR/InstVisitor.h"
+-#include "llvm/IR/IntrinsicInst.h"
+-#include "llvm/IR/Module.h"
+-#include "llvm/IRReader/IRReader.h"
+-#include "llvm/Linker/Linker.h"
+-#include "llvm/Support/SourceMgr.h"
+-
+-using namespace llvm;
+-using namespace SPIRV;
+-
+-namespace SPIRV {
+-
+-void SPIRVLowerSaddWithOverflowBase::visitIntrinsicInst(CallInst &I) {
+-  IntrinsicInst *II = dyn_cast<IntrinsicInst>(&I);
+-  if (!II || II->getIntrinsicID() != Intrinsic::sadd_with_overflow)
+-    return;
+-
+-  Function *IntrinsicFunc = I.getCalledFunction();
+-  assert(IntrinsicFunc && "Missing function");
+-  StringRef IntrinsicName = IntrinsicFunc->getName();
+-  std::string FuncName = "llvm_sadd_with_overflow_i";
+-  if (IntrinsicName.endswith(".i16"))
+-    FuncName += "16";
+-  else if (IntrinsicName.endswith(".i32"))
+-    FuncName += "32";
+-  else if (IntrinsicName.endswith(".i64"))
+-    FuncName += "64";
+-  else {
+-    assert(false &&
+-           "Unsupported overloading of llvm.sadd.with.overflow intrinsic");
+-    return;
+-  }
+-
+-  // Redirect @llvm.sadd.with.overflow.* call to the function we have in
+-  // the loaded module @llvm_sadd_with_overflow_*
+-  Function *F = Mod->getFunction(FuncName);
+-  if (F) { // This function is already linked in.
+-    I.setCalledFunction(F);
+-    return;
+-  }
+-  FunctionCallee FC = Mod->getOrInsertFunction(FuncName, I.getFunctionType());
+-  I.setCalledFunction(FC);
+-
+-  // Read LLVM IR with the intrinsic's implementation
+-  SMDiagnostic Err;
+-  auto MB = MemoryBuffer::getMemBuffer(LLVMSaddWithOverflow);
+-  auto SaddWithOverflowModule =
+-      parseIR(MB->getMemBufferRef(), Err, *Context,
+-              [&](StringRef) { return Mod->getDataLayoutStr(); });
+-  if (!SaddWithOverflowModule) {
+-    std::string ErrMsg;
+-    raw_string_ostream ErrStream(ErrMsg);
+-    Err.print("", ErrStream);
+-    SPIRVErrorLog EL;
+-    EL.checkError(false, SPIRVEC_InvalidLlvmModule, ErrMsg);
+-    return;
+-  }
+-
+-  // Link in the intrinsic's implementation.
+-  if (!Linker::linkModules(*Mod, std::move(SaddWithOverflowModule),
+-                           Linker::LinkOnlyNeeded))
+-    TheModuleIsModified = true;
+-}
+-
+-bool SPIRVLowerSaddWithOverflowBase::runLowerSaddWithOverflow(Module &M) {
+-  Context = &M.getContext();
+-  Mod = &M;
+-  visit(M);
+-
+-  verifyRegularizationPass(M, "SPIRVLowerSaddWithOverflow");
+-  return TheModuleIsModified;
+-}
+-
+-llvm::PreservedAnalyses
+-SPIRVLowerSaddWithOverflowPass::run(llvm::Module &M,
+-                                    llvm::ModuleAnalysisManager &MAM) {
+-  return runLowerSaddWithOverflow(M) ? llvm::PreservedAnalyses::none()
+-                                     : llvm::PreservedAnalyses::all();
+-}
+-
+-SPIRVLowerSaddWithOverflowLegacy::SPIRVLowerSaddWithOverflowLegacy()
+-    : ModulePass(ID) {
+-  initializeSPIRVLowerSaddWithOverflowLegacyPass(
+-      *PassRegistry::getPassRegistry());
+-}
+-
+-bool SPIRVLowerSaddWithOverflowLegacy::runOnModule(Module &M) {
+-  return runLowerSaddWithOverflow(M);
+-}
+-
+-char SPIRVLowerSaddWithOverflowLegacy::ID = 0;
+-
+-} // namespace SPIRV
+-
+-INITIALIZE_PASS(SPIRVLowerSaddWithOverflowLegacy,
+-                "spv-lower-llvm_sadd_with_overflow",
+-                "Lower llvm.sadd.with.overflow.* intrinsics", false, false)
+-
+-ModulePass *llvm::createSPIRVLowerSaddWithOverflowLegacy() {
+-  return new SPIRVLowerSaddWithOverflowLegacy();
+-}
+diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
+index bddb02b2..4b22128e 100644
+--- a/lib/SPIRV/SPIRVWriter.cpp
++++ b/lib/SPIRV/SPIRVWriter.cpp
+@@ -56,7 +56,7 @@
+ #include "SPIRVLowerConstExpr.h"
+ #include "SPIRVLowerMemmove.h"
+ #include "SPIRVLowerOCLBlocks.h"
+-#include "SPIRVLowerSaddWithOverflow.h"
++#include "SPIRVLowerSaddIntrinsics.h"
+ #include "SPIRVMDWalker.h"
+ #include "SPIRVMemAliasingINTEL.h"
+ #include "SPIRVModule.h"
+@@ -5154,7 +5154,7 @@ void addPassesForSPIRV(ModulePassManager &PassMgr,
+   PassMgr.addPass(SPIRVLowerConstExprPass());
+   PassMgr.addPass(SPIRVLowerBoolPass());
+   PassMgr.addPass(SPIRVLowerMemmovePass());
+-  PassMgr.addPass(SPIRVLowerSaddWithOverflowPass());
++  PassMgr.addPass(SPIRVLowerSaddIntrinsicsPass());
+   PassMgr.addPass(createModuleToFunctionPassAdaptor(
+       SPIRVLowerBitCastToNonStandardTypePass(Opts)));
+ }
+diff --git a/test/llvm-intrinsics/sadd.sat.ll b/test/llvm-intrinsics/sadd.sat.ll
+new file mode 100644
+index 00000000..d5c14323
+--- /dev/null
++++ b/test/llvm-intrinsics/sadd.sat.ll
+@@ -0,0 +1,42 @@
++; RUN: llvm-as -opaque-pointers=0 %s -o %t.bc
++; RUN: llvm-spirv %t.bc -spirv-text -o - | FileCheck %s
++; RUN: llvm-spirv %t.bc -o %t.spv
++; RUN: spirv-val %t.spv
++
++target datalayout = "e-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024"
++target triple = "spir64-unknown-unknown"
++
++; Function Attrs: nounwind readnone
++define spir_func i32 @Test(i32 %lhs, i32 %rhs) local_unnamed_addr #0 {
++entry:
++  %0 = call i32 @llvm.sadd.sat.i32(i32 %lhs, i32 %rhs)
++  ret i32 %0
++}
++
++; CHECK-DAG: Constant {{[0-9]+}} [[int_min:[0-9]+]] 2147483648
++; CHECK-DAG: Constant {{[0-9]+}} [[c31:[0-9]+]] 31
++
++; CHECK: Function
++; CHECK: FunctionParameter {{[0-9]+}} [[lhs:[0-9]+]]
++; CHECK: FunctionParameter {{[0-9]+}} [[rhs:[0-9]+]]
++; CHECK: FunctionCall {{[0-9]+}} [[struct_res:[0-9]+]] {{[0-9]+}} [[lhs]] [[rhs]]
++; CHECK: CompositeExtract {{[0-9]+}} [[sum:[0-9]+]] [[struct_res]] 0
++; CHECK: CompositeExtract {{[0-9]+}} [[overflow:[0-9]+]] [[struct_res]] 1
++; CHECK: ShiftRightArithmetic {{[0-9]+}} [[shift:[0-9]+]] [[sum]] [[c31]]
++; CHECK: BitwiseXor {{[0-9]+}} [[overflowed:[0-9]+]] [[shift]] [[int_min]]
++; CHECK: Select {{[0-9]+}} [[result:[0-9]+]] [[overflow]] [[overflowed]] [[sum]]
++; CHECK: ReturnValue [[result]]
++
++; Function Attrs: nounwind readnone speculatable willreturn
++declare i32 @llvm.sadd.sat.i32(i32, i32) #1
++
++attributes #0 = { nounwind readnone "correctly-rounded-divide-sqrt-fp-math"="false" "denorms-are-zero"="false" "disable-tail-calls"="false" "frame-pointer"="all" "less-precise-fpmad"="false" "min-legal-vector-width"="0" "no-infs-fp-math"="false" "no-jump-tables"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="false" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
++attributes #1 = { nounwind readnone speculatable willreturn }
++
++!llvm.module.flags = !{!0}
++!opencl.ocl.version = !{!1}
++!opencl.spir.version = !{!2}
++
++!0 = !{i32 1, !"wchar_size", i32 4}
++!1 = !{i32 1, i32 0}
++!2 = !{i32 1, i32 2}
+-- 
+2.20.1
+

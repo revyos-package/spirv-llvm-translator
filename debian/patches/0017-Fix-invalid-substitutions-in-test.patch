@@ -1,0 +1,40 @@
+From 4fedda2506eeb3ba08cfc094603b092e9300cda6 Mon Sep 17 00:00:00 2001
+From: Sven van Haastregt <sven.vanhaastregt@arm.com>
+Date: Tue, 22 Mar 2022 09:53:30 +0000
+Subject: [PATCH 017/172] Fix invalid substitutions in test
+
+%break etc are not valid substitutions for llvm-lit.
+
+(cherry picked from commit 3b00f155ae4061c15a26748d4b20a8a336d6a393)
+---
+ test/llvm-intrinsics/fmuladd.ll | 16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/test/llvm-intrinsics/fmuladd.ll b/test/llvm-intrinsics/fmuladd.ll
+index 5f63454b..15210f3e 100644
+--- a/test/llvm-intrinsics/fmuladd.ll
++++ b/test/llvm-intrinsics/fmuladd.ll
+@@ -1,12 +1,12 @@
+ ; RUN: llvm-as %s -o %t.bc
+-; RUN: llvm-spirv %t.bc -o %default.spv
+-; RUN: llvm-spirv %t.bc --spirv-replace-fmuladd-with-ocl-mad=true -o %replace.spv
+-; RUN: llvm-spirv %t.bc --spirv-replace-fmuladd-with-ocl-mad=false -o %break.spv
+-; RUN: spirv-val %replace.spv
+-; RUN: spirv-val %break.spv
+-; RUN: llvm-spirv %default.spv -to-text -o - | FileCheck %s --check-prefixes=COMMON,REPLACE
+-; RUN: llvm-spirv %replace.spv -to-text -o - | FileCheck %s --check-prefixes=COMMON,REPLACE
+-; RUN: llvm-spirv %break.spv -to-text -o - | FileCheck %s --check-prefixes=COMMON,BREAK
++; RUN: llvm-spirv %t.bc -o %t-default.spv
++; RUN: llvm-spirv %t.bc --spirv-replace-fmuladd-with-ocl-mad=true -o %t-replace.spv
++; RUN: llvm-spirv %t.bc --spirv-replace-fmuladd-with-ocl-mad=false -o %t-break.spv
++; RUN: spirv-val %t-replace.spv
++; RUN: spirv-val %t-break.spv
++; RUN: llvm-spirv %t-default.spv -to-text -o - | FileCheck %s --check-prefixes=COMMON,REPLACE
++; RUN: llvm-spirv %t-replace.spv -to-text -o - | FileCheck %s --check-prefixes=COMMON,REPLACE
++; RUN: llvm-spirv %t-break.spv -to-text -o - | FileCheck %s --check-prefixes=COMMON,BREAK
+ 
+ ; COMMON-NOT: llvm.fmuladd
+ 
+-- 
+2.20.1
+

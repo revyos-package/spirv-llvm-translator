@@ -1,0 +1,28 @@
+From f7b0927ef12cea4177b72c4eea57d250b20382af Mon Sep 17 00:00:00 2001
+From: Sven van Haastregt <sven.vanhaastregt@arm.com>
+Date: Wed, 22 Jun 2022 14:01:15 +0100
+Subject: [PATCH 056/172] Fix excess kernel_arg_type_qual entry in test
+
+The metadata had 7 entries whereas the function only has 6 parameters,
+causing foreachKernelArgMD to read past the end of an std::vector.
+
+(cherry picked from commit 14b843b6a5af382c43a2e2d999a5f57614d49812)
+---
+ test/transcoding/SPV_KHR_integer_dot_product-sat.ll | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/test/transcoding/SPV_KHR_integer_dot_product-sat.ll b/test/transcoding/SPV_KHR_integer_dot_product-sat.ll
+index bd717355..3ba7c94e 100644
+--- a/test/transcoding/SPV_KHR_integer_dot_product-sat.ll
++++ b/test/transcoding/SPV_KHR_integer_dot_product-sat.ll
+@@ -291,6 +291,6 @@ attributes #0 = { nounwind }
+ !5 = !{i32 0, i32 0}
+ !6 = !{!"none", !"none", !"none", !"none", !"none", !"none"}
+ !7 = !{!"int", !"int", !"char", !"short", !"int", !"long"}
+-!8 = !{!"", !"", !"", !"", !"", !"", !""}
++!8 = !{!"", !"", !"", !"", !"", !""}
+ !9 = !{!"char4", !"char4", !"char", !"short", !"int", !"long"}
+ !10 = !{!"short2", !"short2", !"char", !"short", !"int", !"long"}
+-- 
+2.20.1
+

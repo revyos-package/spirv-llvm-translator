@@ -1,0 +1,154 @@
+From 4008bc9bcf3810acd1ab99099727cbccdffe86fe Mon Sep 17 00:00:00 2001
+From: Joshua Cranmer <joshua.cranmer@intel.com>
+Date: Wed, 18 May 2022 14:50:08 -0400
+Subject: [PATCH 038/172] Remove function pointer cast deletion in
+ SPIRVRegularizeLLVM.
+
+It seems to be another remnant of earlier versions of dealing with block types,
+as it is looking for SPIR-V builtins that have function pointer arguments. With
+blocks now represented as structs, it seems that nothing will trigger this code
+any more. In any case, with opaque pointers, this code becomes unnecessary (as
+the bitcasts that would be deleted won't exist anymore).
+
+(cherry picked from commit 1341e546a89e0f519eb8236e096bd14603474e96)
+---
+ lib/SPIRV/SPIRVInternal.h         |  7 -----
+ lib/SPIRV/SPIRVRegularizeLLVM.cpp | 43 -------------------------------
+ lib/SPIRV/SPIRVUtil.cpp           | 21 ---------------
+ 3 files changed, 71 deletions(-)
+
+diff --git a/lib/SPIRV/SPIRVInternal.h b/lib/SPIRV/SPIRVInternal.h
+index 19857a95..44f450b8 100644
+--- a/lib/SPIRV/SPIRVInternal.h
++++ b/lib/SPIRV/SPIRVInternal.h
+@@ -717,10 +717,6 @@ bool isVoidFuncTy(FunctionType *FT);
+ /// \returns true if \p T is a function pointer type.
+ bool isFunctionPointerType(Type *T);
+ 
+-/// \returns true if function \p F has function pointer type argument.
+-/// \param AI points to the function pointer type argument if returns true.
+-bool hasFunctionPointerArg(Function *F, Function::arg_iterator &AI);
+-
+ /// \returns true if function \p F has array type argument.
+ bool hasArrayArg(Function *F);
+ 
+@@ -1019,9 +1015,6 @@ std::string getSPIRVFriendlyIRFunctionName(OCLExtOpKind ExtOpId,
+ std::string getSPIRVFriendlyIRFunctionName(const std::string &UniqName,
+                                            spv::Op OC, ArrayRef<Type *> ArgTys);
+ 
+-/// Remove cast from a value.
+-Value *removeCast(Value *V);
+-
+ /// Cast a function to a void(void) funtion pointer.
+ Constant *castToVoidFuncPtr(Function *F);
+ 
+diff --git a/lib/SPIRV/SPIRVRegularizeLLVM.cpp b/lib/SPIRV/SPIRVRegularizeLLVM.cpp
+index 0b3e1a3d..ff985076 100644
+--- a/lib/SPIRV/SPIRVRegularizeLLVM.cpp
++++ b/lib/SPIRV/SPIRVRegularizeLLVM.cpp
+@@ -78,11 +78,6 @@ public:
+   // that later SPIR-V writer renames.
+   void addKernelEntryPoint(Module *M);
+ 
+-  /// Erase cast inst of function and replace with the function.
+-  /// Assuming F is a SPIR-V builtin function with op code \param OC.
+-  void lowerFuncPtr(Function *F, Op OC);
+-  void lowerFuncPtr(Module *M);
+-
+   /// Some LLVM intrinsics that have no SPIR-V counterpart may be wrapped in
+   /// @spirv.llvm_intrinsic_* function. During reverse translation from SPIR-V
+   /// to LLVM IR we can detect this @spirv.llvm_intrinsic_* function and
+@@ -578,7 +573,6 @@ bool SPIRVRegularizeLLVMBase::runRegularizeLLVM(Module &Module) {
+ /// Remove entities not representable by SPIR-V
+ bool SPIRVRegularizeLLVMBase::regularize() {
+   eraseUselessFunctions(M);
+-  lowerFuncPtr(M);
+   addKernelEntryPoint(M);
+   expandSYCLTypeUsing(M);
+ 
+@@ -726,43 +720,6 @@ bool SPIRVRegularizeLLVMBase::regularize() {
+   return true;
+ }
+ 
+-// Assume F is a SPIR-V builtin function with a function pointer argument which
+-// is a bitcast instruction casting a function to a void(void) function pointer.
+-void SPIRVRegularizeLLVMBase::lowerFuncPtr(Function *F, Op OC) {
+-  LLVM_DEBUG(dbgs() << "[lowerFuncPtr] " << *F << '\n');
+-  auto Name = decorateSPIRVFunction(getName(OC));
+-  std::set<Value *> InvokeFuncPtrs;
+-  auto Attrs = F->getAttributes();
+-  mutateFunction(
+-      F,
+-      [=, &InvokeFuncPtrs](CallInst *CI, std::vector<Value *> &Args) {
+-        for (auto &I : Args) {
+-          if (isFunctionPointerType(I->getType())) {
+-            InvokeFuncPtrs.insert(I);
+-            I = removeCast(I);
+-          }
+-        }
+-        return Name;
+-      },
+-      nullptr, &Attrs, false);
+-  for (auto &I : InvokeFuncPtrs)
+-    eraseIfNoUse(I);
+-}
+-
+-void SPIRVRegularizeLLVMBase::lowerFuncPtr(Module *M) {
+-  std::vector<std::pair<Function *, Op>> Work;
+-  for (auto &F : *M) {
+-    auto AI = F.arg_begin();
+-    if (hasFunctionPointerArg(&F, AI)) {
+-      auto OC = getSPIRVFuncOC(F.getName());
+-      if (OC != OpNop) // builtin with a function pointer argument
+-        Work.push_back(std::make_pair(&F, OC));
+-    }
+-  }
+-  for (auto &I : Work)
+-    lowerFuncPtr(I.first, I.second);
+-}
+-
+ void SPIRVRegularizeLLVMBase::addKernelEntryPoint(Module *M) {
+   std::vector<Function *> Work;
+ 
+diff --git a/lib/SPIRV/SPIRVUtil.cpp b/lib/SPIRV/SPIRVUtil.cpp
+index ff529ee3..93e3f1b2 100644
+--- a/lib/SPIRV/SPIRVUtil.cpp
++++ b/lib/SPIRV/SPIRVUtil.cpp
+@@ -89,16 +89,6 @@ void removeFnAttr(CallInst *Call, Attribute::AttrKind Attr) {
+   Call->removeFnAttr(Attr);
+ }
+ 
+-Value *removeCast(Value *V) {
+-  auto Cast = dyn_cast<ConstantExpr>(V);
+-  if (Cast && Cast->isCast()) {
+-    return removeCast(Cast->getOperand(0));
+-  }
+-  if (auto Cast = dyn_cast<CastInst>(V))
+-    return removeCast(Cast->getOperand(0));
+-  return V;
+-}
+-
+ void saveLLVMModule(Module *M, const std::string &OutputFile) {
+   std::error_code EC;
+   ToolOutputFile Out(OutputFile.c_str(), EC, sys::fs::OF_None);
+@@ -650,17 +640,6 @@ bool isFunctionPointerType(Type *T) {
+   return false;
+ }
+ 
+-bool hasFunctionPointerArg(Function *F, Function::arg_iterator &AI) {
+-  AI = F->arg_begin();
+-  for (auto AE = F->arg_end(); AI != AE; ++AI) {
+-    LLVM_DEBUG(dbgs() << "[hasFuncPointerArg] " << *AI << '\n');
+-    if (isFunctionPointerType(AI->getType())) {
+-      return true;
+-    }
+-  }
+-  return false;
+-}
+-
+ Constant *castToVoidFuncPtr(Function *F) {
+   auto T = getVoidFuncPtrType(F->getParent());
+   return ConstantExpr::getBitCast(F, T);
+-- 
+2.20.1
+

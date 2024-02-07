@@ -1,0 +1,85 @@
+From f7bb0cb79586c793ae0455dc61a10e2e31ab871a Mon Sep 17 00:00:00 2001
+From: Dmitry Sidorov <dmitry.sidorov@intel.com>
+Date: Tue, 29 Nov 2022 13:58:37 +0100
+Subject: [PATCH 081/172] [Backport to 14] Fix builtin vars translation
+
+The translator was crashing in case if builin GV was accessed via
+GEP without AS cast due to incorrect assumption.
+
+Signed-off-by: Sidorov, Dmitry <dmitry.sidorov@intel.com>
+
+Signed-off-by: Sidorov, Dmitry <dmitry.sidorov@intel.com>
+---
+ lib/SPIRV/SPIRVUtil.cpp              |  6 ++++
+ test/transcoding/builtin_vars_gep.ll | 42 ++++++++++++++++++++++++++++
+ 2 files changed, 48 insertions(+)
+ create mode 100644 test/transcoding/builtin_vars_gep.ll
+
+diff --git a/lib/SPIRV/SPIRVUtil.cpp b/lib/SPIRV/SPIRVUtil.cpp
+index 024072b2..748a9768 100644
+--- a/lib/SPIRV/SPIRVUtil.cpp
++++ b/lib/SPIRV/SPIRVUtil.cpp
+@@ -1987,6 +1987,12 @@ bool lowerBuiltinVariableToCall(GlobalVariable *GV,
+           llvm_unreachable("Unexpected pattern!");
+         }
+       }
++    } else if (auto *GEP = dyn_cast<GetElementPtrInst>(UI)) {
++      GEPs.push_back(GEP);
++      for (auto *GEPUser : GEP->users()) {
++        if (!ReplaceIfLoad(GEPUser))
++          llvm_unreachable("Unexpected pattern!");
++      }
+     } else if (!ReplaceIfLoad(UI)) {
+       llvm_unreachable("Unexpected pattern!");
+     }
+diff --git a/test/transcoding/builtin_vars_gep.ll b/test/transcoding/builtin_vars_gep.ll
+new file mode 100644
+index 00000000..6480e839
+--- /dev/null
++++ b/test/transcoding/builtin_vars_gep.ll
+@@ -0,0 +1,42 @@
++; RUN: llvm-as %s -o %t.bc
++; RUN: llvm-spirv %t.bc -o %t.spv
++; RUN: llvm-spirv %t.spv -to-text -o - | FileCheck %s --check-prefix=CHECK-SPIRV
++; RUN: spirv-val %t.spv
++; RUN: llvm-spirv -r %t.spv -o %t.out.bc
++; RUN: llvm-dis %t.out.bc -o - | FileCheck %s --check-prefix=CHECK-OCL-IR
++; RUN: llvm-spirv -r %t.spv --spirv-target-env=SPV-IR -o %t.out.bc
++; RUN: llvm-dis %t.out.bc -o - | FileCheck %s --check-prefix=CHECK-SPV-IR
++
++; Check that produced builtin-call-based SPV-IR is recognized by the translator
++; RUN: llvm-spirv -spirv-text %t.out.bc -o - | FileCheck %s --check-prefix=CHECK-SPIRV
++
++; CHECK-SPIRV: Decorate [[Id:[0-9]+]] BuiltIn 28
++; CHECK-SPIRV: Variable {{[0-9]+}} [[Id:[0-9]+]]
++
++target datalayout = "e-p:32:32-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024"
++target triple = "spir-unknown-unknown"
++
++@__spirv_BuiltInGlobalInvocationId = external dso_local local_unnamed_addr addrspace(1) constant <3 x i64>, align 32
++
++; Function Attrs: nounwind readnone
++define spir_kernel void @f() {
++entry:
++  %0 = load i64, i64 addrspace(1)* getelementptr (<3 x i64>, <3 x i64> addrspace(1)* @__spirv_BuiltInGlobalInvocationId, i64 0, i64 0), align 32
++  ; CHECK-OCL-IR: %[[#ID1:]] = call spir_func i64 @_Z13get_global_idj(i32 0)
++  ; CHECK-OCL-IR: %[[#VEC1:]] = insertelement <3 x i64> undef, i64 %[[#ID1]], i32 0
++  ; CHECK-OCL-IR: %[[#ID2:]] = call spir_func i64 @_Z13get_global_idj(i32 1)
++  ; CHECK-OCL-IR: %[[#VEC2:]] = insertelement <3 x i64> %[[#VEC1]], i64 %[[#ID2]], i32 1
++  ; CHECK-OCL-IR: %[[#ID3:]] = call spir_func i64 @_Z13get_global_idj(i32 2)
++  ; CHECK-OCL-IR: %[[#VEC3:]] = insertelement <3 x i64> %[[#VEC2]], i64 %[[#ID3]], i32 2
++  ; CHECK-OCL-IR: %[[#]] = extractelement <3 x i64> %[[#VEC3]], i64 0
++
++  ; CHECK-SPV-IR: %[[#ID1:]] = call spir_func i64 @_Z33__spirv_BuiltInGlobalInvocationIdi(i32 0)
++  ; CHECK-SPV-IR: %[[#VEC1:]] = insertelement <3 x i64> undef, i64 %[[#ID1]], i32 0
++  ; CHECK-SPV-IR: %[[#ID2:]] = call spir_func i64 @_Z33__spirv_BuiltInGlobalInvocationIdi(i32 1)
++  ; CHECK-SPV-IR: %[[#VEC2:]] = insertelement <3 x i64> %[[#VEC1]], i64 %[[#ID2]], i32 1
++  ; CHECK-SPV-IR: %[[#ID3:]] = call spir_func i64 @_Z33__spirv_BuiltInGlobalInvocationIdi(i32 2)
++  ; CHECK-SPV-IR: %[[#VEC3:]] = insertelement <3 x i64> %[[#VEC2]], i64 %[[#ID3]], i32 2
++  ; CHECK-SPV-IR: %[[#]] = extractelement <3 x i64> %[[#VEC3]], i64 0
++
++  ret void
++}
+-- 
+2.20.1
+

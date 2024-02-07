@@ -1,0 +1,67 @@
+From e2b7f1d42e2708c2b90fa4f1387dbaf797985398 Mon Sep 17 00:00:00 2001
+From: Dmitry Sidorov <dmitry.sidorov@intel.com>
+Date: Tue, 29 Nov 2022 12:55:12 +0100
+Subject: [PATCH 087/172] [Backport to 14] Put memory(none) attribute instead
+ of readnone (#1746)
+
+Instead of creating readnone attributes on each parameter of
+a function it's better to put just memory(none) which was recently
+introduced.
+
+See https://reviews.llvm.org/D135780
+
+Co-authored by: Zou, Feng <feng.zou@intel.com>
+
+Signed-off-by: Sidorov, Dmitry <dmitry.sidorov@intel.com>
+---
+ lib/SPIRV/SPIRVReader.cpp                    | 4 +---
+ lib/SPIRV/SPIRVUtil.cpp                      | 4 +---
+ test/transcoding/builtin_vars_arithmetics.ll | 2 +-
+ 3 files changed, 3 insertions(+), 7 deletions(-)
+
+diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
+index 107c8858..595902b6 100644
+--- a/lib/SPIRV/SPIRVReader.cpp
++++ b/lib/SPIRV/SPIRVReader.cpp
+@@ -4312,9 +4312,7 @@ Instruction *SPIRVToLLVM::transOCLBuiltinFromExtInst(SPIRVExtInst *BC,
+     if (isFuncNoUnwind())
+       F->addFnAttr(Attribute::NoUnwind);
+     if (isFuncReadNone(UnmangledName))
+-      for (llvm::Argument &Arg : F->args())
+-        if (Arg.getType()->isPointerTy())
+-          Arg.addAttr(Attribute::ReadNone);
++      F->setDoesNotAccessMemory();
+   }
+   auto Args = transValue(BC->getArgValues(), F, BB);
+   SPIRVDBG(dbgs() << "[transOCLBuiltinFromExtInst] Function: " << *F
+diff --git a/lib/SPIRV/SPIRVUtil.cpp b/lib/SPIRV/SPIRVUtil.cpp
+index 44ea65b0..74d1f167 100644
+--- a/lib/SPIRV/SPIRVUtil.cpp
++++ b/lib/SPIRV/SPIRVUtil.cpp
+@@ -1901,9 +1901,7 @@ bool lowerBuiltinVariableToCall(GlobalVariable *GV,
+     Func->setCallingConv(CallingConv::SPIR_FUNC);
+     Func->addFnAttr(Attribute::NoUnwind);
+     Func->addFnAttr(Attribute::WillReturn);
+-    for (llvm::Argument &Arg : Func->args())
+-      if (Arg.getType()->isPointerTy())
+-        Arg.addAttr(Attribute::ReadNone);
++    Func->setDoesNotAccessMemory();
+   }
+ 
+   // Collect instructions in these containers to remove them later.
+diff --git a/test/transcoding/builtin_vars_arithmetics.ll b/test/transcoding/builtin_vars_arithmetics.ll
+index 0fa2f04b..4ecbbb49 100644
+--- a/test/transcoding/builtin_vars_arithmetics.ll
++++ b/test/transcoding/builtin_vars_arithmetics.ll
+@@ -123,7 +123,7 @@ entry:
+ 
+ attributes #0 = { norecurse "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "frame-pointer"="all" "less-precise-fpmad"="false" "min-legal-vector-width"="0" "no-infs-fp-math"="false" "no-jump-tables"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "sycl-module-id"="test.cpp" "uniform-work-group-size"="true" "unsafe-fp-math"="false" "use-soft-float"="false" }
+ 
+-; CHECK-LLVM-OCL: attributes #1 = { nounwind willreturn }
++; CHECK-LLVM-OCL: attributes #1 = { nounwind readnone willreturn }
+ 
+ !llvm.module.flags = !{!0}
+ !opencl.spir.version = !{!1}
+-- 
+2.20.1
+

@@ -1,0 +1,45 @@
+From f34bd2f459437699e0e9a7028581779ae9efc493 Mon Sep 17 00:00:00 2001
+From: Dmitry Sidorov <dmitry.sidorov@intel.com>
+Date: Tue, 25 Apr 2023 22:17:50 +0200
+Subject: [PATCH 111/172] [Backport to 14][DebugInfo] Fix Composite type
+ translation for NonSemantic spec (#1975)
+
+Tag should be OpConstant, not Literal.
+
+Signed-off-by: Sidorov, Dmitry <dmitry.sidorov@intel.com>
+---
+ lib/SPIRV/LLVMToSPIRVDbgTran.cpp               | 2 +-
+ test/DebugInfo/TransTypeCompositeCaseClass_.ll | 4 ++++
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+index 0867a02b..1496e5dd 100644
+--- a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
++++ b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+@@ -931,7 +931,7 @@ LLVMToSPIRVDbgTran::transDbgCompositeType(const DICompositeType *CT) {
+   }
+ 
+   if (isNonSemanticDebugInfo())
+-    transformToConstant(Ops, {LineIdx, ColumnIdx, FlagsIdx});
++    transformToConstant(Ops, {TagIdx, LineIdx, ColumnIdx, FlagsIdx});
+   SPIRVEntry *Res =
+       BM->addDebugInfo(SPIRVDebug::TypeComposite, getVoidTy(), Ops);
+ 
+diff --git a/test/DebugInfo/TransTypeCompositeCaseClass_.ll b/test/DebugInfo/TransTypeCompositeCaseClass_.ll
+index 1b06cef4..1ef0c386 100644
+--- a/test/DebugInfo/TransTypeCompositeCaseClass_.ll
++++ b/test/DebugInfo/TransTypeCompositeCaseClass_.ll
+@@ -13,6 +13,10 @@
+ ; RUN: llvm-spirv -r %t.spv -o %t.rev.bc
+ ; RUN: llvm-dis < %t.rev.bc | FileCheck %s --check-prefix=CHECK-LLVM
+ 
++; RUN: llvm-spirv --spirv-debug-info-version=nonsemantic-shader-100 %t.bc -o %t.spv
++; RUN: llvm-spirv -r --opaque-pointers %t.spv -o %t.rev.bc
++; RUN: llvm-dis -opaque-pointers < %t.rev.bc | FileCheck %s --check-prefix=CHECK-LLVM
++
+ ; ModuleID = 'main.cpp'
+ source_filename = "main.cpp"
+ target datalayout = "e-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024-n8:16:32:64"
+-- 
+2.20.1
+

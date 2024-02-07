@@ -1,0 +1,103 @@
+From ad48ce03a2f0be26e63a33cd3c42d1a9fba42e44 Mon Sep 17 00:00:00 2001
+From: Viktoria Maximova <viktoria.maksimova@intel.com>
+Date: Mon, 3 Jul 2023 11:11:45 +0200
+Subject: [PATCH 142/172] [Backport to 14][DebugInfo] Fix translation of
+ SPV_INTEL_debug_module extension
+
+When NonSemantic.Shader.100 debug info is enabled.
+The related tests cases are enabled back.
+---
+ lib/SPIRV/SPIRVToLLVMDbgTran.cpp                | 14 ++++++++++----
+ test/DebugInfo/X86/DIModuleContext.ll           |  7 +++++++
+ test/DebugInfo/X86/Fortran-DIModule.ll          |  7 +++++++
+ test/DebugInfo/X86/dimodule-external-fortran.ll |  8 ++++++++
+ 4 files changed, 32 insertions(+), 4 deletions(-)
+
+diff --git a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+index 960242d4..9ce4ce72 100644
+--- a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
++++ b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+@@ -1314,15 +1314,21 @@ DINode *SPIRVToLLVMDbgTran::transModule(const SPIRVExtInst *DebugInst) {
+   const SPIRVWordVec &Ops = DebugInst->getArguments();
+   assert(Ops.size() >= OperandCount && "Invalid number of operands");
+   DIScope *Scope = getScope(BM->getEntry(Ops[ParentIdx]));
+-  SPIRVWord Line =
+-      getConstantValueOrLiteral(Ops, LineIdx, DebugInst->getExtSetKind());
++  // In case we translate DebugModuleINTEL instruction (not DebugModule of
++  // NonSemantic.Shader.200 spec), we should not apply the rule "literals are
++  // not allowed for NonSemantic specification". This is a hack to avoid getting
++  // constant value instead of literal in such case.
++  const SPIRVExtInstSetKind ExtKind =
++      DebugInst->getExtOp() == SPIRVDebug::Instruction::ModuleINTEL
++          ? SPIRVEIS_OpenCL_DebugInfo_100
++          : DebugInst->getExtSetKind();
++  SPIRVWord Line = getConstantValueOrLiteral(Ops, LineIdx, ExtKind);
+   DIFile *File = getFile(Ops[SourceIdx]);
+   StringRef Name = getString(Ops[NameIdx]);
+   StringRef ConfigMacros = getString(Ops[ConfigMacrosIdx]);
+   StringRef IncludePath = getString(Ops[IncludePathIdx]);
+   StringRef ApiNotes = getString(Ops[ApiNotesIdx]);
+-  bool IsDecl =
+-      getConstantValueOrLiteral(Ops, IsDeclIdx, DebugInst->getExtSetKind());
++  bool IsDecl = getConstantValueOrLiteral(Ops, IsDeclIdx, ExtKind);
+   return getDIBuilder(DebugInst).createModule(
+       Scope, Name, ConfigMacros, IncludePath, ApiNotes, File, Line, IsDecl);
+ }
+diff --git a/test/DebugInfo/X86/DIModuleContext.ll b/test/DebugInfo/X86/DIModuleContext.ll
+index 71569a27..66c9fb70 100644
+--- a/test/DebugInfo/X86/DIModuleContext.ll
++++ b/test/DebugInfo/X86/DIModuleContext.ll
+@@ -2,6 +2,13 @@
+ ; RUN: llvm-spirv --spirv-ext=+SPV_INTEL_debug_module %t.bc -o %t.spv
+ ; RUN: llvm-spirv -r %t.spv -o - | llvm-dis -o %t.ll
+ 
++; RUN: llvm-spirv --spirv-ext=+SPV_INTEL_debug_module %t.bc -o %t.spv --spirv-debug-info-version=nonsemantic-shader-100
++; RUN: llvm-spirv -r %t.spv -o - | llvm-dis -o %t.ll
++; RUN: llc -mtriple=x86_64-apple-macosx %t.ll -o - -filetype=obj \
++; RUN:   | llvm-dwarfdump -debug-info - | FileCheck %s
++
++; RUN: llvm-spirv %t.bc -o %t.spv --spirv-debug-info-version=nonsemantic-shader-200
++; RUN: llvm-spirv -r %t.spv -o - | llvm-dis -o %t.ll
+ ; RUN: llc -mtriple=x86_64-apple-macosx %t.ll -o - -filetype=obj \
+ ; RUN:   | llvm-dwarfdump -debug-info - | FileCheck %s
+ ; CHECK: DW_TAG_module
+diff --git a/test/DebugInfo/X86/Fortran-DIModule.ll b/test/DebugInfo/X86/Fortran-DIModule.ll
+index e22e1b71..59aca5d3 100644
+--- a/test/DebugInfo/X86/Fortran-DIModule.ll
++++ b/test/DebugInfo/X86/Fortran-DIModule.ll
+@@ -2,6 +2,13 @@
+ ; RUN: llvm-as < %s -o %t.bc
+ ; RUN: llvm-spirv --spirv-ext=+SPV_INTEL_debug_module %t.bc -o %t.spv
+ ; RUN: llvm-spirv -r %t.spv -o - | llvm-dis -o %t.ll
++; RUN: llc -mtriple=x86_64-unknown-linux-gnu %t.ll -filetype=obj -o - | \
++; RUN:   llvm-dwarfdump - | FileCheck %s
++
++; RUN: llvm-spirv --spirv-ext=+SPV_INTEL_debug_module %t.bc -o %t.spv --spirv-debug-info-version=nonsemantic-shader-100
++; RUN: llvm-spirv -r %t.spv -o - | llvm-dis -o %t.ll
++; RUN: llc -mtriple=x86_64-unknown-linux-gnu %t.ll -filetype=obj -o - | \
++; RUN:   llvm-dwarfdump - | FileCheck %s
+ 
+ ; RUN: llc -mtriple=x86_64-unknown-linux-gnu %t.ll -filetype=obj -o - | \
+ ; RUN:   llvm-dwarfdump - | FileCheck %s
+diff --git a/test/DebugInfo/X86/dimodule-external-fortran.ll b/test/DebugInfo/X86/dimodule-external-fortran.ll
+index a91fd616..b5552176 100644
+--- a/test/DebugInfo/X86/dimodule-external-fortran.ll
++++ b/test/DebugInfo/X86/dimodule-external-fortran.ll
+@@ -25,6 +25,14 @@
+ ; RUN: llvm-spirv -r %t.spv -o - | llvm-dis -o %t.ll
+ ; RUN: llc -mtriple=x86_64-unknown-linux-gnu -filetype=obj  %t.ll -o - | llvm-dwarfdump - | FileCheck %s
+ 
++; RUN: llvm-spirv --spirv-ext=+SPV_INTEL_debug_module %t.bc -o %t.spv --spirv-debug-info-version=nonsemantic-shader-100
++; RUN: llvm-spirv -r %t.spv -o - | llvm-dis -o %t.ll
++; RUN: llc -mtriple=x86_64-unknown-linux-gnu -filetype=obj  %t.ll -o - | llvm-dwarfdump - | FileCheck %s
++
++; RUN: llvm-spirv %t.bc -o %t.spv --spirv-debug-info-version=nonsemantic-shader-200
++; RUN: llvm-spirv -r %t.spv -o - | llvm-dis -o %t.ll
++; RUN: llc -mtriple=x86_64-unknown-linux-gnu -filetype=obj  %t.ll -o - | llvm-dwarfdump - | FileCheck %s
++
+ ; CHECK: [[DIE_ID:0x[0-9a-f]+]]: DW_TAG_module
+ ; CHECK-NEXT:                      DW_AT_name    ("external_module")
+ ; CHECK-NEXT:                      DW_AT_declaration     (true)
+-- 
+2.20.1
+

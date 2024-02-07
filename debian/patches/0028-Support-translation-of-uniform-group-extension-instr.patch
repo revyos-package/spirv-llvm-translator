@@ -1,0 +1,124 @@
+From 3d2e1a40910e495b4440971aec590851eae78f40 Mon Sep 17 00:00:00 2001
+From: Wenwan Xing <wenwan.xing@intel.com>
+Date: Wed, 6 Apr 2022 22:11:26 +0800
+Subject: [PATCH 028/172] Support translation of uniform group extension
+ instructions form SPIRV to OCL (#1459)
+
+(cherry picked from commit f11e3a8db8477987f1778890d23eeecf7850c045)
+---
+ lib/SPIRV/OCLUtil.cpp                         |  8 +++++
+ lib/SPIRV/libSPIRV/SPIRVOpCode.h              | 13 +++++---
+ .../group-instructions.ll                     | 32 ++++++++++++++-----
+ 3 files changed, 41 insertions(+), 12 deletions(-)
+
+diff --git a/lib/SPIRV/OCLUtil.cpp b/lib/SPIRV/OCLUtil.cpp
+index 12013818..630aae84 100644
+--- a/lib/SPIRV/OCLUtil.cpp
++++ b/lib/SPIRV/OCLUtil.cpp
+@@ -361,6 +361,14 @@ template <> void SPIRVMap<std::string, Op, SPIRVInstruction>::init() {
+   _SPIRV_OP(group_fmax, GroupFMax)
+   _SPIRV_OP(group_umax, GroupUMax)
+   _SPIRV_OP(group_smax, GroupSMax)
++  _SPIRV_OP(group_imul, GroupIMulKHR)
++  _SPIRV_OP(group_fmul, GroupFMulKHR)
++  _SPIRV_OP(group_ibitwise_and, GroupBitwiseAndKHR)
++  _SPIRV_OP(group_ibitwise_or, GroupBitwiseOrKHR)
++  _SPIRV_OP(group_ibitwise_xor, GroupBitwiseXorKHR)
++  _SPIRV_OP(group_ilogical_and, GroupLogicalAndKHR)
++  _SPIRV_OP(group_ilogical_or, GroupLogicalOrKHR)
++  _SPIRV_OP(group_ilogical_xor, GroupLogicalXorKHR)
+   // CL image builtins
+   _SPIRV_OP(SampledImage, SampledImage)
+   _SPIRV_OP(ImageSampleExplicitLod, ImageSampleExplicitLod)
+diff --git a/lib/SPIRV/libSPIRV/SPIRVOpCode.h b/lib/SPIRV/libSPIRV/SPIRVOpCode.h
+index 045f41b0..5cc77a3c 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVOpCode.h
++++ b/lib/SPIRV/libSPIRV/SPIRVOpCode.h
+@@ -148,12 +148,14 @@ inline bool hasGroupOperation(Op OpCode) {
+   unsigned OC = OpCode;
+   return (OpGroupIAdd <= OC && OC <= OpGroupSMax) ||
+          (OpGroupNonUniformBallotBitCount == OC) ||
+-         (OpGroupNonUniformIAdd <= OC && OC <= OpGroupNonUniformLogicalXor);
++         (OpGroupNonUniformIAdd <= OC && OC <= OpGroupNonUniformLogicalXor) ||
++         (OpGroupIMulKHR <= OC && OC <= OpGroupLogicalXorKHR);
+ }
+ 
+ inline bool isUniformArithmeticOpCode(Op OpCode) {
+   unsigned OC = OpCode;
+-  return (OpGroupIAdd <= OC && OC <= OpGroupSMax);
++  return (OpGroupIAdd <= OC && OC <= OpGroupSMax) ||
++         (OpGroupIMulKHR <= OC && OC <= OpGroupLogicalXorKHR);
+ }
+ 
+ inline bool isNonUniformArithmeticOpCode(Op OpCode) {
+@@ -164,12 +166,15 @@ inline bool isNonUniformArithmeticOpCode(Op OpCode) {
+ inline bool isGroupLogicalOpCode(Op OpCode) {
+   unsigned OC = OpCode;
+   return OC == OpGroupNonUniformLogicalAnd ||
+-         OC == OpGroupNonUniformLogicalOr || OC == OpGroupNonUniformLogicalXor;
++         OC == OpGroupNonUniformLogicalOr ||
++         OC == OpGroupNonUniformLogicalXor || OC == OpGroupLogicalAndKHR ||
++         OC == OpGroupLogicalOrKHR || OC == OpGroupLogicalXorKHR;
+ }
+ 
+ inline bool isGroupOpCode(Op OpCode) {
+   unsigned OC = OpCode;
+-  return OpGroupAll <= OC && OC <= OpGroupSMax;
++  return (OpGroupAll <= OC && OC <= OpGroupSMax) ||
++         (OpGroupIMulKHR <= OC && OC <= OpGroupLogicalXorKHR);
+ }
+ 
+ inline bool isGroupNonUniformOpcode(Op OpCode) {
+diff --git a/test/transcoding/SPV_KHR_uniform_group_instructions/group-instructions.ll b/test/transcoding/SPV_KHR_uniform_group_instructions/group-instructions.ll
+index 1ea7fda0..993f45ac 100644
+--- a/test/transcoding/SPV_KHR_uniform_group_instructions/group-instructions.ll
++++ b/test/transcoding/SPV_KHR_uniform_group_instructions/group-instructions.ll
+@@ -10,6 +10,10 @@
+ ; RUN: llvm-dis %t.rev.bc -o %t.rev.ll
+ ; RUN: FileCheck < %t.rev.ll %s --check-prefix=CHECK-LLVM
+ 
++; RUN: llvm-spirv --spirv-target-env=SPV-IR -r %t.spv -o %t.rev.bc
++; RUN: llvm-dis %t.rev.bc
++; RUN: FileCheck < %t.rev.ll %s --check-prefix=CHECK-LLVM-SPIRV
++
+ ; CHECK-WO-EXT: RequiresExtension: Feature requires the following SPIR-V extension:
+ ; CHECK-WO-EXT: SPV_KHR_uniform_group_instructions
+ 
+@@ -32,14 +36,26 @@
+ ; CHECK-SPIRV: GroupIMulKHR [[#TypeInt]] [[#]] [[#Scope]] 0 [[#Val1]]
+ ; CHECK-SPIRV: GroupFMulKHR [[#TypeFloat]] [[#]] [[#Scope]] 0 [[#Val2]]
+ 
+-; CHECK-LLVM: %call1 = call spir_func i32 @_Z26__spirv_GroupBitwiseAndKHR{{.*}}(i32 2, i32 0, i32 0)
+-; CHECK-LLVM: %call2 = call spir_func i32 @_Z25__spirv_GroupBitwiseOrKHR{{.*}}(i32 2, i32 0, i32 0)
+-; CHECK-LLVM: %call3 = call spir_func i32 @_Z26__spirv_GroupBitwiseXorKHR{{.*}}(i32 2, i32 0, i32 0)
+-; CHECK-LLVM: %call4 = call spir_func i1 @_Z26__spirv_GroupLogicalAndKHR{{.*}}(i32 2, i32 0, i1 false)
+-; CHECK-LLVM: %call5 = call spir_func i1 @_Z25__spirv_GroupLogicalOrKHR{{.*}}(i32 2, i32 0, i1 false)
+-; CHECK-LLVM: %call6 = call spir_func i1 @_Z26__spirv_GroupLogicalXorKHR{{.*}}(i32 2, i32 0, i1 false)
+-; CHECK-LLVM: %call7 = call spir_func i32 @_Z20__spirv_GroupIMulKHR{{.*}}(i32 2, i32 0, i32 0)
+-; CHECK-LLVM: %call8 = call spir_func half @_Z20__spirv_GroupFMulKHR{{.*}}(i32 2, i32 0, half 0xH0000)
++; CHECK-LLVM: call spir_func i32 @_Z29work_group_reduce_bitwise_andi(i32 0)
++; CHECK-LLVM: call spir_func i32 @_Z28work_group_reduce_bitwise_ori(i32 0)
++; CHECK-LLVM: call spir_func i32 @_Z29work_group_reduce_bitwise_xori(i32 0)
++; CHECK-LLVM: [[INIT_I32_0:%.*]] = zext i1 false to i32
++; CHECK-LLVM: call spir_func i32 @_Z29work_group_reduce_logical_andi(i32 [[INIT_I32_0]])
++; CHECK-LLVM: [[INIT_I32_1:%.*]] = zext i1 false to i32
++; CHECK-LLVM: call spir_func i32 @_Z28work_group_reduce_logical_ori(i32 [[INIT_I32_1]])
++; CHECK-LLVM: [[INIT_I32_2:%.*]] = zext i1 false to i32
++; CHECK-LLVM: call spir_func i32 @_Z29work_group_reduce_logical_xori(i32 [[INIT_I32_2]])
++; CHECK-LLVM: call spir_func i32 @_Z21work_group_reduce_muli(i32 0)
++; CHECK-LLVM: call spir_func half @_Z21work_group_reduce_mulDh(half 0xH0000)
++
++; CHECK-LLVM-SPIRV: %call1 = call spir_func i32 @_Z26__spirv_GroupBitwiseAndKHR{{.*}}(i32 2, i32 0, i32 0)
++; CHECK-LLVM-SPIRV: %call2 = call spir_func i32 @_Z25__spirv_GroupBitwiseOrKHR{{.*}}(i32 2, i32 0, i32 0)
++; CHECK-LLVM-SPIRV: %call3 = call spir_func i32 @_Z26__spirv_GroupBitwiseXorKHR{{.*}}(i32 2, i32 0, i32 0)
++; CHECK-LLVM-SPIRV: %call4 = call spir_func i1 @_Z26__spirv_GroupLogicalAndKHR{{.*}}(i32 2, i32 0, i1 false)
++; CHECK-LLVM-SPIRV: %call5 = call spir_func i1 @_Z25__spirv_GroupLogicalOrKHR{{.*}}(i32 2, i32 0, i1 false)
++; CHECK-LLVM-SPIRV: %call6 = call spir_func i1 @_Z26__spirv_GroupLogicalXorKHR{{.*}}(i32 2, i32 0, i1 false)
++; CHECK-LLVM-SPIRV: %call7 = call spir_func i32 @_Z20__spirv_GroupIMulKHR{{.*}}(i32 2, i32 0, i32 0)
++; CHECK-LLVM-SPIRV: %call8 = call spir_func half @_Z20__spirv_GroupFMulKHR{{.*}}(i32 2, i32 0, half 0xH0000)
+ 
+ ; ModuleID = 'source.bc'
+ source_filename = "group_operations.cpp"
+-- 
+2.20.1
+

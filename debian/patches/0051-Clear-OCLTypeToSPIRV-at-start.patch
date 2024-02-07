@@ -1,0 +1,29 @@
+From 58ce9431a67739ef23b009b1ac55b5ce9106403c Mon Sep 17 00:00:00 2001
+From: Sven van Haastregt <sven.vanhaastregt@arm.com>
+Date: Thu, 19 May 2022 17:04:33 +0100
+Subject: [PATCH 051/172] Clear OCLTypeToSPIRV at start
+
+The pass is no longer being reallocated after each run when running
+from the new PassManager.
+
+(cherry picked from commit b21bd84cf3a50ef315c13097c4abac78ce580c41)
+---
+ lib/SPIRV/OCLTypeToSPIRV.cpp | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/lib/SPIRV/OCLTypeToSPIRV.cpp b/lib/SPIRV/OCLTypeToSPIRV.cpp
+index de9d5733..80e9c399 100644
+--- a/lib/SPIRV/OCLTypeToSPIRV.cpp
++++ b/lib/SPIRV/OCLTypeToSPIRV.cpp
+@@ -82,6 +82,8 @@ bool OCLTypeToSPIRVBase::runOCLTypeToSPIRV(Module &Module) {
+   LLVM_DEBUG(dbgs() << "Enter OCLTypeToSPIRV:\n");
+   M = &Module;
+   Ctx = &M->getContext();
++  AdaptedTy.clear();
++  WorkSet.clear();
+   auto Src = getSPIRVSource(&Module);
+   if (std::get<0>(Src) != spv::SourceLanguageOpenCL_C)
+     return false;
+-- 
+2.20.1
+

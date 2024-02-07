@@ -1,0 +1,35 @@
+From 7e99e89d4353b17b10f683138cdb1e3796e2455f Mon Sep 17 00:00:00 2001
+From: Feng Zou <feng.zou@intel.com>
+Date: Fri, 11 Mar 2022 21:14:58 +0800
+Subject: [PATCH 009/172] Fix argument attributes for SPIRV -> OCL group
+ builtins (#1412)
+
+The first argument or first two arguments are not used as arguments in
+new call instruction to OCL group builtins, so the related attributes
+should be removed from attributes of new call instruction.
+
+(cherry picked from commit b5b102e58f55a58f33599400d0d9f80adb6dcc85)
+---
+ lib/SPIRV/SPIRVToOCL.cpp | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/lib/SPIRV/SPIRVToOCL.cpp b/lib/SPIRV/SPIRVToOCL.cpp
+index c8fc50b3..edadbb14 100644
+--- a/lib/SPIRV/SPIRVToOCL.cpp
++++ b/lib/SPIRV/SPIRVToOCL.cpp
+@@ -549,6 +549,12 @@ void SPIRVToOCLBase::visitCallSPIRVGroupBuiltin(CallInst *CI, Op OC) {
+ 
+   assert(CI->getCalledFunction() && "Unexpected indirect call");
+   AttributeList Attrs = CI->getCalledFunction()->getAttributes();
++  SmallVector<AttributeSet, 2> ArgAttrs;
++  for (int I = (hasGroupOperation(OC) ? 2 : 1);
++       I < (int)Attrs.getNumAttrSets() - 2; I++)
++    ArgAttrs.push_back(Attrs.getParamAttrs(I));
++  Attrs = AttributeList::get(*Ctx, Attrs.getFnAttrs(), Attrs.getRetAttrs(),
++                             ArgAttrs);
+   mutateCallInstOCL(M, CI, ModifyArguments, ModifyRetTy, &Attrs);
+ }
+ 
+-- 
+2.20.1
+

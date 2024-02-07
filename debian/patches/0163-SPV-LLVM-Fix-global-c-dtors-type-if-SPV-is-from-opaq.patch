@@ -1,0 +1,163 @@
+From e7f5440a40117cc11799b9306c7ea489b8596e55 Mon Sep 17 00:00:00 2001
+From: Wenju He <wenju.he@intel.com>
+Date: Thu, 28 Dec 2023 01:42:47 +0800
+Subject: [PATCH 163/172] [SPV->LLVM] Fix global c/dtors type if SPV is from
+ opaque type LLVM (#2280)
+
+When SPV is generated from LLVM IR with opaque pointer enabled, ctor
+function in global ctors has opaque pointer type rather than function
+type. When translating the SPV back to LLVM IR with typed pointer like
+in LLVM 14, ctor function type is casted to i8* pointer in the global
+ctors initializer. This results in error in LLVM verifier.
+This PR fixes the issue by removing the cast.
+---
+ lib/SPIRV/SPIRVReader.cpp                     | 62 ++++++++++++++++---
+ .../global_ctor_dtor_opaque.spt               | 54 ++++++++++++++++
+ 2 files changed, 107 insertions(+), 9 deletions(-)
+ create mode 100644 test/transcoding/SPV_INTEL_function_pointers/global_ctor_dtor_opaque.spt
+
+diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
+index 22c3203c..e1f50b68 100644
+--- a/lib/SPIRV/SPIRVReader.cpp
++++ b/lib/SPIRV/SPIRVReader.cpp
+@@ -3286,10 +3286,11 @@ bool SPIRVToLLVM::translate() {
+ 
+   for (unsigned I = 0, E = BM->getNumVariables(); I != E; ++I) {
+     auto *BV = BM->getVariable(I);
+-    if (BV->getStorageClass() != StorageClassFunction)
+-      transValue(BV, nullptr, nullptr);
+-    else
++    if (BV->getName() == "llvm.global_ctors" ||
++        BV->getName() == "llvm.global_dtors")
+       transGlobalCtorDtors(BV);
++    else if (BV->getStorageClass() != StorageClassFunction)
++      transValue(BV, nullptr, nullptr);
+   }
+ 
+   // Then translate all debug instructions.
+@@ -3768,13 +3769,56 @@ bool SPIRVToLLVM::transDecoration(SPIRVValue *BV, Value *V) {
+   return true;
+ }
+ 
+-void SPIRVToLLVM::transGlobalCtorDtors(SPIRVVariable *BV) {
+-  if (BV->getName() != "llvm.global_ctors" &&
+-      BV->getName() != "llvm.global_dtors")
+-    return;
++/// When spirv is generated from LLVM IR with opaque pointer enabled and then
++/// the spirv is translated to LLVM IR with typed pointer, function pointer is
++/// casted to i8* type in GlobalVariable \p GV, which causes error in LLVM IR
++/// verifier. E.g.
++///   [1 x %0][%0 { i32 1, i8* bitcast (void ()* @ctor to i8*), i8* null }]
++/// This function removes the cast so that LLVM IR is valid.
++static GlobalVariable *mutateGlobalCtorDtors(GlobalVariable *GV) {
++  if (!GV->hasInitializer())
++    return GV;
++  auto *InitArr = cast<ConstantArray>(GV->getInitializer());
++  unsigned NumEltsInArr = InitArr->getType()->getNumElements();
++  if (NumEltsInArr == 0)
++    return GV;
++  auto *CS = cast<ConstantStruct>(InitArr->getAggregateElement(0u));
++  auto *Elt1 = CS->getAggregateElement(1);
++  if (!isa<ConstantExpr>(Elt1))
++    return GV;
++
++  auto *STy = CS->getType();
++  assert(STy->getNumElements() == 3 &&
++         "expect 3 fields in global variable element struct type");
++  auto *NewSTy = StructType::create(GV->getContext(),
++                                    {STy->getElementType(0),
++                                     Elt1->stripPointerCasts()->getType(),
++                                     STy->getElementType(2)},
++                                    STy->getName(), STy->isPacked());
++  auto *NewTy = ArrayType::get(NewSTy, NumEltsInArr);
++  SmallVector<Constant *, 4> ArrElts;
++  for (unsigned I = 0; I < NumEltsInArr; ++I) {
++    auto *CS = cast<ConstantStruct>(InitArr->getAggregateElement(I));
++    ArrElts.push_back(ConstantStruct::get(
++        NewSTy, {CS->getAggregateElement(0u),
++                 CS->getAggregateElement(1)->stripPointerCasts(),
++                 CS->getAggregateElement(2)}));
++  }
++  auto *NewInitializer = ConstantArray::get(NewTy, ArrElts);
++  auto *NewGV = new GlobalVariable(
++      *GV->getParent(), NewTy, GV->isConstant(), GV->getLinkage(),
++      NewInitializer, "", 0, GV->getThreadLocalMode(), GV->getAddressSpace(),
++      GV->isExternallyInitialized());
++  NewGV->copyAttributesFrom(GV);
++  NewGV->takeName(GV);
++  GV->eraseFromParent();
++  return NewGV;
++}
+ 
+-  Value *V = transValue(BV, nullptr, nullptr);
+-  cast<GlobalValue>(V)->setLinkage(GlobalValue::AppendingLinkage);
++void SPIRVToLLVM::transGlobalCtorDtors(SPIRVVariable *BV) {
++  auto *V = cast<GlobalVariable>(transValue(BV, nullptr, nullptr));
++  V = mutateGlobalCtorDtors(V);
++  V->setLinkage(GlobalVariable::AppendingLinkage);
+ }
+ 
+ void SPIRVToLLVM::createCXXStructor(const char *ListName,
+diff --git a/test/transcoding/SPV_INTEL_function_pointers/global_ctor_dtor_opaque.spt b/test/transcoding/SPV_INTEL_function_pointers/global_ctor_dtor_opaque.spt
+new file mode 100644
+index 00000000..ddf4bd1c
+--- /dev/null
++++ b/test/transcoding/SPV_INTEL_function_pointers/global_ctor_dtor_opaque.spt
+@@ -0,0 +1,54 @@
++119734787 65792 393230 22 0
++2 Capability Addresses
++2 Capability Linkage
++2 Capability Kernel
++2 Capability Int64
++2 Capability Int8
++2 Capability FunctionPointersINTEL
++8 Extension "SPV_INTEL_function_pointers"
++5 ExtInstImport 1 "OpenCL.std"
++3 MemoryModel 2 2
++3 Source 0 0
++7 Name 14 "asan.module_ctor"
++7 Name 15 "asan.module_ctor"
++7 Name 20 "llvm.global_ctors"
++
++9 Decorate 20 LinkageAttributes "llvm.global_ctors" Export
++4 TypeInt 3 32 0
++4 TypeInt 4 8 0
++4 TypeInt 6 64 0
++5 Constant 6 7 1 0
++4 Constant 3 10 1
++4 TypePointer 5 7 4
++5 TypeStruct 2 3 5 5
++
++4 TypeArray 8 2 7
++4 TypePointer 9 7 8
++2 TypeVoid 11
++3 TypeFunction 12 11
++4 TypePointer 13 7 12
++4 ConstantFunctionPointerINTEL 13 15 14
++5 SpecConstantOp 5 16 124 15
++3 ConstantNull 5 17
++6 ConstantComposite 2 18 10 16 17
++
++4 ConstantComposite 8 19 18
++
++5 Variable 9 20 7 19
++
++
++
++5 Function 11 14 0 12
++
++2 Label 21
++1 Return
++
++1 FunctionEnd
++
++; RUN: llvm-spirv %s --to-binary -o %t.spv
++; RUN: llvm-spirv -r %t.spv -o %t.bc
++; RUN: llvm-dis %t.bc -o %t.ll
++; RUN: FileCheck --input-file=%t.ll %s --check-prefix=CHECK-LLVM
++
++; CHECK-LLVM: [[TY:%.*]] = type { i32, void ()*, i8* }
++; CHECK-LLVM: @llvm.global_ctors = appending global [1 x [[TY]]] [[[TY]] { i32 1, void ()* @asan.module_ctor, i8* null }]
+-- 
+2.20.1
+

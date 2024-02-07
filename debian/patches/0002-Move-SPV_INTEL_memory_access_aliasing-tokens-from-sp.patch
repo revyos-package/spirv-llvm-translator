@@ -1,0 +1,416 @@
+From 78734fd80bb010d05f35bf498e6b9d70e2383590 Mon Sep 17 00:00:00 2001
+From: DmitryBushev <dmitry.bushev@intel.com>
+Date: Tue, 8 Feb 2022 13:22:23 +0300
+Subject: [PATCH 002/172] Move SPV_INTEL_memory_access_aliasing tokens from
+ spirv_internal
+
+SPV_INTEL_memory_access_aliasing is implemented inside SPIRV-Headers
+and moved out from spirv_internal.hpp
+
+(cherry picked from commit a46d8a65cbadc1defa1a2815cd53630699af986e)
+---
+ lib/SPIRV/SPIRVReader.cpp                    | 10 +++-----
+ lib/SPIRV/SPIRVWriter.cpp                    | 20 +++++++--------
+ lib/SPIRV/libSPIRV/SPIRVDecorate.h           | 10 +++-----
+ lib/SPIRV/libSPIRV/SPIRVEntry.cpp            |  4 +--
+ lib/SPIRV/libSPIRV/SPIRVEnum.h               |  7 +++---
+ lib/SPIRV/libSPIRV/SPIRVInstruction.h        |  8 +++---
+ lib/SPIRV/libSPIRV/SPIRVMemAliasingINTEL.h   |  4 +--
+ lib/SPIRV/libSPIRV/SPIRVModule.cpp           |  6 ++---
+ lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h        |  7 +++---
+ lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h         |  3 +++
+ lib/SPIRV/libSPIRV/SPIRVOpCodeEnumInternal.h |  3 ---
+ lib/SPIRV/libSPIRV/spirv_internal.hpp        | 26 --------------------
+ spirv-headers-tag.conf                       |  2 +-
+ 13 files changed, 39 insertions(+), 71 deletions(-)
+
+diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
+index 812b1816..dd856076 100644
+--- a/lib/SPIRV/SPIRVReader.cpp
++++ b/lib/SPIRV/SPIRVReader.cpp
+@@ -3513,18 +3513,16 @@ void SPIRVToLLVM::transMemAliasingINTELDecorations(SPIRVValue *BV, Value *V) {
+   Instruction *Inst = dyn_cast<Instruction>(V);
+   if (!Inst)
+     return;
+-  if (BV->hasDecorateId(internal::DecorationAliasScopeINTEL)) {
++  if (BV->hasDecorateId(DecorationAliasScopeINTEL)) {
+     std::vector<SPIRVId> AliasListIds;
+-    AliasListIds =
+-        BV->getDecorationIdLiterals(internal::DecorationAliasScopeINTEL);
++    AliasListIds = BV->getDecorationIdLiterals(DecorationAliasScopeINTEL);
+     assert(AliasListIds.size() == 1 &&
+            "Memory aliasing decorations must have one argument");
+     addMemAliasMetadata(Inst, AliasListIds[0], LLVMContext::MD_alias_scope);
+   }
+-  if (BV->hasDecorateId(internal::DecorationNoAliasINTEL)) {
++  if (BV->hasDecorateId(DecorationNoAliasINTEL)) {
+     std::vector<SPIRVId> AliasListIds;
+-    AliasListIds =
+-        BV->getDecorationIdLiterals(internal::DecorationNoAliasINTEL);
++    AliasListIds = BV->getDecorationIdLiterals(DecorationNoAliasINTEL);
+     assert(AliasListIds.size() == 1 &&
+            "Memory aliasing decorations must have one argument");
+     addMemAliasMetadata(Inst, AliasListIds[0], LLVMContext::MD_noalias);
+diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
+index 9170f5ad..e5b8dee1 100644
+--- a/lib/SPIRV/SPIRVWriter.cpp
++++ b/lib/SPIRV/SPIRVWriter.cpp
+@@ -1628,10 +1628,10 @@ LLVMToSPIRVBase::transValueWithoutDecoration(Value *V, SPIRVBasicBlock *BB,
+       MemoryAccess[0] |= MemoryAccessNontemporalMask;
+     if (MDNode *AliasingListMD = ST->getMetadata(LLVMContext::MD_alias_scope))
+       transAliasingMemAccess(BM, AliasingListMD, MemoryAccess,
+-                             internal::MemoryAccessAliasScopeINTELMask);
++                             MemoryAccessAliasScopeINTELMaskMask);
+     if (MDNode *AliasingListMD = ST->getMetadata(LLVMContext::MD_noalias))
+       transAliasingMemAccess(BM, AliasingListMD, MemoryAccess,
+-                             internal::MemoryAccessNoAliasINTELMask);
++                             MemoryAccessNoAliasINTELMaskMask);
+     if (MemoryAccess.front() == 0)
+       MemoryAccess.clear();
+ 
+@@ -1659,10 +1659,10 @@ LLVMToSPIRVBase::transValueWithoutDecoration(Value *V, SPIRVBasicBlock *BB,
+       MemoryAccess[0] |= MemoryAccessNontemporalMask;
+     if (MDNode *AliasingListMD = LD->getMetadata(LLVMContext::MD_alias_scope))
+       transAliasingMemAccess(BM, AliasingListMD, MemoryAccess,
+-                             internal::MemoryAccessAliasScopeINTELMask);
++                             MemoryAccessAliasScopeINTELMaskMask);
+     if (MDNode *AliasingListMD = LD->getMetadata(LLVMContext::MD_noalias))
+       transAliasingMemAccess(BM, AliasingListMD, MemoryAccess,
+-                             internal::MemoryAccessNoAliasINTELMask);
++                             MemoryAccessNoAliasINTELMaskMask);
+     if (MemoryAccess.front() == 0)
+       MemoryAccess.clear();
+     return mapValue(V, BM->addLoadInst(transValue(LD->getPointerOperand(), BB),
+@@ -2125,8 +2125,8 @@ static void transMetadataDecorations(Metadata *MD, SPIRVEntry *Target) {
+     switch (static_cast<size_t>(DecoKind)) {
+       ONE_STRING_DECORATION_CASE(MemoryINTEL, spv)
+       ONE_STRING_DECORATION_CASE(UserSemantic, spv)
+-      ONE_INT_DECORATION_CASE(AliasScopeINTEL, spv::internal, SPIRVId)
+-      ONE_INT_DECORATION_CASE(NoAliasINTEL, spv::internal, SPIRVId)
++      ONE_INT_DECORATION_CASE(AliasScopeINTEL, spv, SPIRVId)
++      ONE_INT_DECORATION_CASE(NoAliasINTEL, spv, SPIRVId)
+       ONE_INT_DECORATION_CASE(InitiationIntervalINTEL, spv::internal, SPIRVWord)
+       ONE_INT_DECORATION_CASE(MaxConcurrencyINTEL, spv::internal, SPIRVWord)
+       ONE_INT_DECORATION_CASE(PipelineEnableINTEL, spv::internal, SPIRVWord)
+@@ -2345,16 +2345,16 @@ void LLVMToSPIRVBase::transMemAliasingINTELDecorations(Instruction *Inst,
+         addMemAliasingINTELInstructions(BM, AliasingListMD);
+     if (!MemAliasList)
+       return;
+-    BV->addDecorate(new SPIRVDecorateId(
+-          internal::DecorationAliasScopeINTEL, BV, MemAliasList->getId()));
++    BV->addDecorate(new SPIRVDecorateId(DecorationAliasScopeINTEL, BV,
++                                        MemAliasList->getId()));
+   }
+   if (MDNode *AliasingListMD = Inst->getMetadata(LLVMContext::MD_noalias)) {
+     auto *MemAliasList =
+         addMemAliasingINTELInstructions(BM, AliasingListMD);
+     if (!MemAliasList)
+       return;
+-    BV->addDecorate(new SPIRVDecorateId(
+-          internal::DecorationNoAliasINTEL, BV, MemAliasList->getId()));
++    BV->addDecorate(
++        new SPIRVDecorateId(DecorationNoAliasINTEL, BV, MemAliasList->getId()));
+   }
+ }
+ 
+diff --git a/lib/SPIRV/libSPIRV/SPIRVDecorate.h b/lib/SPIRV/libSPIRV/SPIRVDecorate.h
+index 68102958..60177d1f 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVDecorate.h
++++ b/lib/SPIRV/libSPIRV/SPIRVDecorate.h
+@@ -203,8 +203,8 @@ public:
+ 
+   llvm::Optional<ExtensionID> getRequiredExtension() const override {
+     switch (static_cast<int>(Dec)) {
+-    case internal::DecorationAliasScopeINTEL:
+-    case internal::DecorationNoAliasINTEL:
++    case DecorationAliasScopeINTEL:
++    case DecorationNoAliasINTEL:
+       return ExtensionID::SPV_INTEL_memory_access_aliasing;
+     default:
+       return {};
+@@ -666,16 +666,14 @@ class SPIRVDecorateAliasScopeINTEL : public SPIRVDecorateId {
+ public:
+   // Complete constructor for SPIRVDecorateAliasScopeINTEL
+   SPIRVDecorateAliasScopeINTEL(SPIRVEntry *TheTarget, SPIRVId AliasList)
+-      : SPIRVDecorateId(spv::internal::DecorationAliasScopeINTEL, TheTarget,
+-                        AliasList){};
++      : SPIRVDecorateId(spv::DecorationAliasScopeINTEL, TheTarget, AliasList){};
+ };
+ 
+ class SPIRVDecorateNoAliasINTEL : public SPIRVDecorateId {
+ public:
+   // Complete constructor for SPIRVDecorateNoAliasINTEL
+   SPIRVDecorateNoAliasINTEL(SPIRVEntry *TheTarget, SPIRVId AliasList)
+-      : SPIRVDecorateId(spv::internal::DecorationNoAliasINTEL, TheTarget,
+-                        AliasList){};
++      : SPIRVDecorateId(spv::DecorationNoAliasINTEL, TheTarget, AliasList){};
+ };
+ 
+ class SPIRVDecorateInitiationIntervalINTEL : public SPIRVDecorate {
+diff --git a/lib/SPIRV/libSPIRV/SPIRVEntry.cpp b/lib/SPIRV/libSPIRV/SPIRVEntry.cpp
+index d1c96b8c..4c3a4c35 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVEntry.cpp
++++ b/lib/SPIRV/libSPIRV/SPIRVEntry.cpp
+@@ -275,8 +275,8 @@ void SPIRVEntry::addDecorate(Decoration Kind) {
+ 
+ void SPIRVEntry::addDecorate(Decoration Kind, SPIRVWord Literal) {
+   switch (static_cast<int>(Kind)) {
+-  case internal::DecorationAliasScopeINTEL:
+-  case internal::DecorationNoAliasINTEL:
++  case DecorationAliasScopeINTEL:
++  case DecorationNoAliasINTEL:
+     addDecorate(new SPIRVDecorateId(Kind, this, Literal));
+     return;
+   default:
+diff --git a/lib/SPIRV/libSPIRV/SPIRVEnum.h b/lib/SPIRV/libSPIRV/SPIRVEnum.h
+index 8ef07628..a9c660cc 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVEnum.h
++++ b/lib/SPIRV/libSPIRV/SPIRVEnum.h
+@@ -423,6 +423,9 @@ template <> inline void SPIRVMap<Decoration, SPIRVCapVec>::init() {
+                {CapabilityFunctionFloatControlINTEL});
+   ADD_VEC_INIT(DecorationSingleElementVectorINTEL,
+                {CapabilityVectorComputeINTEL});
++  ADD_VEC_INIT(DecorationAliasScopeINTEL,
++               {CapabilityMemoryAccessAliasingINTEL});
++  ADD_VEC_INIT(DecorationNoAliasINTEL, {CapabilityMemoryAccessAliasingINTEL});
+   ADD_VEC_INIT(internal::DecorationCallableFunctionINTEL,
+                {internal::CapabilityFastCompositeINTEL});
+   ADD_VEC_INIT(DecorationMediaBlockIOINTEL, {CapabilityVectorComputeINTEL});
+@@ -431,10 +434,6 @@ template <> inline void SPIRVMap<Decoration, SPIRVCapVec>::init() {
+   ADD_VEC_INIT(DecorationFuseLoopsInFunctionINTEL, {CapabilityLoopFuseINTEL});
+   ADD_VEC_INIT(internal::DecorationMathOpDSPModeINTEL,
+                {internal::CapabilityFPGADSPControlINTEL});
+-  ADD_VEC_INIT(internal::DecorationAliasScopeINTEL,
+-               {internal::CapabilityMemoryAccessAliasingINTEL});
+-  ADD_VEC_INIT(internal::DecorationNoAliasINTEL,
+-               {internal::CapabilityMemoryAccessAliasingINTEL});
+   ADD_VEC_INIT(internal::DecorationInitiationIntervalINTEL,
+                {internal::CapabilityFPGAInvocationPipeliningAttributesINTEL});
+   ADD_VEC_INIT(internal::DecorationMaxConcurrencyINTEL,
+diff --git a/lib/SPIRV/libSPIRV/SPIRVInstruction.h b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
+index 3cd774c9..0b6dba7a 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVInstruction.h
++++ b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
+@@ -397,12 +397,12 @@ public:
+       assert(MemoryAccess.size() > 1 && "Alignment operand is missing");
+       Alignment = MemoryAccess[MemAccessNumParam++];
+     }
+-    if (MemoryAccess[0] & internal::MemoryAccessAliasScopeINTELMask) {
++    if (MemoryAccess[0] & MemoryAccessAliasScopeINTELMaskMask) {
+       assert(MemoryAccess.size() > MemAccessNumParam &&
+           "Aliasing operand is missing");
+       AliasScopeInstID = MemoryAccess[MemAccessNumParam++];
+     }
+-    if (MemoryAccess[0] & internal::MemoryAccessNoAliasINTELMask) {
++    if (MemoryAccess[0] & MemoryAccessNoAliasINTELMaskMask) {
+       assert(MemoryAccess.size() > MemAccessNumParam &&
+           "Aliasing operand is missing");
+       NoAliasInstID = MemoryAccess[MemAccessNumParam];
+@@ -415,10 +415,10 @@ public:
+     return getMemoryAccessMask() & MemoryAccessNontemporalMask;
+   }
+   SPIRVWord isAliasScope() const {
+-    return getMemoryAccessMask() & internal::MemoryAccessAliasScopeINTELMask;
++    return getMemoryAccessMask() & MemoryAccessAliasScopeINTELMaskMask;
+   }
+   SPIRVWord isNoAlias() const {
+-    return getMemoryAccessMask() & internal::MemoryAccessNoAliasINTELMask;
++    return getMemoryAccessMask() & MemoryAccessNoAliasINTELMaskMask;
+   }
+   SPIRVWord getMemoryAccessMask() const { return TheMemoryAccessMask; }
+   SPIRVWord getAlignment() const { return Alignment; }
+diff --git a/lib/SPIRV/libSPIRV/SPIRVMemAliasingINTEL.h b/lib/SPIRV/libSPIRV/SPIRVMemAliasingINTEL.h
+index aec4454f..08066b08 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVMemAliasingINTEL.h
++++ b/lib/SPIRV/libSPIRV/SPIRVMemAliasingINTEL.h
+@@ -68,7 +68,7 @@ public:
+   void validate() const override { SPIRVEntry::validate(); }
+ 
+   SPIRVCapVec getRequiredCapability() const override {
+-    return getVec(internal::CapabilityMemoryAccessAliasingINTEL);
++    return getVec(CapabilityMemoryAccessAliasingINTEL);
+   }
+ 
+   llvm::Optional<ExtensionID> getRequiredExtension() const override {
+@@ -83,7 +83,7 @@ protected:
+ };
+ 
+ #define _SPIRV_OP(x, ...)                                                      \
+-  typedef SPIRVMemAliasingINTELGeneric<internal::Op##x, __VA_ARGS__> SPIRV##x;
++  typedef SPIRVMemAliasingINTELGeneric<Op##x, __VA_ARGS__> SPIRV##x;
+ // Intel Memory Alasing Instructions
+ _SPIRV_OP(AliasDomainDeclINTEL, 2)
+ _SPIRV_OP(AliasScopeDeclINTEL, 2)
+diff --git a/lib/SPIRV/libSPIRV/SPIRVModule.cpp b/lib/SPIRV/libSPIRV/SPIRVModule.cpp
+index 9a4ef5fa..e0f87f6f 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVModule.cpp
++++ b/lib/SPIRV/libSPIRV/SPIRVModule.cpp
+@@ -655,9 +655,9 @@ void SPIRVModuleImpl::layoutEntry(SPIRVEntry *E) {
+     addTo(AsmTargetVec, E);
+     break;
+   }
+-  case internal::OpAliasDomainDeclINTEL:
+-  case internal::OpAliasScopeDeclINTEL:
+-  case internal::OpAliasScopeListDeclINTEL: {
++  case OpAliasDomainDeclINTEL:
++  case OpAliasScopeDeclINTEL:
++  case OpAliasScopeListDeclINTEL: {
+     addTo(AliasInstMDVec, E);
+     break;
+   }
+diff --git a/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h b/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
+index 3346293b..fe63feb2 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
++++ b/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
+@@ -170,12 +170,12 @@ template <> inline void SPIRVMap<Decoration, std::string>::init() {
+   add(DecorationVectorComputeCallableFunctionINTEL,
+       "VectorComputeCallableFunctionINTEL");
+   add(DecorationMediaBlockIOINTEL, "MediaBlockIOINTEL");
++  add(DecorationAliasScopeINTEL, "AliasScopeINTEL");
++  add(DecorationNoAliasINTEL, "NoAliasINTEL");
+ 
+   // From spirv_internal.hpp
+   add(internal::DecorationCallableFunctionINTEL, "CallableFunctionINTEL");
+   add(internal::DecorationMathOpDSPModeINTEL, "MathOpDSPModeINTEL");
+-  add(internal::DecorationAliasScopeINTEL, "AliasScopeINTEL");
+-  add(internal::DecorationNoAliasINTEL, "NoAliasINTEL");
+   add(internal::DecorationInitiationIntervalINTEL, "InitiationIntervalINTEL");
+   add(internal::DecorationMaxConcurrencyINTEL, "MaxConcurrencyINTEL");
+   add(internal::DecorationPipelineEnableINTEL, "PipelineEnableINTEL");
+@@ -571,13 +571,12 @@ template <> inline void SPIRVMap<Capability, std::string>::init() {
+   add(CapabilityLongConstantCompositeINTEL, "LongConstantCompositeINTEL");
+   add(CapabilityAtomicFloat16AddEXT, "AtomicFloat16AddEXT");
+   add(CapabilityDebugInfoModuleINTEL, "DebugInfoModuleINTEL");
++  add(CapabilityMemoryAccessAliasingINTEL, "MemoryAccessAliasingINTEL");
+ 
+   // From spirv_internal.hpp
+   add(internal::CapabilityFPGADSPControlINTEL, "FPGADSPControlINTEL");
+   add(internal::CapabilityFastCompositeINTEL, "FastCompositeINTEL");
+   add(internal::CapabilityOptNoneINTEL, "OptNoneINTEL");
+-  add(internal::CapabilityMemoryAccessAliasingINTEL,
+-      "MemoryAccessAliasingINTEL");
+   add(internal::CapabilityFPGAInvocationPipeliningAttributesINTEL,
+       "FPGAInvocationPipeliningAttributesINTEL");
+   add(internal::CapabilityTokenTypeINTEL, "TokenTypeINTEL");
+diff --git a/lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h b/lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h
+index 748257b9..13ac2063 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h
++++ b/lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h
+@@ -522,6 +522,9 @@ _SPIRV_OP(ArbitraryFloatPowINTEL, 5880)
+ _SPIRV_OP(ArbitraryFloatPowRINTEL, 5881)
+ _SPIRV_OP(ArbitraryFloatPowNINTEL, 5882)
+ _SPIRV_OP(LoopControlINTEL, 5887)
++_SPIRV_OP(AliasDomainDeclINTEL, 5911)
++_SPIRV_OP(AliasScopeDeclINTEL, 5912)
++_SPIRV_OP(AliasScopeListDeclINTEL, 5913)
+ _SPIRV_OP(FixedSqrtINTEL, 5923)
+ _SPIRV_OP(FixedRecipINTEL, 5924)
+ _SPIRV_OP(FixedRsqrtINTEL, 5925)
+diff --git a/lib/SPIRV/libSPIRV/SPIRVOpCodeEnumInternal.h b/lib/SPIRV/libSPIRV/SPIRVOpCodeEnumInternal.h
+index 67387786..8f22a52a 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVOpCodeEnumInternal.h
++++ b/lib/SPIRV/libSPIRV/SPIRVOpCodeEnumInternal.h
+@@ -1,9 +1,6 @@
+ #include "spirv_internal.hpp"
+ 
+ _SPIRV_OP_INTERNAL(Forward, internal::OpForward)
+-_SPIRV_OP_INTERNAL(AliasDomainDeclINTEL, internal::OpAliasDomainDeclINTEL)
+-_SPIRV_OP_INTERNAL(AliasScopeDeclINTEL, internal::OpAliasScopeDeclINTEL)
+-_SPIRV_OP_INTERNAL(AliasScopeListDeclINTEL, internal::OpAliasScopeListDeclINTEL)
+ _SPIRV_OP_INTERNAL(TypeTokenINTEL, internal::OpTypeTokenINTEL)
+ _SPIRV_OP_INTERNAL(ArithmeticFenceINTEL, internal::OpArithmeticFenceINTEL)
+ _SPIRV_OP_INTERNAL(ConvertFToBF16INTEL, internal::OpConvertFToBF16INTEL)
+diff --git a/lib/SPIRV/libSPIRV/spirv_internal.hpp b/lib/SPIRV/libSPIRV/spirv_internal.hpp
+index 88f33daa..417a52a7 100644
+--- a/lib/SPIRV/libSPIRV/spirv_internal.hpp
++++ b/lib/SPIRV/libSPIRV/spirv_internal.hpp
+@@ -35,9 +35,6 @@ enum InternalLinkageType {
+ };
+ 
+ enum InternalOp {
+-  IOpAliasDomainDeclINTEL = 5911,
+-  IOpAliasScopeDeclINTEL = 5912,
+-  IOpAliasScopeListDeclINTEL = 5913,
+   IOpTypeTokenINTEL = 6113,
+   IOpConvertFToBF16INTEL = 6116,
+   IOpConvertBF16ToFINTEL = 6117,
+@@ -53,8 +50,6 @@ enum InternalOp {
+ 
+ enum InternalDecoration {
+   IDecMathOpDSPModeINTEL = 5909,
+-  IDecAliasScopeINTEL = 5914,
+-  IDecNoAliasINTEL = 5915,
+   IDecInitiationIntervalINTEL = 5917,
+   IDecMaxConcurrencyINTEL = 5918,
+   IDecPipelineEnableINTEL = 5919,
+@@ -68,7 +63,6 @@ enum InternalDecoration {
+ 
+ enum InternalCapability {
+   ICapFPGADSPControlINTEL = 5908,
+-  ICapMemoryAccessAliasingINTEL = 5910,
+   ICapFPGAInvocationPipeliningAttributesINTEL = 5916,
+   ICapRuntimeAlignedAttributeINTEL = 5939,
+   ICapFastCompositeINTEL = 6093,
+@@ -83,11 +77,6 @@ enum InternalCapability {
+ 
+ enum InternalFunctionControlMask { IFunctionControlOptNoneINTELMask = 0x10000 };
+ 
+-enum InternalMemoryAccessMask {
+-  IMemAccessAliasScopeINTELMask = 0x10000,
+-  IMemAccessNoAliasINTELMask = 0x20000
+-};
+-
+ enum InternalExecutionMode {
+   IExecModeFastCompositeKernelINTEL = 6088,
+   IExecModeStreamingInterfaceINTEL = 6154
+@@ -118,19 +107,11 @@ _SPIRV_OP(BuiltIn, GlobalHWThreadIDINTEL)
+ #undef _SPIRV_OP
+ 
+ constexpr Op OpForward = static_cast<Op>(IOpForward);
+-constexpr Op OpAliasDomainDeclINTEL = static_cast<Op>(IOpAliasDomainDeclINTEL);
+-constexpr Op OpAliasScopeDeclINTEL = static_cast<Op>(IOpAliasScopeDeclINTEL);
+-constexpr Op OpAliasScopeListDeclINTEL =
+-    static_cast<Op>(IOpAliasScopeListDeclINTEL);
+ constexpr Op OpTypeTokenINTEL = static_cast<Op>(IOpTypeTokenINTEL);
+ constexpr Op OpArithmeticFenceINTEL = static_cast<Op>(IOpArithmeticFenceINTEL);
+ constexpr Op OpConvertFToBF16INTEL = static_cast<Op>(IOpConvertFToBF16INTEL);
+ constexpr Op OpConvertBF16ToFINTEL = static_cast<Op>(IOpConvertBF16ToFINTEL);
+ 
+-constexpr Decoration DecorationAliasScopeINTEL =
+-    static_cast<Decoration>(IDecAliasScopeINTEL );
+-constexpr Decoration DecorationNoAliasINTEL =
+-    static_cast<Decoration>(IDecNoAliasINTEL);
+ constexpr Decoration DecorationInitiationIntervalINTEL =
+     static_cast<Decoration>(IDecInitiationIntervalINTEL);
+ constexpr Decoration DecorationMaxConcurrencyINTEL =
+@@ -156,8 +137,6 @@ constexpr Capability CapabilityOptNoneINTEL =
+     static_cast<Capability>(ICapOptNoneINTEL);
+ constexpr Capability CapabilityFPGADSPControlINTEL =
+     static_cast<Capability>(ICapFPGADSPControlINTEL);
+-constexpr Capability CapabilityMemoryAccessAliasingINTEL =
+-    static_cast<Capability>(ICapMemoryAccessAliasingINTEL);
+ constexpr Capability CapabilityFPGAInvocationPipeliningAttributesINTEL =
+     static_cast<Capability>(ICapFPGAInvocationPipeliningAttributesINTEL);
+ constexpr Capability CapabilityTokenTypeINTEL =
+@@ -177,11 +156,6 @@ constexpr FunctionControlMask FunctionControlOptNoneINTELMask =
+ constexpr Decoration DecorationMathOpDSPModeINTEL =
+     static_cast<Decoration>(IDecMathOpDSPModeINTEL);
+ 
+-constexpr MemoryAccessMask MemoryAccessAliasScopeINTELMask =
+-    static_cast<MemoryAccessMask>(IMemAccessAliasScopeINTELMask);
+-constexpr MemoryAccessMask MemoryAccessNoAliasINTELMask =
+-    static_cast<MemoryAccessMask>(IMemAccessNoAliasINTELMask);
+-
+ constexpr ExecutionMode ExecutionModeFastCompositeKernelINTEL =
+     static_cast<ExecutionMode>(IExecModeFastCompositeKernelINTEL);
+ constexpr ExecutionMode ExecutionModeStreamingInterfaceINTEL =
+diff --git a/spirv-headers-tag.conf b/spirv-headers-tag.conf
+index 9c9b01bc..f362bb41 100644
+--- a/spirv-headers-tag.conf
++++ b/spirv-headers-tag.conf
+@@ -1 +1 @@
+-20b02de995803ff500c66b9098038204b1ba13a1
++6a55fade62dec6a406a5a721148f88a2211cbefa
+-- 
+2.20.1
+

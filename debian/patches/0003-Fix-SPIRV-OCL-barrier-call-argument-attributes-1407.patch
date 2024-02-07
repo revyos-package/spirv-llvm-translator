@@ -1,0 +1,41 @@
+From e68eeeb317df47d9e60050e0c170bd05050ff216 Mon Sep 17 00:00:00 2001
+From: Wenju He <wenju.he@intel.com>
+Date: Fri, 18 Feb 2022 15:38:33 +0800
+Subject: [PATCH 003/172] Fix SPIRV -> OCL barrier call argument attributes
+ (#1407)
+
+The first arg of CI is not used as arg in NewCI. So its attribute should
+be removed from attributes of NewCI.
+
+(cherry picked from commit f797de28e4f2d87e0f401faa453460f1e6e5a7ee)
+---
+ lib/SPIRV/SPIRVToOCL20.cpp | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/lib/SPIRV/SPIRVToOCL20.cpp b/lib/SPIRV/SPIRVToOCL20.cpp
+index 27fe8d2e..f384ab70 100644
+--- a/lib/SPIRV/SPIRVToOCL20.cpp
++++ b/lib/SPIRV/SPIRVToOCL20.cpp
+@@ -97,6 +97,10 @@ void SPIRVToOCL20Base::visitCallSPIRVMemoryBarrier(CallInst *CI) {
+ 
+ void SPIRVToOCL20Base::visitCallSPIRVControlBarrier(CallInst *CI) {
+   AttributeList Attrs = CI->getCalledFunction()->getAttributes();
++  SmallVector<AttributeSet, 2> ArgAttrs = {Attrs.getParamAttrs(1),
++                                           Attrs.getParamAttrs(2)};
++  AttributeList NewAttrs = AttributeList::get(*Ctx, Attrs.getFnAttrs(),
++                                              Attrs.getRetAttrs(), ArgAttrs);
+   mutateCallInstOCL(
+       M, CI,
+       [=](CallInst *, std::vector<Value *> &Args) {
+@@ -116,7 +120,7 @@ void SPIRVToOCL20Base::visitCallSPIRVControlBarrier(CallInst *CI) {
+         return (ExecScope == ScopeWorkgroup) ? kOCLBuiltinName::WorkGroupBarrier
+                                              : kOCLBuiltinName::SubGroupBarrier;
+       },
+-      &Attrs);
++      &NewAttrs);
+ }
+ 
+ std::string SPIRVToOCL20Base::mapFPAtomicName(Op OC) {
+-- 
+2.20.1
+

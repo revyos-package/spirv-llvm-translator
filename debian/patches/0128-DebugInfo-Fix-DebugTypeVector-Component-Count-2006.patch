@@ -1,0 +1,93 @@
+From b5c67ae5d3c95d260c51f9d8452e2aa16f9c4578 Mon Sep 17 00:00:00 2001
+From: Dmitry Sidorov <dmitry.sidorov@intel.com>
+Date: Fri, 19 May 2023 22:06:06 +0200
+Subject: [PATCH 128/172] [DebugInfo] Fix DebugTypeVector Component Count
+ (#2006)
+
+It should be OpConstant
+
+Signed-off-by: Sidorov, Dmitry <dmitry.sidorov@intel.com>
+---
+ lib/SPIRV/LLVMToSPIRVDbgTran.cpp    |  2 ++
+ test/DebugInfo/X86/rematerialize.ll | 10 ++++++++++
+ test/DebugInfo/X86/sycl-vec-3.ll    |  8 ++++++++
+ test/DebugInfo/X86/vector.ll        | 10 ++++++++++
+ 4 files changed, 30 insertions(+)
+
+diff --git a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+index 3059bac6..33d3010d 100644
+--- a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
++++ b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+@@ -698,6 +698,8 @@ LLVMToSPIRVDbgTran::transDbgArrayTypeNonSemantic(const DICompositeType *AT) {
+     if (AT->isVector()) {
+       assert(N == 1 && "Multidimensional vector is not expected!");
+       Ops[ComponentCountIdx] = static_cast<SPIRVWord>(Count->getZExtValue());
++      if (isNonSemanticDebugInfo())
++        transformToConstant(Ops, {ComponentCountIdx});
+       return BM->addDebugInfo(SPIRVDebug::TypeVector, getVoidTy(), Ops);
+     }
+     Ops[SubrangesIdx + I] = transDbgEntry(SR)->getId();
+diff --git a/test/DebugInfo/X86/rematerialize.ll b/test/DebugInfo/X86/rematerialize.ll
+index 762d8e92..76e1ca8c 100644
+--- a/test/DebugInfo/X86/rematerialize.ll
++++ b/test/DebugInfo/X86/rematerialize.ll
+@@ -3,6 +3,16 @@
+ ; RUN: llvm-spirv %t.bc -o %t.spv
+ ; RUN: llvm-spirv -r %t.spv -o - | llvm-dis -o %t.ll
+ 
++; RUN: llc -O2 -filetype=obj -mtriple=x86_64-unknown-linux-gnu < %t.ll \
++; RUN: | llvm-dwarfdump -debug-line - | FileCheck %s
++
++; RUN: llvm-spirv %t.bc -o %t.spv --spirv-debug-info-version=nonsemantic-shader-100
++; RUN: llvm-spirv -r %t.spv -o - | llvm-dis -o %t.ll
++; RUN: llc -O2 -filetype=obj -mtriple=x86_64-unknown-linux-gnu < %t.ll \
++; RUN: | llvm-dwarfdump -debug-line - | FileCheck %s
++
++; RUN: llvm-spirv %t.bc -o %t.spv --spirv-debug-info-version=nonsemantic-shader-200
++; RUN: llvm-spirv -r %t.spv -o - | llvm-dis -o %t.ll
+ ; RUN: llc -O2 -filetype=obj -mtriple=x86_64-unknown-linux-gnu < %t.ll \
+ ; RUN: | llvm-dwarfdump -debug-line - | FileCheck %s
+ ;
+diff --git a/test/DebugInfo/X86/sycl-vec-3.ll b/test/DebugInfo/X86/sycl-vec-3.ll
+index dcfacc46..d0fa9c2c 100644
+--- a/test/DebugInfo/X86/sycl-vec-3.ll
++++ b/test/DebugInfo/X86/sycl-vec-3.ll
+@@ -3,6 +3,14 @@
+ ; RUN: llvm-spirv -r %t.spv -o %t.rev.bc
+ ; RUN: llvm-dis %t.rev.bc -o - | FileCheck %s
+ 
++; RUN: llvm-spirv %t.bc -o %t.spv -spirv-debug-info-version=nonsemantic-shader-100
++; RUN: llvm-spirv -r %t.spv -o %t.rev.bc
++; RUN: llvm-dis %t.rev.bc -o - | FileCheck %s
++
++; RUN: llvm-spirv %t.bc -o %t.spv -spirv-debug-info-version=nonsemantic-shader-200
++; RUN: llvm-spirv -r %t.spv -o %t.rev.bc
++; RUN: llvm-dis %t.rev.bc -o - | FileCheck %s
++
+ target datalayout = "e-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024-n8:16:32:64"
+ target triple = "spir64-unknown-unknown"
+ 
+diff --git a/test/DebugInfo/X86/vector.ll b/test/DebugInfo/X86/vector.ll
+index 13894948..3cf2c3a8 100644
+--- a/test/DebugInfo/X86/vector.ll
++++ b/test/DebugInfo/X86/vector.ll
+@@ -5,6 +5,16 @@
+ ; RUN: llc -mtriple=x86_64-linux-gnu -O0 -filetype=obj -o %t %t.ll
+ ; RUN: llvm-dwarfdump -debug-info %t | FileCheck %s
+ 
++; RUN: llvm-spirv %t.bc -o %t.spv -spirv-debug-info-version=nonsemantic-shader-100
++; RUN: llvm-spirv -r %t.spv -o - | llvm-dis -o %t.ll
++; RUN: llc -mtriple=x86_64-linux-gnu -O0 -filetype=obj -o %t %t.ll
++; RUN: llvm-dwarfdump -debug-info %t | FileCheck %s
++
++; RUN: llvm-spirv %t.bc -o %t.spv -spirv-debug-info-version=nonsemantic-shader-200
++; RUN: llvm-spirv -r %t.spv -o - | llvm-dis -o %t.ll
++; RUN: llc -mtriple=x86_64-linux-gnu -O0 -filetype=obj -o %t %t.ll
++; RUN: llvm-dwarfdump -debug-info %t | FileCheck %s
++
+ target datalayout = "e-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024-n8:16:32:64"
+ target triple = "spir64-unknown-unknown"
+ 
+-- 
+2.20.1
+
