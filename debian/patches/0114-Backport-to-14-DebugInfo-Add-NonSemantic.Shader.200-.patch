@@ -1,0 +1,312 @@
+From 018259d7e07f2c539f7aebee0e64050dae33ca46 Mon Sep 17 00:00:00 2001
+From: Dmitry Sidorov <dmitry.sidorov@intel.com>
+Date: Wed, 26 Apr 2023 20:34:10 +0200
+Subject: [PATCH 114/172] [Backport to 14][DebugInfo] Add
+ NonSemantic.Shader.200 debug operations (#1976)
+
+Spec:
+https://github.com/KhronosGroup/SPIRV-Registry/pull/186
+
+The patch also adds Constantness requirement for operands
+
+Signed-off-by: Sidorov, Dmitry <dmitry.sidorov@intel.com>
+---
+ lib/SPIRV/LLVMToSPIRVDbgTran.cpp   |   9 ++-
+ lib/SPIRV/SPIRVToLLVMDbgTran.cpp   |   3 +-
+ lib/SPIRV/libSPIRV/SPIRV.debug.h   | 126 ++++++++++++++++++-----------
+ test/DebugInfo/DebugInfoLLVMArg.ll |  16 +++-
+ test/DebugInfo/expr-opcode.ll      |   7 ++
+ 5 files changed, 110 insertions(+), 51 deletions(-)
+
+diff --git a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+index 7ad3ab3b..4459d134 100644
+--- a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
++++ b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+@@ -1383,7 +1383,9 @@ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgExpression(const DIExpression *Expr) {
+         SPIRV::DbgExpressionOpCodeMap::map(DWARFOpCode);
+     if (OpCountMap.find(OC) == OpCountMap.end())
+       report_fatal_error(llvm::Twine("unknown opcode found in DIExpression"));
+-    if (OC > SPIRVDebug::Fragment && !BM->allowExtraDIExpressions())
++    if (OC > SPIRVDebug::Fragment &&
++        !(BM->allowExtraDIExpressions() ||
++          BM->getDebugInfoEIS() == SPIRVEIS_NonSemantic_Shader_DebugInfo_200))
+       report_fatal_error(
+           llvm::Twine("unsupported opcode found in DIExpression"));
+ 
+@@ -1392,8 +1394,11 @@ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgExpression(const DIExpression *Expr) {
+     Op[OpCodeIdx] = OC;
+     if (isNonSemanticDebugInfo())
+       transformToConstant(Op, {OpCodeIdx});
+-    for (unsigned J = 1; J < OpCount; ++J)
++    for (unsigned J = 1; J < OpCount; ++J) {
+       Op[J] = Expr->getElement(++I);
++      if (isNonSemanticDebugInfo())
++        transformToConstant(Op, {J});
++    }
+     auto *Operation = BM->addDebugInfo(SPIRVDebug::Operation, getVoidTy(), Op);
+     Operations.push_back(Operation->getId());
+   }
+diff --git a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+index 76afed75..8fac9f99 100644
+--- a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
++++ b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+@@ -1205,7 +1205,8 @@ MDNode *SPIRVToLLVMDbgTran::transExpression(const SPIRVExtInst *DebugInst) {
+             Operands, OpCodeIdx, DebugInst->getExtSetKind()));
+     Ops.push_back(SPIRV::DbgExpressionOpCodeMap::rmap(OpCode));
+     for (unsigned I = 1, E = Operands.size(); I < E; ++I) {
+-      Ops.push_back(Operands[I]);
++      Ops.push_back(
++          getConstantValueOrLiteral(Operands, I, DebugInst->getExtSetKind()));
+     }
+   }
+   ArrayRef<uint64_t> Addr(Ops.data(), Ops.size());
+diff --git a/lib/SPIRV/libSPIRV/SPIRV.debug.h b/lib/SPIRV/libSPIRV/SPIRV.debug.h
+index 1fc6875a..7809aecf 100644
+--- a/lib/SPIRV/libSPIRV/SPIRV.debug.h
++++ b/lib/SPIRV/libSPIRV/SPIRV.debug.h
+@@ -260,23 +260,25 @@ enum ExpressionOpCode {
+   DerefSize  = 146,
+   XderefSize = 147,
+   Nop        = 148,
+-  PushObjectAddress = 149,
+-  Call2             = 150,
+-  Call4             = 151,
+-  CallRef           = 152,
+-  FormTlsAddress    = 153,
+-  CallFrameCfa      = 154,
+-  ImplicitValue     = 155,
+-  ImplicitPointer   = 156,
+-  Addrx             = 157,
+-  Constx            = 158,
+-  EntryValue        = 159,
+-  ConstTypeOp       = 160,
+-  RegvalType        = 161,
+-  DerefType         = 162,
+-  XderefType        = 163,
+-  Reinterpret       = 164,
+-  LLVMArg           = 165,
++  PushObjectAddress  = 149,
++  Call2              = 150,
++  Call4              = 151,
++  CallRef            = 152,
++  FormTlsAddress     = 153,
++  CallFrameCfa       = 154,
++  ImplicitValue      = 155,
++  ImplicitPointer    = 156,
++  Addrx              = 157,
++  Constx             = 158,
++  EntryValue         = 159,
++  ConstTypeOp        = 160,
++  RegvalType         = 161,
++  DerefType          = 162,
++  XderefType         = 163,
++  Reinterpret        = 164,
++  LLVMArg            = 165,
++  ImplicitPointerTag = 166,
++  TagOffset          = 167,
+ };
+ 
+ enum ImportedEntityTag {
+@@ -675,15 +677,15 @@ static std::map<ExpressionOpCode, unsigned> OpCountMap {
+   { Constu,             2 },
+   { Fragment,           3 },
+   { Convert,            3 },
+-  // { Addr,               2 }, /* not implemented */
+-  // { Const1u,            2 },
+-  // { Const1s,            2 },
+-  // { Const2u,            2 },
+-  // { Const2s,            2 },
+-  // { Const4u,            2 },
+-  // { Const4s,            2 },
+-  // { Const8u,            2 },
+-  // { Const8s,            2 },
++  { Addr,               2 },
++  { Const1u,            2 },
++  { Const1s,            2 },
++  { Const2u,            2 },
++  { Const2s,            2 },
++  { Const4u,            2 },
++  { Const4s,            2 },
++  { Const8u,            2 },
++  { Const8s,            2 },
+   { Consts,             2 },
+   { Dup,                1 },
+   { Drop,               1 },
+@@ -702,14 +704,14 @@ static std::map<ExpressionOpCode, unsigned> OpCountMap {
+   { Shr,                1 },
+   { Shra,               1 },
+   { Xor,                1 },
+-  // { Bra,                2 }, /* not implemented */
++  { Bra,                2 },
+   { Eq,                 1 },
+   { Ge,                 1 },
+   { Gt,                 1 },
+   { Le,                 1 },
+   { Lt,                 1 },
+   { Ne,                 1 },
+-  // { Skip,               2 }, /* not implemented */
++  { Skip,               2 },
+   { Lit0,               1 },
+   { Lit1,               1 },
+   { Lit2,               1 },
+@@ -807,29 +809,31 @@ static std::map<ExpressionOpCode, unsigned> OpCountMap {
+   { Breg30,             2 },
+   { Breg31,             2 },
+   { Regx,               2 },
+-  // { Fbreg,              1 }, /* not implemented */
++  { Fbreg,              1 },
+   { Bregx,              3 },
+-  // { Piece,              2 }, /* not implemented */
++  { Piece,              2 },
+   { DerefSize,          2 },
+   { XderefSize,         2 },
+   { Nop,                1 },
+   { PushObjectAddress,  1 },
+-  // { Call2,              2 }, /* not implemented */
+-  // { Call4,              2 },
+-  // { CallRef,            2 },
+-  // { FormTlsAddress,     1 },
+-  // { CallFrameCfa,       1 },
+-  // { ImplicitValue,      3 },
+-  // { ImplicitPointer,    3 },
+-  // { Addrx,              2 },
+-  // { Constx,             2 },
+-  // { EntryValue,         3 },
+-  // { ConstTypeOp,        4 },
+-  // { RegvalType,         3 },
+-  // { DerefType,          3 },
+-  // { XderefType,         3 },
+-  // { Reinterpret,        2 },
++  { Call2,              2 },
++  { Call4,              2 },
++  { CallRef,            2 },
++  { FormTlsAddress,     1 },
++  { CallFrameCfa,       1 },
++  { ImplicitValue,      3 },
++  { ImplicitPointer,    3 },
++  { Addrx,              2 },
++  { Constx,             2 },
++  { EntryValue,         3 },
++  { ConstTypeOp,        4 },
++  { RegvalType,         3 },
++  { DerefType,          3 },
++  { XderefType,         3 },
++  { Reinterpret,        2 },
+   { LLVMArg,            2 },
++  { ImplicitPointerTag, 2 },
++  { TagOffset,          2 },
+ };
+ }
+ 
+@@ -1121,6 +1125,15 @@ inline void DbgExpressionOpCodeMap::init() {
+   add(dwarf::DW_OP_constu,              SPIRVDebug::Constu);
+   add(dwarf::DW_OP_LLVM_fragment,       SPIRVDebug::Fragment);
+   add(dwarf::DW_OP_LLVM_convert,        SPIRVDebug::Convert);
++  add(dwarf::DW_OP_addr,                SPIRVDebug::Addr);
++  add(dwarf::DW_OP_const1u,             SPIRVDebug::Const1u);
++  add(dwarf::DW_OP_const1s,             SPIRVDebug::Const1s);
++  add(dwarf::DW_OP_const2u,             SPIRVDebug::Const2u);
++  add(dwarf::DW_OP_const2s,             SPIRVDebug::Const2s);
++  add(dwarf::DW_OP_const4u,             SPIRVDebug::Const4u);
++  add(dwarf::DW_OP_const4s,             SPIRVDebug::Const4s);
++  add(dwarf::DW_OP_const8u,             SPIRVDebug::Const8u);
++  add(dwarf::DW_OP_const8s,             SPIRVDebug::Const8s);
+   add(dwarf::DW_OP_consts,              SPIRVDebug::Consts);
+   add(dwarf::DW_OP_dup,                 SPIRVDebug::Dup);
+   add(dwarf::DW_OP_drop,                SPIRVDebug::Drop);
+@@ -1146,6 +1159,7 @@ inline void DbgExpressionOpCodeMap::init() {
+   add(dwarf::DW_OP_le,                  SPIRVDebug::Le);
+   add(dwarf::DW_OP_lt,                  SPIRVDebug::Lt);
+   add(dwarf::DW_OP_ne,                  SPIRVDebug::Ne);
++  add(dwarf::DW_OP_skip,                SPIRVDebug::Skip);
+   add(dwarf::DW_OP_lit0,                SPIRVDebug::Lit0);
+   add(dwarf::DW_OP_lit1,                SPIRVDebug::Lit1);
+   add(dwarf::DW_OP_lit2,                SPIRVDebug::Lit2);
+@@ -1244,11 +1258,31 @@ inline void DbgExpressionOpCodeMap::init() {
+   add(dwarf::DW_OP_breg31,              SPIRVDebug::Breg31);
+   add(dwarf::DW_OP_regx,                SPIRVDebug::Regx);
+   add(dwarf::DW_OP_bregx,               SPIRVDebug::Bregx);
++  add(dwarf::DW_OP_piece,               SPIRVDebug::Piece);
+   add(dwarf::DW_OP_deref_size,          SPIRVDebug::DerefSize );
+   add(dwarf::DW_OP_xderef_size,         SPIRVDebug::XderefSize );
+   add(dwarf::DW_OP_nop,                 SPIRVDebug::Nop);
+   add(dwarf::DW_OP_push_object_address, SPIRVDebug::PushObjectAddress );
+-  add(dwarf::DW_OP_LLVM_arg,            SPIRVDebug::LLVMArg);
++
++
++  add(dwarf::DW_OP_call2,                 SPIRVDebug::Call2);
++  add(dwarf::DW_OP_call4,                 SPIRVDebug::Call4);
++  add(dwarf::DW_OP_call_ref,              SPIRVDebug::CallRef);
++  add(dwarf::DW_OP_form_tls_address,      SPIRVDebug::FormTlsAddress);
++  add(dwarf::DW_OP_call_frame_cfa,        SPIRVDebug::CallFrameCfa);
++  add(dwarf::DW_OP_implicit_value,        SPIRVDebug::ImplicitValue);
++  add(dwarf::DW_OP_implicit_pointer,      SPIRVDebug::ImplicitPointer);
++  add(dwarf::DW_OP_addrx,                 SPIRVDebug::Addrx);
++  add(dwarf::DW_OP_constx,                SPIRVDebug::Constx);
++  add(dwarf::DW_OP_entry_value,           SPIRVDebug::EntryValue);
++  add(dwarf::DW_OP_const_type,            SPIRVDebug::ConstTypeOp);
++  add(dwarf::DW_OP_regval_type,           SPIRVDebug::RegvalType);
++  add(dwarf::DW_OP_deref_type,            SPIRVDebug::DerefType);
++  add(dwarf::DW_OP_xderef_type,           SPIRVDebug::XderefType);
++  add(dwarf::DW_OP_reinterpret,           SPIRVDebug::Reinterpret);
++  add(dwarf::DW_OP_LLVM_arg,              SPIRVDebug::LLVMArg);
++  add(dwarf::DW_OP_LLVM_implicit_pointer, SPIRVDebug::ImplicitPointerTag);
++  add(dwarf::DW_OP_LLVM_tag_offset,       SPIRVDebug::TagOffset);
+ }
+ 
+ typedef SPIRVMap<dwarf::Tag, SPIRVDebug::ImportedEntityTag>
+diff --git a/test/DebugInfo/DebugInfoLLVMArg.ll b/test/DebugInfo/DebugInfoLLVMArg.ll
+index a78a04d8..db522396 100644
+--- a/test/DebugInfo/DebugInfoLLVMArg.ll
++++ b/test/DebugInfo/DebugInfoLLVMArg.ll
+@@ -1,15 +1,27 @@
+ ; This test checks that DW_OP_LLVM_arg operation goes through round trip translation correctly.
++; DW_OP_LLVM_arg is mapped on 165 in SPIR-V
+ 
+ ; RUN: llvm-as %s -o %t.bc
+ ; RUN: llvm-spirv %t.bc -o %t.spv --spirv-allow-extra-diexpressions
+ ; RUN: llvm-spirv %t.spv -to-text -o %t.spt
+-; RUN: FileCheck < %t.spt %s --check-prefix=CHECK-SPIRV
++; RUN: FileCheck < %t.spt %s --check-prefixes=CHECK-SPIRV,CHECK-SPIRV-OCL
+ ; RUN: llvm-spirv -r %t.spv -o %t.rev.bc
+ ; RUN: llvm-dis < %t.rev.bc | FileCheck %s --check-prefix=CHECK-LLVM
+ 
++; RUN: llvm-as %s -o %t.bc
++; RUN: llvm-spirv %t.bc -o %t.spv --spirv-debug-info-version=nonsemantic-shader-200
++; RUN: llvm-spirv %t.spv -to-text -o %t.spt
++; RUN: FileCheck < %t.spt %s --check-prefixes=CHECK-SPIRV,CHECK-SPIRV-200
++; RUN: llvm-spirv -r %t.spv -o %t.rev.bc
++; RUN: llvm-dis < %t.rev.bc | FileCheck %s --check-prefix=CHECK-LLVM
++
++; CHECK-SPIRV-200-DAG: TypeInt [[#INT32:]] 32 0
++; CHECK-SPIRV-200-DAG: Constant [[#INT32]] [[#CONST0:]] 0
++; CHECK-SPIRV-200-DAG: Constant [[#INT32]] [[#CONST165:]] 165
+ ; CHECK-SPIRV: Undef [[#]] [[#UNDEF:]]
+ ; CHECK-SPIRV: [[#DEBUG_LOC_VAR:]] [[#]] DebugLocalVariable
+-; CHECK-SPIRV: [[#EXPR_ARG_0:]] [[#]] DebugOperation 165 0
++; CHECK-SPIRV-OCL: [[#EXPR_ARG_0:]] [[#]] DebugOperation 165 0
++; CHECK-SPIRV-200: [[#EXPR_ARG_0:]] [[#]] DebugOperation [[#CONST165]] [[#CONST0]]
+ ; CHECK-SPIRV: [[#EXPRESSION:]] [[#]] DebugExpression [[#EXPR_ARG_0]]
+ ; CHECK-SPIRV: [[#EXPR_EMPTY:]] [[#]] DebugExpression{{ *$}}
+ ; CHECK-SPIRV: Variable [[#]] [[#VAL:]]
+diff --git a/test/DebugInfo/expr-opcode.ll b/test/DebugInfo/expr-opcode.ll
+index 482d7af8..b2a0911e 100644
+--- a/test/DebugInfo/expr-opcode.ll
++++ b/test/DebugInfo/expr-opcode.ll
+@@ -6,6 +6,13 @@
+ ; RUN: llc -mtriple=%triple -dwarf-version=5 -filetype=obj -O0 < %t.rev.ll
+ ; RUN: llc -mtriple=%triple -dwarf-version=4 -filetype=obj -O0 < %t.rev.ll
+ 
++; RUN: llvm-spirv %t.bc -o %t.spv --spirv-debug-info-version=nonsemantic-shader-200
++; RUN: llvm-spirv -r %t.spv -o - | llvm-dis -o %t.rev.ll
++; RUN: FileCheck %s --input-file %t.rev.ll
++
++; RUN: llc -mtriple=%triple -dwarf-version=5 -filetype=obj -O0 < %t.rev.ll
++; RUN: llc -mtriple=%triple -dwarf-version=4 -filetype=obj -O0 < %t.rev.ll
++
+ ; CHECK: DW_OP_constu, 42
+ ; CHECK: DW_OP_plus_uconst, 42
+ ; CHECK: DW_OP_plus
+-- 
+2.20.1
+

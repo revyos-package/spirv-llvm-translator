@@ -1,0 +1,35 @@
+From 79a2fba393dfb3e57f2d22e5a3307fb8f7d87e7c Mon Sep 17 00:00:00 2001
+From: LU-JOHN <111294400+LU-JOHN@users.noreply.github.com>
+Date: Fri, 31 Mar 2023 11:53:15 -0500
+Subject: [PATCH 104/172] [Backport to 14]Check for nullptr from getDbgInst
+ (#1919)
+
+Ensure that ExprLB is non-NULL before using it.
+
+Signed-off-by: Lu, John <john.lu@intel.com>
+---
+ lib/SPIRV/SPIRVToLLVMDbgTran.cpp | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+index 7ebc9a44..6c647b57 100644
+--- a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
++++ b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+@@ -271,10 +271,11 @@ SPIRVToLLVMDbgTran::transTypeArrayOpenCL(const SPIRVExtInst *DebugInst) {
+                                                        UpperBound, nullptr));
+       continue;
+     }
+-    if (auto *ExprUB = getDbgInst<SPIRVDebug::Expression>(Ops[I])) {
++    const SPIRVExtInst *ExprUB, *ExprLB;
++    if ((ExprUB = getDbgInst<SPIRVDebug::Expression>(Ops[I])) &&
++        (ExprLB =
++             getDbgInst<SPIRVDebug::Expression>(Ops[Ops.size() / 2 + I]))) {
+       auto *UpperBound = transDebugInst<DIExpression>(ExprUB);
+-      auto *ExprLB =
+-          getDbgInst<SPIRVDebug::Expression>(Ops[Ops.size() / 2 + I]);
+       auto *LowerBound = transDebugInst<DIExpression>(ExprLB);
+       Subscripts.push_back(Builder.getOrCreateSubrange(nullptr, LowerBound,
+                                                        UpperBound, nullptr));
+-- 
+2.20.1
+

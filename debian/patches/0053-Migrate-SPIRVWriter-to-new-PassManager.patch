@@ -1,0 +1,206 @@
+From 531b6dd83fac3ac46c977a0b84b4792421bc1614 Mon Sep 17 00:00:00 2001
+From: Sven van Haastregt <sven.vanhaastregt@arm.com>
+Date: Mon, 13 Jun 2022 12:38:33 +0100
+Subject: [PATCH 053/172] Migrate SPIRVWriter to new PassManager
+
+(cherry picked from commit eb8e9adc7b05ab89c59b63286e4a34f188748b59)
+---
+ CMakeLists.txt                  |  1 +
+ lib/SPIRV/CMakeLists.txt        |  1 +
+ lib/SPIRV/SPIRVWriter.cpp       | 59 +++++++++++++++++++++++----------
+ lib/SPIRV/SPIRVWriter.h         | 15 ++++++---
+ tools/llvm-spirv/CMakeLists.txt |  1 +
+ 5 files changed, 55 insertions(+), 22 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e482da80..80d99eb2 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -81,6 +81,7 @@ if(LLVM_SPIRV_BUILD_EXTERNAL)
+       BitWriter
+       CodeGen
+       Core
++      Passes
+       Support
+       TransformUtils
+       ${LLVM_TEST_COMPONENTS}
+diff --git a/lib/SPIRV/CMakeLists.txt b/lib/SPIRV/CMakeLists.txt
+index 3d177c18..9448b569 100644
+--- a/lib/SPIRV/CMakeLists.txt
++++ b/lib/SPIRV/CMakeLists.txt
+@@ -43,6 +43,7 @@ add_llvm_library(LLVMSPIRVLib
+     Demangle
+     IRReader
+     Linker
++    Passes
+     Support
+     TransformUtils
+   DEPENDS
+diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
+index 39cda84e..bddb02b2 100644
+--- a/lib/SPIRV/SPIRVWriter.cpp
++++ b/lib/SPIRV/SPIRVWriter.cpp
+@@ -40,6 +40,8 @@
+ 
+ #include "SPIRVWriter.h"
+ #include "LLVMToSPIRVDbgTran.h"
++#include "OCLToSPIRV.h"
++#include "PreprocessMetadata.h"
+ #include "SPIRVAsm.h"
+ #include "SPIRVBasicBlock.h"
+ #include "SPIRVEntry.h"
+@@ -49,9 +51,16 @@
+ #include "SPIRVInstruction.h"
+ #include "SPIRVInternal.h"
+ #include "SPIRVLLVMUtil.h"
++#include "SPIRVLowerBitCastToNonStandardType.h"
++#include "SPIRVLowerBool.h"
++#include "SPIRVLowerConstExpr.h"
++#include "SPIRVLowerMemmove.h"
++#include "SPIRVLowerOCLBlocks.h"
++#include "SPIRVLowerSaddWithOverflow.h"
+ #include "SPIRVMDWalker.h"
+ #include "SPIRVMemAliasingINTEL.h"
+ #include "SPIRVModule.h"
++#include "SPIRVRegularizeLLVM.h"
+ #include "SPIRVType.h"
+ #include "SPIRVUtil.h"
+ #include "SPIRVValue.h"
+@@ -60,6 +69,7 @@
+ #include "llvm/ADT/DenseMap.h"
+ #include "llvm/ADT/StringSwitch.h"
+ #include "llvm/ADT/Triple.h"
++#include "llvm/Analysis/LoopAnalysisManager.h"
+ #include "llvm/Analysis/LoopInfo.h"
+ #include "llvm/Analysis/ValueTracking.h"
+ #include "llvm/IR/Constants.h"
+@@ -70,14 +80,15 @@
+ #include "llvm/IR/InstrTypes.h"
+ #include "llvm/IR/Instructions.h"
+ #include "llvm/IR/IntrinsicInst.h"
+-#include "llvm/IR/LegacyPassManager.h"
+ #include "llvm/IR/Module.h"
+ #include "llvm/IR/Operator.h"
+ #include "llvm/Pass.h"
++#include "llvm/Passes/PassBuilder.h"
+ #include "llvm/Support/Casting.h"
+ #include "llvm/Support/CommandLine.h"
+ #include "llvm/Support/Debug.h"
+-#include "llvm/Transforms/Utils.h" // loop-simplify pass
++#include "llvm/Transforms/Utils/LoopSimplify.h"
++#include "llvm/Transforms/Utils/Mem2Reg.h"
+ 
+ #include <cstdlib>
+ #include <functional>
+@@ -5132,19 +5143,20 @@ ModulePass *llvm::createLLVMToSPIRVLegacy(SPIRVModule *SMod) {
+   return new LLVMToSPIRVLegacy(SMod);
+ }
+ 
+-void addPassesForSPIRV(legacy::PassManager &PassMgr,
++void addPassesForSPIRV(ModulePassManager &PassMgr,
+                        const SPIRV::TranslatorOpts &Opts) {
+   if (Opts.isSPIRVMemToRegEnabled())
+-    PassMgr.add(createPromoteMemoryToRegisterPass());
+-  PassMgr.add(createPreprocessMetadataLegacy());
+-  PassMgr.add(createSPIRVLowerOCLBlocksLegacy());
+-  PassMgr.add(createOCLToSPIRVLegacy());
+-  PassMgr.add(createSPIRVRegularizeLLVMLegacy());
+-  PassMgr.add(createSPIRVLowerConstExprLegacy());
+-  PassMgr.add(createSPIRVLowerBoolLegacy());
+-  PassMgr.add(createSPIRVLowerMemmoveLegacy());
+-  PassMgr.add(createSPIRVLowerSaddWithOverflowLegacy());
+-  PassMgr.add(createSPIRVLowerBitCastToNonStandardTypeLegacy(Opts));
++    PassMgr.addPass(createModuleToFunctionPassAdaptor(PromotePass()));
++  PassMgr.addPass(PreprocessMetadataPass());
++  PassMgr.addPass(SPIRVLowerOCLBlocksPass());
++  PassMgr.addPass(OCLToSPIRVPass());
++  PassMgr.addPass(SPIRVRegularizeLLVMPass());
++  PassMgr.addPass(SPIRVLowerConstExprPass());
++  PassMgr.addPass(SPIRVLowerBoolPass());
++  PassMgr.addPass(SPIRVLowerMemmovePass());
++  PassMgr.addPass(SPIRVLowerSaddWithOverflowPass());
++  PassMgr.addPass(createModuleToFunctionPassAdaptor(
++      SPIRVLowerBitCastToNonStandardTypePass(Opts)));
+ }
+ 
+ bool isValidLLVMModule(Module *M, SPIRVErrorLog &ErrorLog) {
+@@ -5174,17 +5186,30 @@ bool runSpirvWriterPasses(Module *M, std::ostream *OS, std::string &ErrMsg,
+   if (!isValidLLVMModule(M, BM->getErrorLog()))
+     return false;
+ 
+-  legacy::PassManager PassMgr;
++  ModulePassManager PassMgr;
+   addPassesForSPIRV(PassMgr, Opts);
+   if (WriteSpirv) {
+     // Run loop simplify pass in order to avoid duplicate OpLoopMerge
+     // instruction. It can happen in case of continue operand in the loop.
+     if (hasLoopMetadata(M))
+-      PassMgr.add(createLoopSimplifyPass());
+-    PassMgr.add(createLLVMToSPIRVLegacy(BM.get()));
++      PassMgr.addPass(createModuleToFunctionPassAdaptor(LoopSimplifyPass()));
++    PassMgr.addPass(LLVMToSPIRVPass(BM.get()));
+   }
+ 
+-  PassMgr.run(*M);
++  LoopAnalysisManager LAM;
++  CGSCCAnalysisManager CGAM;
++  FunctionAnalysisManager FAM;
++  ModuleAnalysisManager MAM;
++
++  PassBuilder PB;
++  PB.registerModuleAnalyses(MAM);
++  PB.registerCGSCCAnalyses(CGAM);
++  PB.registerFunctionAnalyses(FAM);
++  PB.registerLoopAnalyses(LAM);
++  MAM.registerPass([&] { return OCLTypeToSPIRVPass(); });
++  PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
++
++  PassMgr.run(*M, MAM);
+ 
+   if (BM->getError(ErrMsg) != SPIRVEC_Success)
+     return false;
+diff --git a/lib/SPIRV/SPIRVWriter.h b/lib/SPIRV/SPIRVWriter.h
+index f9428b68..2ace25b1 100644
+--- a/lib/SPIRV/SPIRVWriter.h
++++ b/lib/SPIRV/SPIRVWriter.h
+@@ -242,15 +242,20 @@ private:
+                                                    Function *F);
+ };
+ 
+-class LLVMToSPIRVPass : public PassInfoMixin<LLVMToSPIRVPass>,
+-                        public LLVMToSPIRVBase {
++class LLVMToSPIRVPass : public PassInfoMixin<LLVMToSPIRVPass> {
+ public:
++  LLVMToSPIRVPass(SPIRVModule *SMod) : SMod(SMod) {}
++
+   llvm::PreservedAnalyses run(llvm::Module &M,
+                               llvm::ModuleAnalysisManager &MAM) {
+-    setOCLTypeToSPIRV(&MAM.getResult<OCLTypeToSPIRVPass>(M));
+-    return runLLVMToSPIRV(M) ? llvm::PreservedAnalyses::none()
+-                             : llvm::PreservedAnalyses::all();
++    LLVMToSPIRVBase PassInstance(SMod);
++    PassInstance.setOCLTypeToSPIRV(&MAM.getResult<OCLTypeToSPIRVPass>(M));
++    return PassInstance.runLLVMToSPIRV(M) ? llvm::PreservedAnalyses::none()
++                                          : llvm::PreservedAnalyses::all();
+   }
++
++private:
++  SPIRVModule *SMod;
+ };
+ 
+ class LLVMToSPIRVLegacy : public ModulePass, public LLVMToSPIRVBase {
+diff --git a/tools/llvm-spirv/CMakeLists.txt b/tools/llvm-spirv/CMakeLists.txt
+index 860953a9..7d9ab4f7 100644
+--- a/tools/llvm-spirv/CMakeLists.txt
++++ b/tools/llvm-spirv/CMakeLists.txt
+@@ -4,6 +4,7 @@ set(LLVM_LINK_COMPONENTS
+   BitReader
+   BitWriter
+   Core
++  Passes
+   Support
+   TransformUtils
+ )
+-- 
+2.20.1
+

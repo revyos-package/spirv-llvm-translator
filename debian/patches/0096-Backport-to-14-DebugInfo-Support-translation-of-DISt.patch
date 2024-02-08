@@ -1,0 +1,398 @@
+From 70e9de0f8f3600020ca6de37718006c1aeef6a9f Mon Sep 17 00:00:00 2001
+From: Viktoria Maximova <viktoria.maksimova@intel.com>
+Date: Fri, 10 Mar 2023 03:19:02 -0800
+Subject: [PATCH 096/172] [Backport to 14][DebugInfo] Support translation of
+ DIStringType (#1877)
+
+This type instruction describes a string, mostly for Fortran 90.
+
+Spec:
+KhronosGroup/SPIRV-Registry#186
+---
+ lib/SPIRV/LLVMToSPIRVDbgTran.cpp              |  43 ++++++
+ lib/SPIRV/LLVMToSPIRVDbgTran.h                |   1 +
+ lib/SPIRV/SPIRVToLLVMDbgTran.cpp              |  47 ++++++
+ lib/SPIRV/SPIRVToLLVMDbgTran.h                |   2 +
+ lib/SPIRV/SPIRVWriter.cpp                     |  12 +-
+ lib/SPIRV/libSPIRV/SPIRV.debug.h              |  15 +-
+ lib/SPIRV/libSPIRV/SPIRVExtInst.h             |   1 +
+ .../DebugInfoStringType.ll                    | 134 ++++++++++++++++++
+ 8 files changed, 250 insertions(+), 5 deletions(-)
+ create mode 100644 test/DebugInfo/NonSemanticKernel100/DebugInfoStringType.ll
+
+diff --git a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+index fa6430d1..bda5f28f 100644
+--- a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
++++ b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+@@ -283,6 +283,12 @@ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgEntryImpl(const MDNode *MDN) {
+       else
+         return getDebugInfoNone();
+ 
++    case dwarf::DW_TAG_string_type: {
++      if (BM->getDebugInfoEIS() == SPIRVEIS_NonSemantic_Kernel_DebugInfo_100)
++        return transDbgStringType(cast<DIStringType>(DIEntry));
++      return getDebugInfoNone();
++    }
++
+     case dwarf::DW_TAG_const_type:
+     case dwarf::DW_TAG_restrict_type:
+     case dwarf::DW_TAG_volatile_type:
+@@ -731,6 +737,43 @@ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgSubrangeType(const DISubrange *ST) {
+   return BM->addDebugInfo(SPIRVDebug::TypeSubrange, getVoidTy(), Ops);
+ }
+ 
++SPIRVEntry *LLVMToSPIRVDbgTran::transDbgStringType(const DIStringType *ST) {
++  using namespace SPIRVDebug::Operand::TypeString;
++  SPIRVWordVec Ops(MinOperandCount);
++  Ops[NameIdx] = BM->getString(ST->getName().str())->getId();
++
++  Ops[BaseTypeIdx] = ST->getEncoding()
++                         ? getDebugInfoNoneId() /*TODO: replace with basetype*/
++                         : getDebugInfoNoneId();
++
++  auto TransOperand = [&](llvm::Metadata *DIMD) -> SPIRVWord {
++    if (auto *DIExpr = dyn_cast_or_null<DIExpression>(DIMD))
++      return transDbgExpression(DIExpr)->getId();
++    if (auto *DIVar = dyn_cast_or_null<DIVariable>(DIMD)) {
++      if (const DILocalVariable *LV = dyn_cast<DILocalVariable>(DIVar))
++        return transDbgLocalVariable(LV)->getId();
++      if (const DIGlobalVariable *GV = dyn_cast<DIGlobalVariable>(DIVar))
++        return transDbgGlobalVariable(GV)->getId();
++    }
++    return getDebugInfoNoneId();
++  };
++
++  Ops[DataLocationIdx] = TransOperand(ST->getRawStringLocationExp());
++
++  ConstantInt *Size = getUInt(M, ST->getSizeInBits());
++  Ops[SizeIdx] = SPIRVWriter->transValue(Size, nullptr)->getId();
++
++  if (auto *StrLengthExp = ST->getRawStringLengthExp()) {
++    Ops[LengthAddrIdx] = TransOperand(StrLengthExp);
++  } else if (auto *StrLengthVar = ST->getRawStringLength()) {
++    Ops[LengthAddrIdx] = TransOperand(StrLengthVar);
++  } else {
++    Ops[LengthAddrIdx] = getDebugInfoNoneId();
++  }
++
++  return BM->addDebugInfo(SPIRVDebug::TypeString, getVoidTy(), Ops);
++}
++
+ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgTypeDef(const DIDerivedType *DT) {
+   using namespace SPIRVDebug::Operand::Typedef;
+   SPIRVWordVec Ops(OperandCount);
+diff --git a/lib/SPIRV/LLVMToSPIRVDbgTran.h b/lib/SPIRV/LLVMToSPIRVDbgTran.h
+index ae673b8c..ec030eda 100644
+--- a/lib/SPIRV/LLVMToSPIRVDbgTran.h
++++ b/lib/SPIRV/LLVMToSPIRVDbgTran.h
+@@ -109,6 +109,7 @@ private:
+   SPIRVEntry *transDbgArrayTypeNonSemantic(const DICompositeType *AT);
+   SPIRVEntry *transDbgArrayTypeDynamic(const DICompositeType *AT);
+   SPIRVEntry *transDbgSubrangeType(const DISubrange *ST);
++  SPIRVEntry *transDbgStringType(const DIStringType *ST);
+   SPIRVEntry *transDbgTypeDef(const DIDerivedType *D);
+   SPIRVEntry *transDbgSubroutineType(const DISubroutineType *FT);
+   SPIRVEntry *transDbgEnumType(const DICompositeType *ET);
+diff --git a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+index 0c5ec096..0f37fc9c 100644
+--- a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
++++ b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+@@ -451,6 +451,50 @@ SPIRVToLLVMDbgTran::transTypeSubrange(const SPIRVExtInst *DebugInst) {
+                                      TranslatedOps[2], TranslatedOps[3]);
+ }
+ 
++DIStringType *
++SPIRVToLLVMDbgTran::transTypeString(const SPIRVExtInst *DebugInst) {
++  using namespace SPIRVDebug::Operand::TypeString;
++  const SPIRVWordVec &Ops = DebugInst->getArguments();
++  assert(Ops.size() >= MinOperandCount && "Invalid number of operands");
++
++  StringRef Name = getString(Ops[NameIdx]);
++  unsigned Encoding = 0;
++  if (!getDbgInst<SPIRVDebug::DebugInfoNone>((Ops[BaseTypeIdx]))) {
++    DIBasicType *BaseTy =
++        transTypeBasic(BM->get<SPIRVExtInst>(Ops[BaseTypeIdx]));
++    Encoding = BaseTy->getEncoding();
++  }
++
++  DIExpression *StrLocationExp = nullptr;
++  if (!getDbgInst<SPIRVDebug::DebugInfoNone>(Ops[DataLocationIdx])) {
++    if (const auto *DIExpr =
++            getDbgInst<SPIRVDebug::Expression>(Ops[DataLocationIdx]))
++      StrLocationExp = transDebugInst<DIExpression>(DIExpr);
++  }
++
++  uint64_t SizeInBits = BM->get<SPIRVConstant>(Ops[SizeIdx])->getZExtIntValue();
++
++  DIExpression *StringLengthExp = nullptr;
++  DIVariable *StringLengthVar = nullptr;
++  if (!getDbgInst<SPIRVDebug::DebugInfoNone>(Ops[LengthAddrIdx])) {
++    if (const auto *GV =
++            getDbgInst<SPIRVDebug::GlobalVariable>(Ops[LengthAddrIdx]))
++      StringLengthVar = transDebugInst<DIGlobalVariable>(GV);
++    if (const auto *LV =
++            getDbgInst<SPIRVDebug::LocalVariable>(Ops[LengthAddrIdx]))
++      StringLengthVar = transDebugInst<DILocalVariable>(LV);
++    if (const auto *DIExpr =
++            getDbgInst<SPIRVDebug::Expression>(Ops[LengthAddrIdx]))
++      StringLengthExp = transDebugInst<DIExpression>(DIExpr);
++  }
++
++  return DIStringType::get(M->getContext(), dwarf::DW_TAG_string_type, Name,
++                           cast_or_null<Metadata>(StringLengthVar),
++                           cast_or_null<Metadata>(StringLengthExp),
++                           cast_or_null<Metadata>(StrLocationExp), SizeInBits,
++                           0 /*AlignInBits*/, Encoding);
++}
++
+ DINode *SPIRVToLLVMDbgTran::transTypeMember(const SPIRVExtInst *DebugInst) {
+   using namespace SPIRVDebug::Operand::TypeMember;
+   const SPIRVWordVec &Ops = DebugInst->getArguments();
+@@ -1002,6 +1046,9 @@ MDNode *SPIRVToLLVMDbgTran::transDebugInstImpl(const SPIRVExtInst *DebugInst) {
+   case SPIRVDebug::TypeSubrange:
+     return transTypeSubrange(DebugInst);
+ 
++  case SPIRVDebug::TypeString:
++    return transTypeString(DebugInst);
++
+   case SPIRVDebug::TypeVector:
+     return transTypeVector(DebugInst);
+ 
+diff --git a/lib/SPIRV/SPIRVToLLVMDbgTran.h b/lib/SPIRV/SPIRVToLLVMDbgTran.h
+index 8f3c5c70..f18a08c9 100644
+--- a/lib/SPIRV/SPIRVToLLVMDbgTran.h
++++ b/lib/SPIRV/SPIRVToLLVMDbgTran.h
+@@ -121,6 +121,8 @@ private:
+ 
+   DISubrange *transTypeSubrange(const SPIRVExtInst *DebugInst);
+ 
++  DIStringType *transTypeString(const SPIRVExtInst *DebugInst);
++
+   DINode *transTypeMember(const SPIRVExtInst *DebugInst);
+ 
+   DINode *transTypeEnum(const SPIRVExtInst *DebugInst);
+diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
+index c9938bbe..28ddc275 100644
+--- a/lib/SPIRV/SPIRVWriter.cpp
++++ b/lib/SPIRV/SPIRVWriter.cpp
+@@ -272,7 +272,8 @@ static bool recursiveType(const StructType *ST, const Type *Ty) {
+     }
+ 
+     if (auto *PtrTy = dyn_cast<PointerType>(Ty)) {
+-      Type *ElTy = PtrTy->getPointerElementType();
++			auto &C = Ty->getContext();
++			Type *ElTy = PtrTy->isOpaquePointerTy() ? Type::getVoidTy(C) : PtrTy->getPointerElementType();
+       if (auto *FTy = dyn_cast<FunctionType>(ElTy)) {
+         // If we have a function pointer, then argument types and return type of
+         // the referenced function also need to be checked
+@@ -334,7 +335,8 @@ SPIRVType *LLVMToSPIRVBase::transType(Type *T) {
+   // A pointer to image or pipe type in LLVM is translated to a SPIRV
+   // (non-pointer) image or pipe type.
+   if (T->isPointerTy()) {
+-    auto ET = T->getPointerElementType();
++	  auto &C = T->getContext();
++    auto ET = T->isOpaquePointerTy() ? Type::getVoidTy(C) : T->getPointerElementType();
+     auto AddrSpc = T->getPointerAddressSpace();
+     return transPointerType(ET, AddrSpc);
+   }
+@@ -723,8 +725,10 @@ SPIRVType *LLVMToSPIRVBase::transScavengedType(Value *V) {
+       Type *PointeeTy = TypePair.second;
+       if (!Ty) {
+         Ty = Arg.getType();
+-        if (Ty->isPointerTy())
+-          PointeeTy = Ty->getNonOpaquePointerElementType();
++        if (Ty->isPointerTy()) {
++			    auto &C = Ty->getContext();
++          PointeeTy = Ty->isOpaquePointerTy() ? Type::getVoidTy(C) : Ty->getNonOpaquePointerElementType();
++        }
+       }
+       SPIRVType *TransTy = nullptr;
+       if (Ty->isPointerTy())
+diff --git a/lib/SPIRV/libSPIRV/SPIRV.debug.h b/lib/SPIRV/libSPIRV/SPIRV.debug.h
+index f6bf63a8..54c28658 100644
+--- a/lib/SPIRV/libSPIRV/SPIRV.debug.h
++++ b/lib/SPIRV/libSPIRV/SPIRV.debug.h
+@@ -53,7 +53,8 @@ enum Instruction {
+   ModuleINTEL                   = 36,
+   InstCount                     = 37,
+   TypeSubrange                  = 110,
+-  TypeArrayDynamic              = 202
++  TypeArrayDynamic              = 202,
++  TypeString                    = 203
+ };
+ 
+ enum Flag {
+@@ -355,6 +356,18 @@ enum {
+ };
+ }
+ 
++namespace TypeString {
++enum {
++  NameIdx         = 0,
++  BaseTypeIdx     = 1,
++  DataLocationIdx = 2,
++  SizeIdx         = 3,
++  LengthAddrIdx   = 4,
++  LengthSizeIdx   = 5,
++  MinOperandCount = 5
++};
++}
++
+ namespace Typedef {
+ enum {
+   NameIdx      = 0,
+diff --git a/lib/SPIRV/libSPIRV/SPIRVExtInst.h b/lib/SPIRV/libSPIRV/SPIRVExtInst.h
+index 23576fc6..33e50332 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVExtInst.h
++++ b/lib/SPIRV/libSPIRV/SPIRVExtInst.h
+@@ -241,6 +241,7 @@ template <> inline void SPIRVMap<SPIRVDebugExtOpKind, std::string>::init() {
+   add(SPIRVDebug::TypeTemplate, "DebugTemplate");
+   add(SPIRVDebug::TypePtrToMember, "DebugTypePtrToMember,");
+   add(SPIRVDebug::TypeSubrange, "DebugTypeSubrange");
++  add(SPIRVDebug::TypeString, "DebugTypeString");
+   add(SPIRVDebug::Inheritance, "DebugInheritance");
+   add(SPIRVDebug::Function, "DebugFunction");
+   add(SPIRVDebug::FunctionDecl, "DebugFunctionDecl");
+diff --git a/test/DebugInfo/NonSemanticKernel100/DebugInfoStringType.ll b/test/DebugInfo/NonSemanticKernel100/DebugInfoStringType.ll
+new file mode 100644
+index 00000000..8bda22b3
+--- /dev/null
++++ b/test/DebugInfo/NonSemanticKernel100/DebugInfoStringType.ll
+@@ -0,0 +1,134 @@
++; RUN: llvm-as -opaque-pointers %s -o %t.bc
++; RUN: llvm-spirv --opaque-pointers -spirv-text %t.bc -o %t.spt --spirv-debug-info-version=nonsemantic-kernel-100
++; RUN: FileCheck < %t.spt %s -check-prefix=CHECK-SPIRV
++; RUN: llvm-spirv --opaque-pointers -to-binary %t.spt -o %t.spv
++
++; RUN: llvm-spirv --opaque-pointers -r %t.spv -o %t.rev.bc
++; RUN: llvm-dis -opaque-pointers %t.rev.bc -o %t.rev.ll
++; RUN: FileCheck < %t.rev.ll %s -check-prefix=CHECK-LLVM
++
++; CHECK-SPIRV: ExtInstImport [[#EISId:]] "NonSemantic.Kernel.DebugInfo.100"
++; CHECK-SPIRV: String [[#StrGreet:]] ".str.GREETING"
++; CHECK-SPIRV: String [[#StrChar1:]] "CHARACTER_1"
++; CHECK-SPIRV: String [[#StrChar2:]] "CHARACTER_2"
++; CHECK-SPIRV: String [[#StrChar3:]] "CHARACTER_3"
++; CHECK-SPIRV: TypeInt [[#TypeInt:]] 32 0
++; CHECK-SPIRV: Constant [[#TypeInt]] [[#ConstZero:]] 0
++; CHECK-SPIRV: Constant [[#TypeInt]] [[#Const80:]] 80
++; CHECK-SPIRV: TypeVoid [[#TypeVoid:]]
++
++; CHECK-SPIRV: [[#DINoneId:]] [[#EISId]] DebugInfoNone
++; CHECK-SPIRV: [[#DataLocExpr:]] [[#EISId]] DebugExpression [[#]] [[#]] {{$}}
++; CHECK-SPIRV: [[#LengthAddrExpr:]] [[#EISId]] DebugExpression [[#]] [[#]] {{$}}
++
++; DebugTypeString NameId BaseTyId DataLocId SizeId LengthAddrId
++; CHECK-SPIRV: [[#EISId]] DebugTypeString [[#StrGreet]] [[#DINoneId]] [[#DataLocExpr]] [[#ConstZero]] [[#LengthAddrExpr]]
++; CHECK-SPIRV: [[#EISId]] DebugTypeString [[#StrChar1]] [[#DINoneId]] [[#DINoneId]] [[#Const80]] [[#DINoneId]]
++
++; CHECK-SPIRV-COUNT-2: [[#LengthAddrVar:]] [[#EISId]] DebugLocalVariable
++; CHECK-SPIRV-NEXT: [[#EISId]] DebugTypeString [[#StrChar2]] [[#DINoneId]] [[#DINoneId]] [[#ConstZero]] [[#LengthAddrVar]]
++; CHECK-SPIRV-COUNT-3: [[#LengthAddrVar1:]] [[#EISId]] DebugLocalVariable
++; CHECK-SPIRV-NEXT: [[#EISId]] DebugTypeString [[#StrChar3]] [[#DINoneId]] [[#DINoneId]] [[#ConstZero]] [[#LengthAddrVar1]]
++; CHECK-SPIRV-COUNT-4: [[#LengthAddrVar2:]] [[#EISId]] DebugLocalVariable
++; CHECK-SPIRV-NEXT: [[#EISId]] DebugTypeString [[#StrChar2]] [[#DINoneId]] [[#DINoneId]] [[#ConstZero]] [[#LengthAddrVar2]]
++
++; CHECK-LLVM: !DICompileUnit(language: DW_LANG_Fortran95
++; CHECK-LLVM-DAG: !DIStringType(name: "CHARACTER_1", size: 80)
++; CHECK-LLVM-DAG: !DIStringType(name: ".str.GREETING", stringLengthExpression: !DIExpression(DW_OP_push_object_address, DW_OP_plus_uconst, 8), stringLocationExpression: !DIExpression(DW_OP_push_object_address, DW_OP_deref))
++; CHECK-LLVM-DAG: ![[#Scope:]] = distinct !DISubprogram(name: "print_greeting", linkageName: "print_greeting_"
++; CHECK-LLVM-DAG: ![[#StrLenMD:]] = !DILocalVariable(name: "STRING1.len", scope: ![[#Scope]]
++; CHECK-LLVM-DAG: !DIStringType(name: "CHARACTER_2", stringLength: ![[#StrLenMD]])
++; CHECK-LLVM-DAG: ![[#StrLenMD1:]] = !DILocalVariable(name: "STRING2.len", scope: ![[#Scope]]
++; CHECK-LLVM-DAG: !DIStringType(name: "CHARACTER_3", stringLength: ![[#StrLenMD1]])
++
++target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
++target triple = "spir64-unknown-unknown"
++
++%"QNCA_a0$i8*$rank0$" = type { ptr, i64, i64, i64, i64, i64 }
++
++@strlit = internal unnamed_addr constant [5 x i8] c"HELLO"
++@strlit.1 = internal unnamed_addr constant [3 x i8] c"TOM"
++@"hello_world_$GREETING" = internal global %"QNCA_a0$i8*$rank0$" zeroinitializer, !dbg !2
++@"hello_world_$NAME" = internal global [10 x i8] zeroinitializer, align 1, !dbg !10
++@0 = internal unnamed_addr constant i32 65536, align 4
++@1 = internal unnamed_addr constant i32 2, align 4
++@strlit.2 = internal unnamed_addr constant [2 x i8] c", "
++
++; Function Attrs: nounwind uwtable
++define void @MAIN__() local_unnamed_addr #0 !dbg !4{
++  %"hello_world_$GREETING_fetch.16" = load ptr, ptr @"hello_world_$GREETING", align 16, !dbg !20
++  %fetch.15 = load i64, ptr getelementptr inbounds (%"QNCA_a0$i8*$rank0$", ptr @"hello_world_$GREETING", i64 0, i32 1), align 8, !dbg !20
++  call void @llvm.dbg.value(metadata i64 %fetch.15, metadata !24, metadata !DIExpression()), !dbg !21
++  call void @llvm.dbg.value(metadata i64 %fetch.15, metadata !31, metadata !DIExpression()), !dbg !21
++  call void @llvm.dbg.value(metadata i64 10, metadata !28, metadata !DIExpression()), !dbg !21
++  call void @llvm.dbg.value(metadata i64 10, metadata !32, metadata !DIExpression()), !dbg !21
++  call void @llvm.dbg.declare(metadata ptr %"hello_world_$GREETING_fetch.16", metadata !26, metadata !DIExpression()), !dbg !36
++  call void @llvm.dbg.declare(metadata ptr @"hello_world_$NAME", metadata !29, metadata !DIExpression()), !dbg !37
++  ret void, !dbg !38
++}
++
++; Function Attrs: nofree nounwind uwtable
++define void @print_greeting_(ptr noalias readonly %"print_greeting_$STRING1", ptr noalias readonly %"print_greeting_$STRING2", i64 %"STRING1.len$val", i64 %"STRING2.len$val") local_unnamed_addr #1 !dbg !22 {
++alloca_1:
++  call void @llvm.dbg.value(metadata i64 %"STRING1.len$val", metadata !24, metadata !DIExpression()), !dbg !39
++  call void @llvm.dbg.value(metadata i64 %"STRING1.len$val", metadata !31, metadata !DIExpression()), !dbg !39
++  call void @llvm.dbg.value(metadata i64 %"STRING2.len$val", metadata !28, metadata !DIExpression()), !dbg !39
++  call void @llvm.dbg.value(metadata i64 %"STRING2.len$val", metadata !32, metadata !DIExpression()), !dbg !39
++  call void @llvm.dbg.declare(metadata ptr %"print_greeting_$STRING1", metadata !26, metadata !DIExpression()), !dbg !40
++  call void @llvm.dbg.declare(metadata ptr %"print_greeting_$STRING2", metadata !29, metadata !DIExpression()), !dbg !41
++  ret void, !dbg !42
++}
++
++; Function Attrs: mustprogress nocallback nofree nosync nounwind speculatable willreturn
++declare void @llvm.dbg.declare(metadata, metadata, metadata) #2
++
++; Function Attrs: nocallback nofree nosync nounwind speculatable willreturn
++declare void @llvm.dbg.value(metadata, metadata, metadata) #3
++
++attributes #0 = { nounwind uwtable }
++attributes #1 = { nofree nounwind uwtable}
++attributes #2 = { mustprogress nocallback nofree nosync nounwind speculatable willreturn }
++attributes #3 = { nocallback nofree nosync nounwind speculatable willreturn  }
++
++!llvm.module.flags = !{!18, !19}
++!llvm.dbg.cu = !{!8}
++
++!2 = !DIGlobalVariableExpression(var: !3, expr: !DIExpression())
++!3 = distinct !DIGlobalVariable(name: "greeting", linkageName: "hello_world_$GREETING", scope: !4, file: !5, line: 3, type: !14, isLocal: true, isDefinition: true)
++!4 = distinct !DISubprogram(name: "hello_world", linkageName: "MAIN__", scope: !5, file: !5, line: 1, type: !6, scopeLine: 1, spFlags: DISPFlagDefinition | DISPFlagMainSubprogram, unit: !8, retainedNodes: !13)
++!5 = !DIFile(filename: "hello.f90", directory: "/dev/null")
++!6 = !DISubroutineType(types: !7)
++!7 = !{null}
++!8 = distinct !DICompileUnit(language: DW_LANG_Fortran95, file: !5, producer: "fortran", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug, globals: !9, splitDebugInlining: false, nameTableKind: None)
++!9 = !{!2, !10}
++!10 = !DIGlobalVariableExpression(var: !11, expr: !DIExpression())
++!11 = distinct !DIGlobalVariable(name: "name", linkageName: "hello_world_$NAME", scope: !4, file: !5, line: 2, type: !12, isLocal: true, isDefinition: true)
++!12 = !DIStringType(name: "CHARACTER_1", size: 80)
++!13 = !{}
++!14 = !DIStringType(name: ".str.GREETING", stringLengthExpression: !DIExpression(DW_OP_push_object_address, DW_OP_plus_uconst, 8), stringLocationExpression: !DIExpression(DW_OP_push_object_address, DW_OP_deref))
++!18 = !{i32 2, !"Debug Info Version", i32 3}
++!19 = !{i32 2, !"Dwarf Version", i32 4}
++!20 = !DILocation(line: 6, column: 23, scope: !4)
++!21 = !DILocation(line: 0, scope: !22, inlinedAt: !33)
++!22 = distinct !DISubprogram(name: "print_greeting", linkageName: "print_greeting_", scope: !5, file: !5, line: 9, type: !6, scopeLine: 9, spFlags: DISPFlagDefinition, unit: !8, retainedNodes: !23)
++!23 = !{!24, !26, !28, !29, !31, !32}
++!24 = !DILocalVariable(name: "STRING1.len", scope: !22, type: !25, flags: DIFlagArtificial)
++!25 = !DIBasicType(name: "INTEGER*8", size: 64, encoding: DW_ATE_signed)
++!26 = !DILocalVariable(name: "string1", arg: 1, scope: !22, file: !5, line: 9, type: !27)
++!27 = !DIStringType(name: "CHARACTER_2", stringLength: !24)
++!28 = !DILocalVariable(name: "STRING2.len", scope: !22, type: !25, flags: DIFlagArtificial)
++!29 = !DILocalVariable(name: "string2", arg: 2, scope: !22, file: !5, line: 9, type: !30)
++!30 = !DIStringType(name: "CHARACTER_3", stringLength: !28)
++!31 = !DILocalVariable(name: "_string1", arg: 3, scope: !22, type: !25, flags: DIFlagArtificial)
++!32 = !DILocalVariable(name: "_string2", arg: 4, scope: !22, type: !25, flags: DIFlagArtificial)
++!33 = distinct !DILocation(line: 0, scope: !34, inlinedAt: !35)
++;!34 = distinct !DISubprogram(name: "print_greeting_.t60p.t61p.t3v.t3v", linkageName: "print_greeting_.t60p.t61p.t3v.t3v", scope: !5, file: !5, type: !6, spFlags: DISPFlagLocalToUnit | DISPFlagDefinition, unit: !8, retainedNodes: !13, targetFuncName: "print_greeting_")
++!34 = distinct !DISubprogram(name: "print_greeting_.t60p.t61p.t3v.t3v", linkageName: "print_greeting_.t60p.t61p.t3v.t3v", scope: !5, file: !5, type: !6, spFlags: DISPFlagLocalToUnit | DISPFlagDefinition, unit: !8, retainedNodes: !13)
++!35 = distinct !DILocation(line: 6, column: 8, scope: !4)
++!36 = !DILocation(line: 9, column: 27, scope: !22, inlinedAt: !33)
++!37 = !DILocation(line: 9, column: 36, scope: !22, inlinedAt: !33)
++!38 = !DILocation(line: 7, column: 1, scope: !4)
++!39 = !DILocation(line: 0, scope: !22)
++!40 = !DILocation(line: 9, column: 27, scope: !22)
++!41 = !DILocation(line: 9, column: 36, scope: !22)
++!42 = !DILocation(line: 12, column: 1, scope: !22)
+-- 
+2.20.1
+

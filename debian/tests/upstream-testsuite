@@ -3,8 +3,8 @@ set -e -u -x
 LLVM_VERSION=$(sed -n -r '/^Build/,/^$/s/.*llvm-([0-9]+)-dev.*/\1/p' debian/control)
 cp -a . "$AUTOPKGTEST_TMP"
 cd "$AUTOPKGTEST_TMP"
-mkdir build
-cd build
+mkdir build-tests
+cd build-tests
 cmake \
 	-DLLVM_EXTERNAL_SPIRV_HEADERS_SOURCE_DIR=/usr/include \
 	-DLLVM_SPIRV_INCLUDE_TESTS=ON \

@@ -1,0 +1,249 @@
+From dd6b0586cf926ca3b3377cabe686a490956e34a6 Mon Sep 17 00:00:00 2001
+From: Wenju He <wenju.he@intel.com>
+Date: Wed, 31 Jan 2024 22:03:44 +0800
+Subject: [PATCH 169/172] [Bckport to 14][SPV -> SPV-IR] Fix image builtin
+ mangling of unsigned type (#2273) (#2327)
+
+Return type of image read and Texel type of image write builtins may be unsigned. Before this PR, the builtin names in SPIR-V Friendly IR were always mangled with signed type.
+
+(cherry picked from commit e9b95fb)
+---
+ lib/SPIRV/SPIRVInternal.h               |  7 +++++-
+ lib/SPIRV/SPIRVReader.cpp               | 16 +++++++++---
+ lib/SPIRV/SPIRVUtil.cpp                 | 33 +++++++++++++++++++++----
+ lib/SPIRV/libSPIRV/SPIRVInstruction.cpp | 15 ++---------
+ lib/SPIRV/libSPIRV/SPIRVInstruction.h   |  3 ---
+ test/transcoding/image_signedness.ll    |  9 +++++++
+ 6 files changed, 58 insertions(+), 25 deletions(-)
+
+diff --git a/lib/SPIRV/SPIRVInternal.h b/lib/SPIRV/SPIRVInternal.h
+index 7583005f..d589de8c 100644
+--- a/lib/SPIRV/SPIRVInternal.h
++++ b/lib/SPIRV/SPIRVInternal.h
+@@ -952,6 +952,9 @@ std::string getImageBaseTypeName(StringRef Name);
+ /// Map OpenCL opaque type name to SPIR-V type name.
+ std::string mapOCLTypeNameToSPIRV(StringRef Name, StringRef Acc = "");
+ 
++/// Return the index of image operands given an image op.
++size_t getImageOperandsIndex(Op OpCode);
++
+ /// Check if access qualifier is encoded in the type name.
+ bool hasAccessQualifiedName(StringRef TyName);
+ 
+@@ -1024,9 +1027,11 @@ std::string getSPIRVFriendlyIRFunctionName(OCLExtOpKind ExtOpId,
+ /// \param OC opcode of corresponding built-in instruction. Used to gather info
+ /// for unsigned/constant arguments.
+ /// \param Types of arguments of SPIR-V built-in function
++/// \param Ops Operands of SPIRVInstruction
+ /// \return IA64 mangled name.
+ std::string getSPIRVFriendlyIRFunctionName(const std::string &UniqName,
+-                                           spv::Op OC, ArrayRef<Type *> ArgTys);
++                                           spv::Op OC, ArrayRef<Type *> ArgTys,
++                                           ArrayRef<SPIRVValue *> Ops);
+ 
+ /// Cast a function to a void(void) funtion pointer.
+ Constant *castToVoidFuncPtr(Function *F);
+diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
+index 8d223a07..d40a3cca 100644
+--- a/lib/SPIRV/SPIRVReader.cpp
++++ b/lib/SPIRV/SPIRVReader.cpp
+@@ -3152,7 +3152,7 @@ Instruction *SPIRVToLLVM::transBuiltinFromInst(const std::string &FuncName,
+     mangleOpenClBuiltin(FuncName, ArgTys, MangledName);
+   else
+     MangledName =
+-        getSPIRVFriendlyIRFunctionName(FuncName, BI->getOpCode(), ArgTys);
++        getSPIRVFriendlyIRFunctionName(FuncName, BI->getOpCode(), ArgTys, Ops);
+ 
+   Function *Func = M->getFunction(MangledName);
+   FunctionType *FT = FunctionType::get(RetTy, ArgTys, false);
+@@ -3290,7 +3290,7 @@ Instruction *SPIRVToLLVM::transSPIRVBuiltinFromInst(SPIRVInstruction *BI,
+   }
+   }
+ 
+-  bool IsRetSigned;
++  bool IsRetSigned = true;
+   switch (OC) {
+   case OpConvertFToU:
+   case OpSatConvertSToU:
+@@ -3299,8 +3299,18 @@ Instruction *SPIRVToLLVM::transSPIRVBuiltinFromInst(SPIRVInstruction *BI,
+   case OpUDotAccSatKHR:
+     IsRetSigned = false;
+     break;
++  case OpImageRead:
++  case OpImageSampleExplicitLod: {
++    size_t Idx = getImageOperandsIndex(OC);
++    auto Ops = BI->getOperands();
++    if (Ops.size() > Idx) {
++      auto ImOp = static_cast<SPIRVConstant *>(Ops[Idx])->getZExtIntValue();
++      IsRetSigned = !(ImOp & ImageOperandsMask::ImageOperandsZeroExtendMask);
++    }
++    break;
++  }
+   default:
+-    IsRetSigned = true;
++    break;
+   }
+ 
+   if (AddRetTypePostfix) {
+diff --git a/lib/SPIRV/SPIRVUtil.cpp b/lib/SPIRV/SPIRVUtil.cpp
+index 79b7c5a9..8e08019e 100644
+--- a/lib/SPIRV/SPIRVUtil.cpp
++++ b/lib/SPIRV/SPIRVUtil.cpp
+@@ -1479,6 +1479,18 @@ std::string getImageBaseTypeName(StringRef Name) {
+   return ImageTyName;
+ }
+ 
++size_t getImageOperandsIndex(Op OpCode) {
++  switch (OpCode) {
++  case OpImageRead:
++  case OpImageSampleExplicitLod:
++    return 2;
++  case OpImageWrite:
++    return 3;
++  default:
++    return ~0U;
++  }
++}
++
+ std::string mapOCLTypeNameToSPIRV(StringRef Name, StringRef Acc) {
+   std::string BaseTy;
+   std::string Postfixes;
+@@ -2114,8 +2126,9 @@ bool postProcessBuiltinsWithArrayArguments(Module *M, bool IsCpp) {
+ namespace {
+ class SPIRVFriendlyIRMangleInfo : public BuiltinFuncMangleInfo {
+ public:
+-  SPIRVFriendlyIRMangleInfo(spv::Op OC, ArrayRef<Type *> ArgTys)
+-      : OC(OC), ArgTys(ArgTys) {}
++  SPIRVFriendlyIRMangleInfo(spv::Op OC, ArrayRef<Type *> ArgTys,
++                            ArrayRef<SPIRVValue *> Ops)
++      : OC(OC), ArgTys(ArgTys), Ops(Ops) {}
+ 
+   void init(StringRef UniqUnmangledName) override {
+     UnmangledName = UniqUnmangledName.str();
+@@ -2275,6 +2288,15 @@ public:
+     case OpSUDotAccSatKHR:
+       addUnsignedArg(1);
+       break;
++    case OpImageWrite: {
++      size_t Idx = getImageOperandsIndex(OC);
++      if (Ops.size() > Idx) {
++        auto ImOp = static_cast<SPIRVConstant *>(Ops[Idx])->getZExtIntValue();
++        if (ImOp & ImageOperandsMask::ImageOperandsZeroExtendMask)
++          addUnsignedArg(2);
++      }
++      break;
++    }
+     default:;
+       // No special handling is needed
+     }
+@@ -2283,6 +2305,7 @@ public:
+ private:
+   spv::Op OC;
+   ArrayRef<Type *> ArgTys;
++  ArrayRef<SPIRVValue *> Ops;
+ };
+ class OpenCLStdToSPIRVFriendlyIRMangleInfo : public BuiltinFuncMangleInfo {
+ public:
+@@ -2352,9 +2375,9 @@ std::string getSPIRVFriendlyIRFunctionName(OCLExtOpKind ExtOpId,
+ }
+ 
+ std::string getSPIRVFriendlyIRFunctionName(const std::string &UniqName,
+-                                           spv::Op OC,
+-                                           ArrayRef<Type *> ArgTys) {
+-  SPIRVFriendlyIRMangleInfo MangleInfo(OC, ArgTys);
++                                           spv::Op OC, ArrayRef<Type *> ArgTys,
++                                           ArrayRef<SPIRVValue *> Ops) {
++  SPIRVFriendlyIRMangleInfo MangleInfo(OC, ArgTys, Ops);
+   return mangleBuiltin(UniqName, ArgTys, &MangleInfo);
+ }
+ 
+diff --git a/lib/SPIRV/libSPIRV/SPIRVInstruction.cpp b/lib/SPIRV/libSPIRV/SPIRVInstruction.cpp
+index e7e4c66b..db6caf59 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVInstruction.cpp
++++ b/lib/SPIRV/libSPIRV/SPIRVInstruction.cpp
+@@ -40,6 +40,7 @@
+ #include "SPIRVInstruction.h"
+ #include "SPIRVBasicBlock.h"
+ #include "SPIRVFunction.h"
++#include "SPIRVInternal.h"
+ 
+ #include <unordered_set>
+ 
+@@ -157,25 +158,13 @@ std::vector<SPIRVType *> SPIRVInstruction::getOperandTypes() {
+   return getOperandTypes(getOperands());
+ }
+ 
+-size_t SPIRVImageInstBase::getImageOperandsIndex() const {
+-  switch (OpCode) {
+-  case OpImageRead:
+-  case OpImageSampleExplicitLod:
+-    return 2;
+-  case OpImageWrite:
+-    return 3;
+-  default:
+-    return ~0U;
+-  }
+-}
+-
+ void SPIRVImageInstBase::setOpWords(const std::vector<SPIRVWord> &OpsArg) {
+   std::vector<SPIRVWord> Ops = OpsArg;
+ 
+   // If the Image Operands field has the SignExtend or ZeroExtend bit set,
+   // either raise the minimum SPIR-V version to 1.4, or drop the operand
+   // if SPIR-V 1.4 cannot be emitted.
+-  size_t ImgOpsIndex = getImageOperandsIndex();
++  size_t ImgOpsIndex = getImageOperandsIndex(OpCode);
+   if (ImgOpsIndex != ~0U && ImgOpsIndex < Ops.size()) {
+     SPIRVWord ImgOps = Ops[ImgOpsIndex];
+     unsigned SignZeroExtMasks = ImageOperandsMask::ImageOperandsSignExtendMask |
+diff --git a/lib/SPIRV/libSPIRV/SPIRVInstruction.h b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
+index cde72f38..8beae5c5 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVInstruction.h
++++ b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
+@@ -2814,9 +2814,6 @@ public:
+ 
+ protected:
+   void setOpWords(const std::vector<SPIRVWord> &OpsArg) override;
+-
+-private:
+-  size_t getImageOperandsIndex() const;
+ };
+ 
+ #define _SPIRV_OP(x, ...)                                                      \
+diff --git a/test/transcoding/image_signedness.ll b/test/transcoding/image_signedness.ll
+index d169251e..14cb6fe7 100644
+--- a/test/transcoding/image_signedness.ll
++++ b/test/transcoding/image_signedness.ll
+@@ -5,6 +5,8 @@
+ ; RUN: spirv-val %t.spv
+ ; RUN: llvm-spirv -r %t.spv -o %t.rev.bc
+ ; RUN: llvm-dis < %t.rev.bc | FileCheck %s --check-prefix=CHECK-LLVM
++; RUN: llvm-spirv -r --spirv-target-env=SPV-IR %t.spv -o %t.rev.bc
++; RUN: llvm-dis < %t.rev.bc | FileCheck %s --check-prefix=CHECK-SPV-IR
+ 
+ ; ModuleID = 'image_signedness.ll'
+ target datalayout = "e-p:32:32-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024"
+@@ -21,6 +23,11 @@ target triple = "spir-unknown-unknown"
+ ; CHECK-LLVM: call spir_func <4 x i32> @_Z12read_imageui20ocl_image1d_array_rwDv2_i(
+ ; CHECK-LLVM: call spir_func <4 x i32> @_Z12read_imageui14ocl_image1d_roi(
+ ; CHECK-LLVM: call spir_func <4 x i32> @_Z11read_imagei14ocl_image1d_roi(
++; CHECK-SPV-IR: call spir_func <4 x i32> @_Z37__spirv_ImageSampleExplicitLod_Ruint4PU3AS140__spirv_SampledImage__void_0_0_0_0_0_0_0iif(
++; CHECK-SPV-IR: call spir_func <4 x i32> @_Z36__spirv_ImageSampleExplicitLod_Rint4PU3AS140__spirv_SampledImage__void_0_0_0_0_0_0_0iif(
++; CHECK-SPV-IR: call spir_func <4 x i32> @_Z24__spirv_ImageRead_Ruint4PU3AS133__spirv_Image__void_0_0_1_0_0_0_2Dv2_ii(
++; CHECK-SPV-IR: call spir_func <4 x i32> @_Z24__spirv_ImageRead_Ruint4PU3AS133__spirv_Image__void_0_0_0_0_0_0_0ii(
++; CHECK-SPV-IR: call spir_func <4 x i32> @_Z23__spirv_ImageRead_Rint4PU3AS133__spirv_Image__void_0_0_0_0_0_0_0ii(
+ 
+ ; Function Attrs: convergent nounwind
+ define dso_local spir_kernel void @imagereads(%opencl.image1d_ro_t addrspace(1)* %im, %opencl.image1d_array_rw_t addrspace(1)* %ima, <4 x i32> addrspace(1)* nocapture %res, <4 x i32> addrspace(1)* nocapture %resu) local_unnamed_addr #0 !kernel_arg_addr_space !4 !kernel_arg_access_qual !5 !kernel_arg_type !6 !kernel_arg_base_type !7 !kernel_arg_type_qual !8 {
+@@ -42,6 +49,8 @@ entry:
+ ; CHECK-LLVM-LABEL: @imagewrites
+ ; CHECK-LLVM: call spir_func void @_Z12write_imagei14ocl_image2d_woDv2_iDv4_i(
+ ; CHECK-LLVM: call spir_func void @_Z13write_imageui14ocl_image2d_woDv2_iDv4_j(
++; CHECK-SPV-IR: call spir_func void @_Z18__spirv_ImageWritePU3AS133__spirv_Image__void_1_0_0_0_0_0_1Dv2_iDv4_ii(
++; CHECK-SPV-IR: call spir_func void @_Z18__spirv_ImageWritePU3AS133__spirv_Image__void_1_0_0_0_0_0_1Dv2_iDv4_ji(
+ 
+ ; Function Attrs: alwaysinline convergent nounwind
+ define spir_kernel void @imagewrites(i32 %offset, <4 x i32> addrspace(1)* nocapture readonly %input, <4 x i32> addrspace(1)* nocapture readonly %inputu, %opencl.image2d_wo_t addrspace(1)* %output) local_unnamed_addr #0 !kernel_arg_addr_space !14 !kernel_arg_access_qual !15 !kernel_arg_type !16 !kernel_arg_base_type !17 !kernel_arg_type_qual !18 !kernel_arg_name !19 !kernel_attributes !20 {
+-- 
+2.20.1
+

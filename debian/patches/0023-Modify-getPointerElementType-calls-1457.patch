@@ -1,0 +1,115 @@
+From 9ffa2d1bf50590843576b920000465acfa28d3d7 Mon Sep 17 00:00:00 2001
+From: Leonid Pauzin <leonid.pauzin@intel.com>
+Date: Wed, 30 Mar 2022 19:58:50 +0300
+Subject: [PATCH 023/172] Modify getPointerElementType calls (#1457)
+
+(cherry picked from commit b298bf44433891c9a2b31d078e96f327374848e6)
+---
+ lib/SPIRV/OCLUtil.cpp              | 2 +-
+ lib/SPIRV/SPIRVLowerSPIRBlocks.cpp | 2 +-
+ lib/SPIRV/SPIRVRegularizeLLVM.cpp  | 5 ++---
+ lib/SPIRV/SPIRVToOCL20.cpp         | 9 ++++-----
+ lib/SPIRV/SPIRVUtil.cpp            | 2 +-
+ lib/SPIRV/SPIRVWriter.cpp          | 4 ++--
+ 6 files changed, 11 insertions(+), 13 deletions(-)
+
+diff --git a/lib/SPIRV/OCLUtil.cpp b/lib/SPIRV/OCLUtil.cpp
+index de0d5271..12013818 100644
+--- a/lib/SPIRV/OCLUtil.cpp
++++ b/lib/SPIRV/OCLUtil.cpp
+@@ -967,7 +967,7 @@ getOCLOpaqueTypeAddrSpace(SPIR::TypePrimitiveEnum Prim) {
+ static FunctionType *getBlockInvokeTy(Function *F, unsigned BlockIdx) {
+   auto Params = F->getFunctionType()->params();
+   PointerType *FuncPtr = cast<PointerType>(Params[BlockIdx]);
+-  return cast<FunctionType>(FuncPtr->getPointerElementType());
++  return FunctionType::get(FuncPtr, Params, false);
+ }
+ 
+ class OCLBuiltinFuncMangleInfo : public SPIRV::BuiltinFuncMangleInfo {
+diff --git a/lib/SPIRV/SPIRVLowerSPIRBlocks.cpp b/lib/SPIRV/SPIRVLowerSPIRBlocks.cpp
+index 461586a5..12a8188a 100644
+--- a/lib/SPIRV/SPIRVLowerSPIRBlocks.cpp
++++ b/lib/SPIRV/SPIRVLowerSPIRBlocks.cpp
+@@ -362,7 +362,7 @@ private:
+       Type *T = G.getInitializer()->getType();
+       if (!T->isPointerTy())
+         continue;
+-      T = cast<PointerType>(T)->getPointerElementType();
++      T = G.getValueType();
+       if (!T->isStructTy())
+         continue;
+       StringRef STName = cast<StructType>(T)->getName();
+diff --git a/lib/SPIRV/SPIRVRegularizeLLVM.cpp b/lib/SPIRV/SPIRVRegularizeLLVM.cpp
+index 40d0d23c..545359f6 100644
+--- a/lib/SPIRV/SPIRVRegularizeLLVM.cpp
++++ b/lib/SPIRV/SPIRVRegularizeLLVM.cpp
+@@ -634,9 +634,8 @@ bool SPIRVRegularizeLLVMBase::regularize() {
+           Type *SrcTy = ASCast->getSrcTy();
+           if (DestTy->getPointerElementType() !=
+               SrcTy->getPointerElementType()) {
+-            PointerType *InterTy =
+-                PointerType::get(DestTy->getPointerElementType(),
+-                                 SrcTy->getPointerAddressSpace());
++            PointerType *InterTy = PointerType::getWithSamePointeeType(
++                cast<PointerType>(DestTy), SrcTy->getPointerAddressSpace());
+             BitCastInst *NewBCast = new BitCastInst(
+                 ASCast->getPointerOperand(), InterTy, /*NameStr=*/"", ASCast);
+             AddrSpaceCastInst *NewASCast =
+diff --git a/lib/SPIRV/SPIRVToOCL20.cpp b/lib/SPIRV/SPIRVToOCL20.cpp
+index f384ab70..d591e8dd 100644
+--- a/lib/SPIRV/SPIRVToOCL20.cpp
++++ b/lib/SPIRV/SPIRVToOCL20.cpp
+@@ -205,8 +205,8 @@ CallInst *SPIRVToOCL20Base::mutateCommonAtomicArguments(CallInst *CI, Op OC) {
+           Type *PtrArgTy = PtrArg->getType();
+           if (PtrArgTy->isPointerTy()) {
+             if (PtrArgTy->getPointerAddressSpace() != SPIRAS_Generic) {
+-              Type *FixedPtr = PtrArgTy->getPointerElementType()->getPointerTo(
+-                  SPIRAS_Generic);
++              Type *FixedPtr = PointerType::getWithSamePointeeType(
++                  cast<PointerType>(PtrArgTy), SPIRAS_Generic);
+               Args[I] = CastInst::CreatePointerBitCastOrAddrSpaceCast(
+                   PtrArg, FixedPtr, PtrArg->getName() + ".as", CI);
+             }
+@@ -259,9 +259,8 @@ Instruction *SPIRVToOCL20Base::visitCallSPIRVAtomicCmpExchg(CallInst *CI) {
+             Align(CI->getType()->getScalarSizeInBits() / 8));
+         new StoreInst(Args[1], PExpected, PInsertBefore);
+         unsigned AddrSpc = SPIRAS_Generic;
+-        Type *PtrTyAS =
+-            PExpected->getType()->getPointerElementType()->getPointerTo(
+-                AddrSpc);
++        Type *PtrTyAS = PointerType::getWithSamePointeeType(
++            cast<PointerType>(PExpected->getType()), AddrSpc);
+         Args[1] = CastInst::CreatePointerBitCastOrAddrSpaceCast(
+             PExpected, PtrTyAS, PExpected->getName() + ".as", PInsertBefore);
+         std::swap(Args[3], Args[4]);
+diff --git a/lib/SPIRV/SPIRVUtil.cpp b/lib/SPIRV/SPIRVUtil.cpp
+index f91f4a85..ff529ee3 100644
+--- a/lib/SPIRV/SPIRVUtil.cpp
++++ b/lib/SPIRV/SPIRVUtil.cpp
+@@ -1789,7 +1789,7 @@ bool lowerBuiltinVariableToCall(GlobalVariable *GV,
+   Module *M = GV->getParent();
+   LLVMContext &C = M->getContext();
+   std::string FuncName = GV->getName().str();
+-  Type *GVTy = GV->getType()->getPointerElementType();
++  Type *GVTy = GV->getValueType();
+   Type *ReturnTy = GVTy;
+   // Some SPIR-V builtin variables are translated to a function with an index
+   // argument.
+diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
+index 4bcbc8f9..d194397f 100644
+--- a/lib/SPIRV/SPIRVWriter.cpp
++++ b/lib/SPIRV/SPIRVWriter.cpp
+@@ -337,8 +337,8 @@ SPIRVType *LLVMToSPIRVBase::transType(Type *T) {
+     if (!BM->isAllowedToUseExtension(
+             ExtensionID::SPV_INTEL_usm_storage_classes) &&
+         ((AddrSpc == SPIRAS_GlobalDevice) || (AddrSpc == SPIRAS_GlobalHost))) {
+-      auto NewType =
+-          PointerType::get(T->getPointerElementType(), SPIRAS_Global);
++      auto *NewType = PointerType::getWithSamePointeeType(cast<PointerType>(T),
++                                                          SPIRAS_Global);
+       return mapType(T, transType(NewType));
+     }
+     if (ST && !ST->isSized()) {
+-- 
+2.20.1
+

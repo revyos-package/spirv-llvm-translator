@@ -1,0 +1,244 @@
+From 7279ef9be1894fa446f6fd3210335cc4b9dfcb2e Mon Sep 17 00:00:00 2001
+From: Nikita <nikita.kornev@intel.com>
+Date: Wed, 16 Mar 2022 11:34:03 +0300
+Subject: [PATCH 012/172] Support SPV_KHR_uniform_group_instructions extension
+ (#1253)
+
+This extension adds eight new uniform instructions in SPIR-V to enable
+additional group operations.
+
+Spec: KhronosGroup/SPIRV-Registry#138
+SPIR-V Headers: KhronosGroup/SPIRV-Headers#269
+SPIR-V Tools: KhronosGroup/SPIRV-Tools#4734
+
+Signed-off-by: Nikita Kornev <nikita.kornev@intel.com>
+(cherry picked from commit 950ce8ffa9727925214c2ea71c3465dff71e410f)
+---
+ include/LLVMSPIRVExtensions.inc               |  1 +
+ lib/SPIRV/SPIRVWriter.cpp                     | 20 ++++-
+ lib/SPIRV/libSPIRV/SPIRVInstruction.h         | 25 ++++++
+ lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h         |  1 +
+ lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h          |  8 ++
+ spirv-headers-tag.conf                        |  2 +-
+ .../group-instructions.ll                     | 87 +++++++++++++++++++
+ 7 files changed, 142 insertions(+), 2 deletions(-)
+ create mode 100644 test/transcoding/SPV_KHR_uniform_group_instructions/group-instructions.ll
+
+diff --git a/include/LLVMSPIRVExtensions.inc b/include/LLVMSPIRVExtensions.inc
+index e9907284..618af974 100644
+--- a/include/LLVMSPIRVExtensions.inc
++++ b/include/LLVMSPIRVExtensions.inc
+@@ -10,6 +10,7 @@ EXT(SPV_KHR_linkonce_odr)
+ EXT(SPV_KHR_expect_assume)
+ EXT(SPV_KHR_integer_dot_product)
+ EXT(SPV_KHR_bit_instructions)
++EXT(SPV_KHR_uniform_group_instructions)
+ EXT(SPV_INTEL_subgroups)
+ EXT(SPV_INTEL_media_block_io)
+ EXT(SPV_INTEL_device_side_avc_motion_estimation)
+diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
+index e62097c4..7e594abe 100644
+--- a/lib/SPIRV/SPIRVWriter.cpp
++++ b/lib/SPIRV/SPIRVWriter.cpp
+@@ -231,6 +231,18 @@ bool LLVMToSPIRVBase::isBuiltinTransToExtInst(
+   return true;
+ }
+ 
++bool isUniformGroupOperation(Function *F) {
++  auto Name = F->getName();
++  if (Name.contains("GroupIMulKHR") || Name.contains("GroupFMulKHR") ||
++      Name.contains("GroupBitwiseAndKHR") ||
++      Name.contains("GroupBitwiseOrKHR") ||
++      Name.contains("GroupBitwiseXorKHR") ||
++      Name.contains("GroupLogicalAndKHR") ||
++      Name.contains("GroupLogicalOrKHR") || Name.contains("GroupLogicalXorKHR"))
++    return true;
++  return false;
++}
++
+ static bool recursiveType(const StructType *ST, const Type *Ty) {
+   SmallPtrSet<const StructType *, 4> Seen;
+ 
+@@ -655,8 +667,14 @@ SPIRVFunction *LLVMToSPIRVBase::transFunctionDecl(Function *F) {
+       std::string Prefix = kSPIRVName::EntrypointPrefix;
+       std::string Name = F->getName().str();
+       BM->setName(BF, Name.substr(Prefix.size()));
+-    } else
++    } else {
++      if (isUniformGroupOperation(F))
++        BM->getErrorLog().checkError(
++            BM->isAllowedToUseExtension(
++                ExtensionID::SPV_KHR_uniform_group_instructions),
++            SPIRVEC_RequiresExtension, "SPV_KHR_uniform_group_instructions\n");
+       BM->setName(BF, F->getName().str());
++    }
+   }
+   if (!isKernel(F) && F->getLinkage() != GlobalValue::InternalLinkage)
+     BF->setLinkageType(transLinkageType(F));
+diff --git a/lib/SPIRV/libSPIRV/SPIRVInstruction.h b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
+index 0b6dba7a..de575ab0 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVInstruction.h
++++ b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
+@@ -3302,6 +3302,31 @@ _SPIRV_OP(JointMatrixStore, false, 5, true)
+ _SPIRV_OP(JointMatrixMad, true, 7)
+ _SPIRV_OP(JointMatrixWorkItemLength, true, 4)
+ #undef _SPIRV_OP
++
++class SPIRVGroupUniformArithmeticKHRInstBase : public SPIRVInstTemplateBase {
++public:
++  SPIRVCapVec getRequiredCapability() const override {
++    return getVec(CapabilityGroupUniformArithmeticKHR);
++  }
++
++  llvm::Optional<ExtensionID> getRequiredExtension() const override {
++    return ExtensionID::SPV_KHR_uniform_group_instructions;
++  }
++};
++
++#define _SPIRV_OP(x, ...)                                                      \
++  typedef SPIRVInstTemplate<SPIRVGroupUniformArithmeticKHRInstBase,            \
++                            Op##x##KHR, __VA_ARGS__>                           \
++      SPIRV##x##KHR;
++_SPIRV_OP(GroupIMul, true, 6, false, 1)
++_SPIRV_OP(GroupFMul, true, 6, false, 1)
++_SPIRV_OP(GroupBitwiseAnd, true, 6, false, 1)
++_SPIRV_OP(GroupBitwiseOr, true, 6, false, 1)
++_SPIRV_OP(GroupBitwiseXor, true, 6, false, 1)
++_SPIRV_OP(GroupLogicalAnd, true, 6, false, 1)
++_SPIRV_OP(GroupLogicalOr, true, 6, false, 1)
++_SPIRV_OP(GroupLogicalXor, true, 6, false, 1)
++#undef _SPIRV_OP
+ } // namespace SPIRV
+ 
+ #endif // SPIRV_LIBSPIRV_SPIRVINSTRUCTION_H
+diff --git a/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h b/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
+index 4bfb4b9a..5a30605b 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
++++ b/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
+@@ -572,6 +572,7 @@ template <> inline void SPIRVMap<Capability, std::string>::init() {
+   add(CapabilityAtomicFloat16AddEXT, "AtomicFloat16AddEXT");
+   add(CapabilityDebugInfoModuleINTEL, "DebugInfoModuleINTEL");
+   add(CapabilityMemoryAccessAliasingINTEL, "MemoryAccessAliasingINTEL");
++  add(CapabilityGroupUniformArithmeticKHR, "GroupUniformArithmeticKHR");
+ 
+   // From spirv_internal.hpp
+   add(internal::CapabilityFPGADSPControlINTEL, "FPGADSPControlINTEL");
+diff --git a/lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h b/lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h
+index 13ac2063..e8c3a4ad 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h
++++ b/lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h
+@@ -546,3 +546,11 @@ _SPIRV_OP(TypeBufferSurfaceINTEL, 6086)
+ _SPIRV_OP(TypeStructContinuedINTEL, 6090)
+ _SPIRV_OP(ConstantCompositeContinuedINTEL, 6091)
+ _SPIRV_OP(SpecConstantCompositeContinuedINTEL, 6092)
++_SPIRV_OP(GroupIMulKHR, 6401)
++_SPIRV_OP(GroupFMulKHR, 6402)
++_SPIRV_OP(GroupBitwiseAndKHR, 6403)
++_SPIRV_OP(GroupBitwiseOrKHR, 6404)
++_SPIRV_OP(GroupBitwiseXorKHR, 6405)
++_SPIRV_OP(GroupLogicalAndKHR, 6406)
++_SPIRV_OP(GroupLogicalOrKHR, 6407)
++_SPIRV_OP(GroupLogicalXorKHR, 6408)
+diff --git a/spirv-headers-tag.conf b/spirv-headers-tag.conf
+index f362bb41..4388a8e7 100644
+--- a/spirv-headers-tag.conf
++++ b/spirv-headers-tag.conf
+@@ -1 +1 @@
+-6a55fade62dec6a406a5a721148f88a2211cbefa
++4995a2f2723c401eb0ea3e10c81298906bf1422b
+diff --git a/test/transcoding/SPV_KHR_uniform_group_instructions/group-instructions.ll b/test/transcoding/SPV_KHR_uniform_group_instructions/group-instructions.ll
+new file mode 100644
+index 00000000..9139ba3b
+--- /dev/null
++++ b/test/transcoding/SPV_KHR_uniform_group_instructions/group-instructions.ll
+@@ -0,0 +1,87 @@
++; RUN: llvm-as %s -o %t.bc
++
++; RUN: not llvm-spirv %t.bc -o %t.spv 2>&1 | FileCheck %s --check-prefix=CHECK-WO-EXT
++
++; RUN: llvm-spirv %t.bc -o %t.spv -spirv-ext=+SPV_KHR_uniform_group_instructions
++; RUN: llvm-spirv %t.spv -o %t.spt -to-text
++; RUN: FileCheck < %t.spt %s --check-prefix=CHECK-SPIRV
++
++; RUN: llvm-spirv -r %t.spv -o %t.rev.bc
++; RUN: llvm-dis %t.rev.bc -o %t.rev.ll
++; RUN: FileCheck < %t.rev.ll %s --check-prefix=CHECK-LLVM
++
++; CHECK-WO-EXT: RequiresExtension: Feature requires the following SPIR-V extension:
++; CHECK-WO-EXT: SPV_KHR_uniform_group_instructions
++
++; CHECK-SPIRV: Capability GroupUniformArithmeticKHR
++; CHECK-SPIRV: Extension "SPV_KHR_uniform_group_instructions"
++; CHECK-SPIRV: TypeInt [[#TypeInt:]] 32
++; CHECK-SPIRV: Constant [[#TypeInt]] [[#Scope:]] 2
++; CHECK-SPIRV: Constant [[#TypeInt]] [[#Val1:]] 0
++; CHECK-SPIRV: TypeFloat [[#TypeFloat:]] 16
++; CHECK-SPIRV: Constant [[#TypeFloat]] [[#Val2:]]
++
++; CHECK-SPIRV: GroupBitwiseAndKHR [[#TypeInt]] [[#]] [[#Scope]] 0 [[#Val1]]
++; CHECK-SPIRV: GroupBitwiseOrKHR [[#TypeInt]] [[#]] [[#Scope]] 0 [[#Val1]]
++; CHECK-SPIRV: GroupBitwiseXorKHR [[#TypeInt]] [[#]] [[#Scope]] 0 [[#Val1]]
++; CHECK-SPIRV: GroupLogicalAndKHR [[#TypeInt]] [[#]] [[#Scope]] 0 [[#Val1]]
++; CHECK-SPIRV: GroupLogicalOrKHR [[#TypeInt]] [[#]] [[#Scope]] 0 [[#Val1]]
++; CHECK-SPIRV: GroupLogicalXorKHR [[#TypeInt]] [[#]] [[#Scope]] 0 [[#Val1]]
++; CHECK-SPIRV: GroupIMulKHR [[#TypeInt]] [[#]] [[#Scope]] 0 [[#Val1]]
++; CHECK-SPIRV: GroupFMulKHR [[#TypeFloat]] [[#]] [[#Scope]] 0 [[#Val2]]
++
++; CHECK-LLVM: %call1 = call spir_func i32 @_Z26__spirv_GroupBitwiseAndKHR{{.*}}(i32 2, i32 0, i32 0)
++; CHECK-LLVM: %call2 = call spir_func i32 @_Z25__spirv_GroupBitwiseOrKHR{{.*}}(i32 2, i32 0, i32 0)
++; CHECK-LLVM: %call3 = call spir_func i32 @_Z26__spirv_GroupBitwiseXorKHR{{.*}}(i32 2, i32 0, i32 0)
++; CHECK-LLVM: %call4 = call spir_func i32 @_Z26__spirv_GroupLogicalAndKHR{{.*}}(i32 2, i32 0, i32 0)
++; CHECK-LLVM: %call5 = call spir_func i32 @_Z25__spirv_GroupLogicalOrKHR{{.*}}(i32 2, i32 0, i32 0)
++; CHECK-LLVM: %call6 = call spir_func i32 @_Z26__spirv_GroupLogicalXorKHR{{.*}}(i32 2, i32 0, i32 0)
++; CHECK-LLVM: %call7 = call spir_func i32 @_Z20__spirv_GroupIMulKHR{{.*}}(i32 2, i32 0, i32 0)
++; CHECK-LLVM: %call8 = call spir_func half @_Z20__spirv_GroupFMulKHR{{.*}}(i32 2, i32 0, half 0xH0000)
++
++; ModuleID = 'source.bc'
++source_filename = "group_operations.cpp"
++target datalayout = "e-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024-n8:16:32:64"
++target triple = "spir64-unknown-unknown"
++
++; Function Attrs: convergent norecurse
++define dso_local spir_func void @_Z10test_groupN2cl4sycl5groupILi1EEE() local_unnamed_addr #0 {
++entry:
++  %call1 = tail call spir_func i32 @_Z26__spirv_GroupBitwiseAndKHRjji(i32 2, i32 0, i32 0) #2
++  %call2 = tail call spir_func i32 @_Z25__spirv_GroupBitwiseOrKHRjji(i32 2, i32 0, i32 0) #2
++  %call3 = tail call spir_func i32 @_Z26__spirv_GroupBitwiseXorKHRjji(i32 2, i32 0, i32 0) #2
++  %call4 = tail call spir_func i32 @_Z26__spirv_GroupLogicalAndKHRjji(i32 2, i32 0, i32 0) #2
++  %call5 = tail call spir_func i32 @_Z25__spirv_GroupLogicalOrKHRjji(i32 2, i32 0, i32 0) #2
++  %call6 = tail call spir_func i32 @_Z26__spirv_GroupLogicalXorKHRjji(i32 2, i32 0, i32 0) #2
++  %call7 = tail call spir_func i32 @_Z20__spirv_GroupIMulKHRjji(i32 2, i32 0, i32 0) #2
++  %call8 = tail call fast spir_func half @_Z20__spirv_GroupFMulKHRjjDF16_(i32 2, i32 0, half 0xH0000) #2
++  ret void
++}
++
++; Function Attrs: convergent
++declare dso_local spir_func i32 @_Z26__spirv_GroupBitwiseAndKHRjji(i32, i32, i32) local_unnamed_addr #1
++
++; Function Attrs: convergent
++declare dso_local spir_func i32 @_Z25__spirv_GroupBitwiseOrKHRjji(i32, i32, i32) local_unnamed_addr #1
++
++; Function Attrs: convergent
++declare dso_local spir_func i32 @_Z26__spirv_GroupBitwiseXorKHRjji(i32, i32, i32) local_unnamed_addr #1
++
++; Function Attrs: convergent
++declare dso_local spir_func i32 @_Z26__spirv_GroupLogicalAndKHRjji(i32, i32, i32) local_unnamed_addr #1
++
++; Function Attrs: convergent
++declare dso_local spir_func i32 @_Z25__spirv_GroupLogicalOrKHRjji(i32, i32, i32) local_unnamed_addr #1
++
++; Function Attrs: convergent
++declare dso_local spir_func i32 @_Z26__spirv_GroupLogicalXorKHRjji(i32, i32, i32) local_unnamed_addr #1
++
++; Function Attrs: convergent
++declare dso_local spir_func i32 @_Z20__spirv_GroupIMulKHRjji(i32, i32, i32) local_unnamed_addr #1
++
++; Function Attrs: convergent
++declare dso_local spir_func half @_Z20__spirv_GroupFMulKHRjjDF16_(i32, i32, half) local_unnamed_addr #1
++
++attributes #0 = { convergent norecurse "denormal-fp-math"="preserve-sign,preserve-sign" "denormal-fp-math-f32"="ieee,ieee" "frame-pointer"="all" "min-legal-vector-width"="0" "no-infs-fp-math"="true" "no-nans-fp-math"="true" "no-signed-zeros-fp-math"="true" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "sycl-module-id"="group_operations.cpp" "unsafe-fp-math"="true" }
++attributes #1 = { convergent "denormal-fp-math"="preserve-sign,preserve-sign" "denormal-fp-math-f32"="ieee,ieee" "frame-pointer"="all" "no-infs-fp-math"="true" "no-nans-fp-math"="true" "no-signed-zeros-fp-math"="true" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "unsafe-fp-math"="true" }
++attributes #2 = { convergent }
+-- 
+2.20.1
+

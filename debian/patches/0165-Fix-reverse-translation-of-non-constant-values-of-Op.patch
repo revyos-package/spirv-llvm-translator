@@ -1,0 +1,122 @@
+From 3cbbdd0310c3bf72b23513e7d90a1dd5b4661915 Mon Sep 17 00:00:00 2001
+From: Viktoria Maximova <viktoria.maksimova@intel.com>
+Date: Fri, 15 Dec 2023 19:26:28 +0100
+Subject: [PATCH 165/172] Fix reverse translation of non-constant values of
+ OpCompositeConstruct (#2256)
+
+This patch introduces a way to use runtime values for structure fields.
+
+Co-authored-by: Arvind Sudarsanam <arvind.sudarsanam@intel.com>
+---
+ lib/SPIRV/SPIRVReader.cpp                     | 30 ++++++++++--
+ ...omposite_construct_struct_non_constant.spt | 48 +++++++++++++++++++
+ 2 files changed, 73 insertions(+), 5 deletions(-)
+ create mode 100644 test/composite_construct_struct_non_constant.spt
+
+diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
+index e1f50b68..e0c409e5 100644
+--- a/lib/SPIRV/SPIRVReader.cpp
++++ b/lib/SPIRV/SPIRVReader.cpp
+@@ -2142,9 +2142,14 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
+     auto CC = static_cast<SPIRVCompositeConstruct *>(BV);
+     auto Constituents = transValue(CC->getOperands(), F, BB);
+     std::vector<Constant *> CV;
++    bool HasRtValues = false;
+     for (const auto &I : Constituents) {
+-      CV.push_back(dyn_cast<Constant>(I));
++      auto *C = dyn_cast<Constant>(I);
++      CV.push_back(C);
++      if (!HasRtValues && C == nullptr)
++        HasRtValues = true;
+     }
++
+     switch (static_cast<size_t>(BV->getType()->getOpCode())) {
+     case OpTypeVector:
+       return mapValue(BV, ConstantVector::get(CV));
+@@ -2152,10 +2157,25 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
+       return mapValue(
+           BV, ConstantArray::get(dyn_cast<ArrayType>(transType(CC->getType())),
+                                  CV));
+-    case OpTypeStruct:
+-      return mapValue(BV,
+-                      ConstantStruct::get(
+-                          dyn_cast<StructType>(transType(CC->getType())), CV));
++    case OpTypeStruct: {
++      auto *ST = cast<StructType>(transType(CC->getType()));
++      if (!HasRtValues)
++        return mapValue(BV, ConstantStruct::get(ST, CV));
++
++      AllocaInst *Alloca = new AllocaInst(ST, SPIRAS_Private, "", BB);
++
++      // get pointer to the element of structure
++      // store the result of argument
++      for (size_t I = 0; I < Constituents.size(); I++) {
++        auto *GEP = GetElementPtrInst::Create(
++            Constituents[I]->getType(), Alloca, {getInt32(M, I)}, "gep", BB);
++        GEP->setIsInBounds(true);
++        new StoreInst(Constituents[I], GEP, false, BB);
++      }
++
++      auto *Load = new LoadInst(ST, Alloca, "load", false, BB);
++      return mapValue(BV, Load);
++    }
+     case internal::OpTypeJointMatrixINTEL:
+     case OpTypeCooperativeMatrixKHR:
+       return mapValue(BV, transSPIRVBuiltinFromInst(CC, BB));
+diff --git a/test/composite_construct_struct_non_constant.spt b/test/composite_construct_struct_non_constant.spt
+new file mode 100644
+index 00000000..50614e9f
+--- /dev/null
++++ b/test/composite_construct_struct_non_constant.spt
+@@ -0,0 +1,48 @@
++; RUN: llvm-spirv %s -to-binary -o %t.spv
++; RUN: spirv-val %t.spv
++; RUN: llvm-spirv -r %t.spv -o %t.bc
++; RUN: llvm-dis %t.bc
++; RUN: FileCheck < %t.ll %s --check-prefix=CHECK-LLVM
++
++; CHECK-LLVM: %[[StructTy:[0-9a-z.]+]] = type { float, i32 }
++; CHECK-LLVM: %[[#StructPtr:]] = alloca %[[StructTy]]
++; CHECK-LLVM: %[[GEP:[0-9a-z.]+]] = getelementptr inbounds float, ptr %[[#StructPtr]], i32 0
++; CHECK-LLVM: store float %[[#]], ptr %[[GEP]]
++; CHECK-LLVM: %[[GEP1:[0-9a-z.]+]] = getelementptr inbounds i32, ptr %[[#StructPtr]], i32 1
++; CHECK-LLVM: store i32 %[[#]], ptr %[[GEP1]]
++; CHECK-LLVM: %[[LoadStr:[0-9a-z.]+]] = load %[[StructTy]], ptr %[[#StructPtr]]
++; CHECK-LLVM: ret %[[StructTy]] %[[LoadStr]]
++
++119734787 65536 393230 23 0
++2 Capability Addresses
++2 Capability Linkage
++2 Capability Kernel
++5 ExtInstImport 1 "OpenCL.std"
++3 MemoryModel 2 2
++3 Source 0 0
++5 Name 2 "structtype"
++9 Name 6 "non_constant_struct_fields"
++11 Decorate 6 LinkageAttributes "non_constant_struct_fields" Export
++4 Decorate 9 Alignment 4
++4 Decorate 11 Alignment 4
++4 TypeInt 4 32 0
++4 Constant 4 17 0
++4 Constant 4 20 1
++3 TypeFloat 3 32
++4 TypeStruct 2 3 4
++
++3 TypeFunction 5 2
++4 TypePointer 8 7 4
++4 TypePointer 10 7 3
++
++5 Function 2 6 0 5
++
++2 Label 7
++4 Variable 8 9 7
++4 Variable 10 11 7
++4 Load 4 12 9
++4 Load 3 13 11
++5 CompositeConstruct 2 14 13 12
++2 ReturnValue 14
++
++1 FunctionEnd
+-- 
+2.20.1
+

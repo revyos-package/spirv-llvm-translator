@@ -1,0 +1,68 @@
+From 70c6cf23048bf11793fd40ae35154940ea087133 Mon Sep 17 00:00:00 2001
+From: Dmitry Sidorov <dmitry.sidorov@intel.com>
+Date: Sat, 26 Mar 2022 22:15:58 +0300
+Subject: [PATCH 040/172] [NFC] Preparations to rename the default branch
+
+Signed-off-by: Dmitry Sidorov <dmitry.sidorov@intel.com>
+(cherry picked from commit 22cf0eace5e29f5506a96e39acf3fea465eff18a)
+---
+ CONTRIBUTING.md |  2 +-
+ README.md       | 10 +++++-----
+ 2 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index 38a4b36d..b5f42566 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -106,6 +106,6 @@ it can be merged:
+ [json grammar file]: https://github.com/KhronosGroup/SPIRV-Headers/blob/master/include/spirv/unified1/spirv.core.grammar.json
+ [instructions]: https://github.com/KhronosGroup/SPIRV-Headers#generating-headers-from-the-json-grammar-for-the-spir-v-core-instruction-set
+ [SPIR-V Headers repository]: https://github.com/KhronosGroup/SPIRV-Headers
+-[internal SPIR-V header file]: https://github.com/KhronosGroup/SPIRV-LLVM-Translator/blob/master/lib/SPIRV/libSPIRV/spirv_internal.hpp
++[internal SPIR-V header file]: https://github.com/KhronosGroup/SPIRV-LLVM-Translator/blob/main/lib/SPIRV/libSPIRV/spirv_internal.hpp
+ [Contributor License Agreement]: https://cla-assistant.io/KhronosGroup/SPIRV-LLVM-Translator
+ [Travis CI testing]: https://travis-ci.org/KhronosGroup/SPIRV-LLVM-Translator
+diff --git a/README.md b/README.md
+index c9955d71..e44ccf6e 100644
+--- a/README.md
++++ b/README.md
+@@ -19,7 +19,7 @@ The files/directories related to the translator:
+ 
+ ## Build Instructions
+ 
+-The `master` branch of this repo is aimed to be buildable with the latest
++The `main` branch of this repo is aimed to be buildable with the latest
+ LLVM `main` revision.
+ 
+ ### Build with pre-installed LLVM
+@@ -233,13 +233,13 @@ More information can be found in
+ 
+ ## Branching strategy
+ 
+-Code on the master branch in this repository is intended to be compatible with
++Code on the main branch in this repository is intended to be compatible with
+ the main branch of the [llvm](https://github.com/llvm/llvm-project)
+ project. That is, for an OpenCL kernel compiled to llvm bitcode by the latest
+ git revision of Clang it should be possible to translate it to SPIR-V with the
+ llvm-spirv tool.
+ 
+-All new development should be done on the master branch.
++All new development should be done on the main branch.
+ 
+ To have versions compatible with released versions of LLVM and Clang,
+ corresponding tags are available in this repository. For example, to build
+@@ -249,9 +249,9 @@ one should use the
+ [v7.0.0-1](https://github.com/KhronosGroup/SPIRV-LLVM-Translator/tree/v7.0.0-1)
+ tag. The 7.x releases are maintained on the
+ [llvm_release_70](https://github.com/KhronosGroup/SPIRV-LLVM-Translator/tree/llvm_release_70)
+-branch. As a general rule, commits from the master branch may be backported to
++branch. As a general rule, commits from the main branch may be backported to
+ the release branches as long as they do not depend on features from a later
+ LLVM/Clang release and there are no objections from the maintainer(s). There
+ is no guarantee that older release branches are proactively kept up to date
+-with master, but you can request specific commits on older release branches by
++with main, but you can request specific commits on older release branches by
+ creating a pull request or raising an issue on GitHub.
+-- 
+2.20.1
+

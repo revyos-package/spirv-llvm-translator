@@ -1,0 +1,54 @@
+From 9f0117bb9d719ea50bc551dc029ac0ae02fd30d1 Mon Sep 17 00:00:00 2001
+From: Dmitry Sidorov <dmitry.sidorov@intel.com>
+Date: Mon, 17 Jul 2023 14:38:25 +0200
+Subject: [PATCH 145/172] [Backport to 14][DebugInfo] Correctly use cached
+ DICompilationUnit
+
+Followup for
+https://github.com/KhronosGroup/SPIRV-LLVM-Translator/pull/2072
+
+Signed-off-by: Sidorov, Dmitry <dmitry.sidorov@intel.com>
+---
+ lib/SPIRV/SPIRVToLLVMDbgTran.cpp                     | 2 +-
+ test/DebugInfo/NonSemantic/Shader200/DebugTypeDef.ll | 8 ++++++--
+ 2 files changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+index 3e2584bc..c3002825 100644
+--- a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
++++ b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+@@ -180,7 +180,7 @@ SPIRVToLLVMDbgTran::transCompilationUnit(const SPIRVExtInst *DebugInst,
+   // Do nothing in case we have already translated the CU (e.g. during
+   // DebugEntryPoint translation)
+   if (BuilderMap[DebugInst->getId()])
+-    return nullptr;
++    return cast<DICompileUnit>(DebugInstCache[DebugInst]);
+ 
+   const SPIRVWordVec &Ops = DebugInst->getArguments();
+ 
+diff --git a/test/DebugInfo/NonSemantic/Shader200/DebugTypeDef.ll b/test/DebugInfo/NonSemantic/Shader200/DebugTypeDef.ll
+index 75423e83..9509518d 100644
+--- a/test/DebugInfo/NonSemantic/Shader200/DebugTypeDef.ll
++++ b/test/DebugInfo/NonSemantic/Shader200/DebugTypeDef.ll
+@@ -4,8 +4,8 @@
+ ; RUN: llvm-spirv %t.bc -spirv-text --spirv-debug-info-version=nonsemantic-shader-200 -o %t.spt
+ ; RUN: FileCheck < %t.spt %s --check-prefix=CHECK-SPIRV
+ ; RUN: llvm-spirv %t.bc -o %t.spv --spirv-debug-info-version=nonsemantic-shader-200
+-; RUN: llvm-spirv -r -emit-opaque-pointers %t.spv -o %t.rev.bc
+-; RUN: llvm-dis %t.rev.bc 
++; RUN: llvm-spirv -r %t.spv -o %t.rev.bc
++; RUN: llvm-dis %t.rev.bc
+ ; RUN: FileCheck < %t.rev.ll %s --check-prefix=CHECK-LLVM
+ 
+ ; CHECK-SPIRV: String [[#TestStr:]] "test.cpp"
+@@ -50,3 +50,7 @@ attributes #0 = { convergent mustprogress norecurse nounwind }
+ !14 = distinct !DISubprogram(name: "_ZTSZ4mainEUlvE_", scope: !1, file: !1, line: 24, type: !15, flags: DIFlagArtificial | DIFlagPrototyped | DIFlagAllCallsDescribed, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !0, retainedNodes: !2)
+ !15 = !DISubroutineType(cc: DW_CC_nocall, types: !16)
+ !16 = !{null}
++!17 = !DIImportedEntity(tag: DW_TAG_imported_declaration, scope: !18, entity: !19, file: !1, line: 58)
++!18 = !DINamespace(name: "std", scope: null)
++!19 = !DIDerivedType(tag: DW_TAG_typedef, name: "max_align_t", file: !1, baseType: !20)
++!20 = !DICompositeType(tag: DW_TAG_structure_type, file: !8, line: 19, size: 256, flags: DIFlagFwdDecl, elements: !2, identifier: "_ZTS11max_align_t")
+-- 
+2.20.1
+

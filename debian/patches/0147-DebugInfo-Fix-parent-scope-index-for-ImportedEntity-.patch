@@ -1,0 +1,194 @@
+From 34e1327f4f007b01f46b5a8354cbceb29a9e2241 Mon Sep 17 00:00:00 2001
+From: Dmitry Sidorov <dmitry.sidorov@intel.com>
+Date: Tue, 1 Aug 2023 18:41:48 +0200
+Subject: [PATCH 147/172] [DebugInfo] Fix parent scope index for ImportedEntity
+ (#2095) (#2110)
+
+Should be more cautious with inline namespaces
+
+Signed-off-by: Sidorov, Dmitry <dmitry.sidorov@intel.com>
+---
+ lib/SPIRV/LLVMToSPIRVDbgTran.cpp              | 23 ++++-----
+ lib/SPIRV/SPIRVToLLVMDbgTran.cpp              | 23 ++++-----
+ lib/SPIRV/libSPIRV/SPIRV.debug.h              | 13 +++--
+ .../DebugInfo/NonSemantic/DIImportedEntity.ll | 50 +++++++++++++++++++
+ 4 files changed, 80 insertions(+), 29 deletions(-)
+ create mode 100644 test/DebugInfo/NonSemantic/DIImportedEntity.ll
+
+diff --git a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+index 3c853fe0..744ced52 100644
+--- a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
++++ b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+@@ -1605,20 +1605,19 @@ LLVMToSPIRVDbgTran::transDbgImportedEntry(const DIImportedEntity *IE) {
+   auto Tag = static_cast<dwarf::Tag>(IE->getTag());
+   // FIXME: 'OpenCL/bugged' version is kept because it's hard to remove it
+   // It's W/A for missing 2nd index in OpenCL's implementation
+-  const SPIRVWord OffsetIdx =
+-      isNonSemanticDebugInfo() ? OperandCount - NonSemantic::OperandCount : 0;
+-  SPIRVWordVec Ops(OperandCount - OffsetIdx);
+-  Ops[NameIdx] = BM->getString(IE->getName().str())->getId();
+-  Ops[TagIdx] = SPIRV::DbgImportedEntityMap::map(Tag);
+-  Ops[SourceIdx - OffsetIdx] = getSource(IE->getFile())->getId();
+-  Ops[EntityIdx - OffsetIdx] = transDbgEntry(IE->getEntity())->getId();
+-  Ops[LineIdx - OffsetIdx] = IE->getLine();
++  const SPIRVWord OffsetIdx = static_cast<int>(isNonSemanticDebugInfo());
++  SPIRVWordVec Ops(OpenCL::OperandCount - OffsetIdx);
++  Ops[OpenCL::NameIdx] = BM->getString(IE->getName().str())->getId();
++  Ops[OpenCL::TagIdx] = SPIRV::DbgImportedEntityMap::map(Tag);
++  Ops[OpenCL::SourceIdx - OffsetIdx] = getSource(IE->getFile())->getId();
++  Ops[OpenCL::EntityIdx - OffsetIdx] = transDbgEntry(IE->getEntity())->getId();
++  Ops[OpenCL::LineIdx - OffsetIdx] = IE->getLine();
+   // This version of DIImportedEntity has no column number
+-  Ops[ColumnIdx - OffsetIdx] = 0;
+-  Ops[ParentIdx - OffsetIdx] = getScope(IE->getScope())->getId();
++  Ops[OpenCL::ColumnIdx - OffsetIdx] = 0;
++  Ops[OpenCL::ParentIdx - OffsetIdx] = getScope(IE->getScope())->getId();
+   if (isNonSemanticDebugInfo())
+-    transformToConstant(Ops,
+-                        {TagIdx, LineIdx - OffsetIdx, ColumnIdx - OffsetIdx});
++    transformToConstant(Ops, {OpenCL::TagIdx, OpenCL::LineIdx - OffsetIdx,
++                              OpenCL::ColumnIdx - OffsetIdx});
+   return BM->addDebugInfo(SPIRVDebug::ImportedEntity, getVoidTy(), Ops);
+ }
+ 
+diff --git a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+index 9783b942..b8c428f3 100644
+--- a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
++++ b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+@@ -1309,20 +1309,19 @@ DINode *SPIRVToLLVMDbgTran::transImportedEntry(const SPIRVExtInst *DebugInst) {
+   const SPIRVWordVec &Ops = DebugInst->getArguments();
+   // FIXME: 'OpenCL/bugged' version is kept because it's hard to remove it
+   // It's W/A for missing 2nd index in OpenCL's implementation
+-  const SPIRVWord OffsetIdx = isNonSemanticDebugInfo(DebugInst->getExtSetKind())
+-                                  ? OperandCount - NonSemantic::OperandCount
+-                                  : 0;
++  const SPIRVWord OffsetIdx =
++      static_cast<int>(isNonSemanticDebugInfo(DebugInst->getExtSetKind()));
+ 
+-  assert(Ops.size() == (OperandCount - OffsetIdx) &&
++  assert(Ops.size() == (OpenCL::OperandCount - OffsetIdx) &&
+          "Invalid number of operands");
+-  DIScope *Scope = getScope(BM->getEntry(Ops[ParentIdx - OffsetIdx]));
+-  SPIRVWord Line = getConstantValueOrLiteral(Ops, LineIdx - OffsetIdx,
++  DIScope *Scope = getScope(BM->getEntry(Ops[OpenCL::ParentIdx - OffsetIdx]));
++  SPIRVWord Line = getConstantValueOrLiteral(Ops, OpenCL::LineIdx - OffsetIdx,
+                                              DebugInst->getExtSetKind());
+-  DIFile *File = getFile(Ops[SourceIdx - OffsetIdx]);
+-  auto *Entity =
+-      transDebugInst<DINode>(BM->get<SPIRVExtInst>(Ops[EntityIdx - OffsetIdx]));
+-  SPIRVWord Tag =
+-      getConstantValueOrLiteral(Ops, TagIdx, DebugInst->getExtSetKind());
++  DIFile *File = getFile(Ops[OpenCL::SourceIdx - OffsetIdx]);
++  auto *Entity = transDebugInst<DINode>(
++      BM->get<SPIRVExtInst>(Ops[OpenCL::EntityIdx - OffsetIdx]));
++  SPIRVWord Tag = getConstantValueOrLiteral(Ops, OpenCL::TagIdx,
++                                            DebugInst->getExtSetKind());
+   if (Tag == SPIRVDebug::ImportedModule) {
+     if (!Entity)
+       return getDIBuilder(DebugInst).createImportedModule(
+@@ -1338,7 +1337,7 @@ DINode *SPIRVToLLVMDbgTran::transImportedEntry(const SPIRVExtInst *DebugInst) {
+                                                           Line);
+   }
+   if (Tag == SPIRVDebug::ImportedDeclaration) {
+-    StringRef Name = getString(Ops[NameIdx]);
++    StringRef Name = getString(Ops[OpenCL::NameIdx]);
+     if (DIGlobalVariableExpression *GVE =
+             dyn_cast<DIGlobalVariableExpression>(Entity))
+       return getDIBuilder(DebugInst).createImportedDeclaration(
+diff --git a/lib/SPIRV/libSPIRV/SPIRV.debug.h b/lib/SPIRV/libSPIRV/SPIRV.debug.h
+index ccbb722c..6c40aec9 100644
+--- a/lib/SPIRV/libSPIRV/SPIRV.debug.h
++++ b/lib/SPIRV/libSPIRV/SPIRV.debug.h
+@@ -933,7 +933,7 @@ static std::map<ExpressionOpCode, unsigned> OpCountMap {
+ }
+ 
+ namespace ImportedEntity {
+-inline namespace OpenCL {
++namespace OpenCL {
+ // it's bugged version, note 2nd index is missing
+ // FIXME: need to remove it after some graceful period
+ enum {
+@@ -977,9 +977,9 @@ enum {
+ 
+ // helper function to get parent scope of debug instruction, to be used
+ // to determine with which compile unit the particular instruction relates
+-inline bool hasDbgInstParentScopeIdx(const uint32_t Kind,
+-                                     uint32_t &ParentScopeIdx,
+-                                     const SPIRV::SPIRVExtInstSetKind ExtKind = SPIRV::SPIRVEIS_OpenCL) {
++inline bool hasDbgInstParentScopeIdx(
++    const uint32_t Kind, uint32_t &ParentScopeIdx,
++    const SPIRV::SPIRVExtInstSetKind ExtKind = SPIRV::SPIRVEIS_OpenCL) {
+   switch (Kind) {
+   case SPIRVDebug::Typedef:
+     ParentScopeIdx = Typedef::ParentIdx;
+@@ -1021,7 +1021,10 @@ inline bool hasDbgInstParentScopeIdx(const uint32_t Kind,
+     ParentScopeIdx = LocalVariable::ParentIdx;
+     return true;
+   case SPIRVDebug::ImportedEntity:
+-    ParentScopeIdx = ImportedEntity::ParentIdx;
++    if (ExtKind == SPIRV::SPIRVEIS_OpenCL_DebugInfo_100)
++      ParentScopeIdx = ImportedEntity::OpenCL::ParentIdx;
++    else
++      ParentScopeIdx = ImportedEntity::NonSemantic::ParentIdx;
+     return true;
+   case SPIRVDebug::ModuleINTEL:
+     ParentScopeIdx = ModuleINTEL::ParentIdx;
+diff --git a/test/DebugInfo/NonSemantic/DIImportedEntity.ll b/test/DebugInfo/NonSemantic/DIImportedEntity.ll
+new file mode 100644
+index 00000000..756a127a
+--- /dev/null
++++ b/test/DebugInfo/NonSemantic/DIImportedEntity.ll
+@@ -0,0 +1,50 @@
++; ModuleID = '/Volumes/Data/apple-internal/llvm/tools/clang/test/Modules/debug-info-moduleimport.m'
++; RUN: llvm-as < %s -o %t.bc
++
++; RUN: llvm-spirv --spirv-debug-info-version=nonsemantic-shader-100 %t.bc -spirv-text -o %t.spt
++; RUN: FileCheck %s --input-file %t.spt --check-prefix CHECK-SPIRV
++; RUN: llvm-spirv --spirv-debug-info-version=nonsemantic-shader-100 %t.bc -o %t.spv
++; RUN: llvm-spirv -r %t.spv -o - | llvm-dis -o %t.ll
++; RUN: FileCheck %s --input-file %t.ll --check-prefix CHECK-LLVM
++
++; RUN: llvm-spirv --spirv-debug-info-version=nonsemantic-shader-200 %t.bc -spirv-text -o %t.spt
++; RUN: FileCheck %s --input-file %t.spt --check-prefix CHECK-SPIRV
++; RUN: llvm-spirv --spirv-debug-info-version=nonsemantic-shader-200 %t.bc -o %t.spv
++; RUN: llvm-spirv -r %t.spv -o - | llvm-dis -o %t.ll
++; RUN: FileCheck %s --input-file %t.ll --check-prefix CHECK-LLVM
++
++target datalayout = "e-m:o-i64:64-f80:128-n8:16:32:64-S128"
++target triple = "spir64-unknown-unknown"
++
++; CHECK-SPIRV-DAG: ExtInstImport [[#EISId:]] "NonSemantic.Shader.DebugInfo
++; CHECK-SPIRV-DAG: String [[#Name:]] ""
++; CHECK-SPIRV-DAG: TypeInt [[#Int:]] 32 0
++; CHECK-SPIRV-DAG: Constant [[#Int]] [[#One:]] 1 
++; CHECK-SPIRV-DAG: Constant [[#Int]] [[#Zero:]] 0
++; CHECK-SPIRV-DAG: Constant [[#Int]] [[#Five:]] 5
++; CHECK-SPIRV: ExtInst [[#]] [[#Source:]] [[#]] DebugSource
++; CHECK-SPIRV: ExtInst [[#]] [[#CU:]] [[#]] DebugCompilationUnit
++; CHECK-SPIRV: ExtInst [[#]] [[#Typedef:]] [[#]] DebugTypedef
++; CHECK-SPIRV: ExtInst [[#]] [[#]] [[#EISId]] DebugImportedEntity [[#Name]] [[#One]] [[#Source]] [[#Typedef]] [[#Five]] [[#Zero]] [[#CU]] {{$}}
++
++; CHECK-LLVM: ![[#CU:]] = distinct !DICompileUnit(language: DW_LANG_OpenCL, file: ![[#File:]],{{.*}}isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug, imports: ![[#Import:]])
++; CHECK-LLVM: ![[#File]] = !DIFile(filename: "<stdin>", directory: "/llvm/tools/clang/test/Modules")
++; CHECK-LLVM: ![[#Import]] = !{![[#Entity:]]}
++; CHECK-LLVM: ![[#Entity]] = !DIImportedEntity(tag: DW_TAG_imported_declaration, scope: ![[#CU]], entity: ![[#Typedef:]], file: ![[#File]], line: 5)
++; CHECK-LLVM: ![[#Typedef]] = !DIDerivedType(tag: DW_TAG_typedef, name: "max_align_t", file: ![[#File]], baseType: ![[#]])
++; CHECK-LLVM: !DICompositeType(tag: DW_TAG_structure_type, file: ![[#File]], line: 5, size: 256, flags: DIFlagFwdDecl, elements: ![[#]], identifier: "_ZTS11max_align_t")
++
++!llvm.dbg.cu = !{!0}
++!llvm.module.flags = !{!6, !7}
++!llvm.ident = !{!8}
++
++!0 = distinct !DICompileUnit(language: DW_LANG_OpenCL, file: !1, producer: "LLVM version 3.7.0", isOptimized: false, runtimeVersion: 2, emissionKind: FullDebug, enums: !2, retainedTypes: !2, globals: !2, imports: !3,  sysroot: "/")
++!1 = !DIFile(filename: "/llvm/tools/clang/test/Modules/<stdin>", directory: "/")
++!2 = !{}
++!3 = !{!4}
++!4 = !DIImportedEntity(tag: DW_TAG_imported_declaration, scope: !0, entity: !9, file: !1, line: 5)
++!6 = !{i32 2, !"Dwarf Version", i32 4}
++!7 = !{i32 2, !"Debug Info Version", i32 3}
++!8 = !{!"LLVM version 3.7.0"}
++!9 = !DIDerivedType(tag: DW_TAG_typedef, name: "max_align_t", file: !1, baseType: !10)
++!10 = !DICompositeType(tag: DW_TAG_structure_type, file: !1, line: 5, size: 256, flags: DIFlagFwdDecl, elements: !2, identifier: "_ZTS11max_align_t")
+-- 
+2.20.1
+

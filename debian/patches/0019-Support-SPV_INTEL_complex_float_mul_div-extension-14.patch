@@ -1,0 +1,217 @@
+From 5e5e6f119d2a9123290f9e15ce48f5db5022a86b Mon Sep 17 00:00:00 2001
+From: Nikita <nikita.kornev@intel.com>
+Date: Tue, 29 Mar 2022 10:38:13 +0300
+Subject: [PATCH 019/172] Support SPV_INTEL_complex_float_mul_div extension
+ (#1442)
+
+Spec: https://github.com/intel/llvm/pull/5824
+Intrinsics: https://reviews.llvm.org/D119284
+
+Co-authored-by: Mikhail Lychkov <mikhail.lychkov@intel.com>
+(cherry picked from commit bc94b7c3a637446748072a9e7fd883724bd6b4e5)
+---
+ include/LLVMSPIRVExtensions.inc               |  1 +
+ lib/SPIRV/libSPIRV/SPIRVInstruction.h         | 44 ++++++++++++
+ lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h         |  1 +
+ lib/SPIRV/libSPIRV/SPIRVOpCodeEnumInternal.h  |  2 +
+ lib/SPIRV/libSPIRV/spirv_internal.hpp         |  9 ++-
+ .../complex-operations.ll                     | 67 +++++++++++++++++++
+ 6 files changed, 123 insertions(+), 1 deletion(-)
+ create mode 100644 test/transcoding/SPV_INTEL_complex_float_mul_div/complex-operations.ll
+
+diff --git a/include/LLVMSPIRVExtensions.inc b/include/LLVMSPIRVExtensions.inc
+index 618af974..9f4e2fc8 100644
+--- a/include/LLVMSPIRVExtensions.inc
++++ b/include/LLVMSPIRVExtensions.inc
+@@ -51,3 +51,4 @@ EXT(SPV_INTEL_joint_matrix)
+ EXT(SPV_INTEL_hw_thread_queries)
+ EXT(SPV_INTEL_global_variable_decorations)
+ EXT(SPV_INTEL_non_constant_addrspace_printf)
++EXT(SPV_INTEL_complex_float_mul_div)
+diff --git a/lib/SPIRV/libSPIRV/SPIRVInstruction.h b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
+index de575ab0..e4b51147 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVInstruction.h
++++ b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
+@@ -3327,6 +3327,50 @@ _SPIRV_OP(GroupLogicalAnd, true, 6, false, 1)
+ _SPIRV_OP(GroupLogicalOr, true, 6, false, 1)
+ _SPIRV_OP(GroupLogicalXor, true, 6, false, 1)
+ #undef _SPIRV_OP
++
++class SPIRVComplexFloat : public SPIRVInstTemplateBase {
++protected:
++  void validate() const override {
++    SPIRVId Op1 = Ops[0];
++    SPIRVId Op2 = Ops[1];
++    SPIRVType *Op1Ty, *Op2Ty;
++    SPIRVInstruction::validate();
++    if (getValue(Op1)->isForward() || getValue(Op2)->isForward())
++      return;
++    if (getValueType(Op1)->isTypeVector()) {
++      Op1Ty = getValueType(Op1)->getVectorComponentType();
++      Op2Ty = getValueType(Op2)->getVectorComponentType();
++      assert(getValueType(Op1)->getVectorComponentCount() ==
++                 getValueType(Op2)->getVectorComponentCount() &&
++             "Inconsistent Vector component width");
++    } else {
++      Op1Ty = getValueType(Op1);
++      Op2Ty = getValueType(Op2);
++    }
++    (void)Op1Ty;
++    (void)Op2Ty;
++    assert(Op1Ty->isTypeFloat() && "Invalid type for complex instruction");
++    assert(Op1Ty == Op2Ty && "Invalid type for complex instruction");
++  }
++
++public:
++  SPIRVCapVec getRequiredCapability() const override {
++    return getVec(internal::CapabilityComplexFloatMulDivINTEL);
++  }
++
++  llvm::Optional<ExtensionID> getRequiredExtension() const override {
++    return ExtensionID::SPV_INTEL_complex_float_mul_div;
++  }
++};
++
++template <Op OC>
++class SPIRVComplexFloatInst
++    : public SPIRVInstTemplate<SPIRVComplexFloat, OC, true, 5, false> {};
++
++#define _SPIRV_OP(x) typedef SPIRVComplexFloatInst<internal::Op##x> SPIRV##x;
++_SPIRV_OP(ComplexFMulINTEL)
++_SPIRV_OP(ComplexFDivINTEL)
++#undef _SPIRV_OP
+ } // namespace SPIRV
+ 
+ #endif // SPIRV_LIBSPIRV_SPIRVINSTRUCTION_H
+diff --git a/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h b/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
+index 5a30605b..dd10da8e 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
++++ b/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
+@@ -592,6 +592,7 @@ template <> inline void SPIRVMap<Capability, std::string>::init() {
+       "GlobalVariableDecorationsINTEL");
+   add(internal::CapabilityNonConstantAddrspacePrintfINTEL,
+       "NonConstantAddrspacePrintfINTEL");
++  add(internal::CapabilityComplexFloatMulDivINTEL, "ComplexFloatMulDivINTEL");
+ }
+ SPIRV_DEF_NAMEMAP(Capability, SPIRVCapabilityNameMap)
+ 
+diff --git a/lib/SPIRV/libSPIRV/SPIRVOpCodeEnumInternal.h b/lib/SPIRV/libSPIRV/SPIRVOpCodeEnumInternal.h
+index 8f22a52a..22d3aabe 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVOpCodeEnumInternal.h
++++ b/lib/SPIRV/libSPIRV/SPIRVOpCodeEnumInternal.h
+@@ -11,3 +11,5 @@ _SPIRV_OP_INTERNAL(JointMatrixStoreINTEL, internal::OpJointMatrixStoreINTEL)
+ _SPIRV_OP_INTERNAL(JointMatrixMadINTEL, internal::OpJointMatrixMadINTEL)
+ _SPIRV_OP_INTERNAL(JointMatrixWorkItemLengthINTEL,
+                    internal::OpJointMatrixWorkItemLengthINTEL)
++_SPIRV_OP_INTERNAL(ComplexFMulINTEL, internal::ComplexFMulINTEL)
++_SPIRV_OP_INTERNAL(ComplexFDivINTEL, internal::ComplexFDivINTEL)
+diff --git a/lib/SPIRV/libSPIRV/spirv_internal.hpp b/lib/SPIRV/libSPIRV/spirv_internal.hpp
+index 6d39bcfe..d25ad4d0 100644
+--- a/lib/SPIRV/libSPIRV/spirv_internal.hpp
++++ b/lib/SPIRV/libSPIRV/spirv_internal.hpp
+@@ -44,6 +44,8 @@ enum InternalOp {
+   IOpJointMatrixMadINTEL = 6122,
+   IOpArithmeticFenceINTEL = 6145,
+   IOpJointMatrixWorkItemLengthINTEL = 6410,
++  IOpComplexFMulINTEL = 6415,
++  IOpComplexFDivINTEL = 6416,
+   IOpPrev = OpMax - 2,
+   IOpForward
+ };
+@@ -73,7 +75,8 @@ enum InternalCapability {
+   ICapabilityHWThreadQueryINTEL = 6134,
+   ICapFPArithmeticFenceINTEL = 6144,
+   ICapGlobalVariableDecorationsINTEL = 6146,
+-  ICapabilityNonConstantAddrspacePrintfINTEL = 6411
++  ICapabilityNonConstantAddrspacePrintfINTEL = 6411,
++  ICapabilityComplexFloatMulDivINTEL = 6414
+ };
+ 
+ enum InternalFunctionControlMask { IFunctionControlOptNoneINTELMask = 0x10000 };
+@@ -107,6 +110,10 @@ _SPIRV_OP(BuiltIn, SubDeviceIDINTEL)
+ _SPIRV_OP(BuiltIn, GlobalHWThreadIDINTEL)
+ 
+ _SPIRV_OP(Capability, NonConstantAddrspacePrintfINTEL)
++
++_SPIRV_OP(Capability, ComplexFloatMulDivINTEL)
++_SPIRV_OP(Op, ComplexFMulINTEL)
++_SPIRV_OP(Op, ComplexFDivINTEL)
+ #undef _SPIRV_OP
+ 
+ constexpr Op OpForward = static_cast<Op>(IOpForward);
+diff --git a/test/transcoding/SPV_INTEL_complex_float_mul_div/complex-operations.ll b/test/transcoding/SPV_INTEL_complex_float_mul_div/complex-operations.ll
+new file mode 100644
+index 00000000..261cd192
+--- /dev/null
++++ b/test/transcoding/SPV_INTEL_complex_float_mul_div/complex-operations.ll
+@@ -0,0 +1,67 @@
++; RUN: llvm-as %s -o %t.bc
++; RUN: llvm-spirv %t.bc -o %t.spv --spirv-ext=+SPV_INTEL_complex_float_mul_div
++; RUN: llvm-spirv %t.spv -o %t.spt --to-text
++; RUN: FileCheck < %t.spt %s --check-prefix=CHECK-SPIRV
++
++; RUN: llvm-spirv %t.spv -o %t.rev.bc -r
++; RUN: llvm-dis %t.rev.bc -o %t.rev.ll
++; RUN: FileCheck < %t.rev.ll %s --check-prefix=CHECK-LLVM
++
++; RUN: not llvm-spirv %t.bc 2>&1 | FileCheck %s --check-prefix=CHECK-ERROR
++
++; CHECK-ERROR: RequiresExtension: Feature requires the following SPIR-V extension:
++; CHECK-ERROR-NEXT: SPV_INTEL_complex_float_mul_div
++
++; CHECK-SPIRV: Capability ComplexFloatMulDivINTEL
++; CHECK-SPIRV: Extension "SPV_INTEL_complex_float_mul_div"
++; CHECK-SPIRV: TypeFloat [[#TyFloat32:]] 32  
++; CHECK-SPIRV: TypeVector [[#TyVec2Float32:]] [[#TyFloat32]] 2
++; CHECK-SPIRV: ComplexFDivINTEL [[#TyVec2Float32]] [[#]] [[#]] [[#]]
++; CHECK-SPIRV: ComplexFMulINTEL [[#TyVec2Float32]] [[#]] [[#]] [[#]]
++
++; CHECK-LLVM: call spir_func <2 x float> @_Z24__spirv_ComplexFDivINTEL{{.*}}(<2 x float>{{.*}}, <2 x float>{{.*}})
++; CHECK-LLVM: call spir_func <2 x float> @_Z24__spirv_ComplexFMulINTEL{{.*}}(<2 x float>{{.*}}, <2 x float>{{.*}})
++
++; ModuleID = 'complex-operations'
++target datalayout = "e-p:32:32:32-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024"
++target triple = "spir-unknown-unknown"
++
++%"struct.std::complex" = type { %structtype }
++%structtype = type { float, float }
++
++; Function Attrs: nounwind
++define spir_func void @_Z19cmul_kernel_complexPSt7complexIfES1_S1_(%"struct.std::complex"* noalias nocapture readonly %a, %"struct.std::complex"* noalias nocapture readonly %b, %"struct.std::complex"* noalias nocapture %c) #0 {
++entry:
++  %0 = bitcast %"struct.std::complex"* %a to <2 x float>*
++  %1 = load <2 x float>, <2 x float>* %0, align 4
++  %2 = bitcast %"struct.std::complex"* %b to <2 x float>*
++  %3 = load <2 x float>, <2 x float>* %2, align 4
++  %4 = call spir_func <2 x float> @_Z24__spirv_ComplexFDivINTELDv2_fS_(<2 x float> %1, <2 x float> %3) #0
++  %ref.tmp.sroa.0.0..sroa_cast5 = bitcast %"struct.std::complex"* %c to <2 x float>*
++  store <2 x float> %4, <2 x float>* %ref.tmp.sroa.0.0..sroa_cast5, align 4
++  %5 = call spir_func <2 x float> @_Z24__spirv_ComplexFMulINTELDv2_fS_(<2 x float> %1, <2 x float> %3) #0
++  store <2 x float> %5, <2 x float>* %ref.tmp.sroa.0.0..sroa_cast5, align 4
++  ret void
++}
++
++; Function Attrs: nounwind
++declare spir_func <2 x float> @_Z24__spirv_ComplexFDivINTELDv2_fS_(<2 x float>, <2 x float>) #0
++
++; Function Attrs: nounwind
++declare spir_func <2 x float> @_Z24__spirv_ComplexFMulINTELDv2_fS_(<2 x float>, <2 x float>) #0
++
++attributes #0 = { nounwind }
++
++!spirv.MemoryModel = !{!0}
++!opencl.enable.FP_CONTRACT = !{}
++!spirv.Source = !{!1}
++!opencl.spir.version = !{!0}
++!opencl.ocl.version = !{!1}
++!opencl.used.extensions = !{!2}
++!opencl.used.optional.core.features = !{!2}
++!spirv.Generator = !{!3}
++
++!0 = !{i32 1, i32 2}
++!1 = !{i32 0, i32 0}
++!2 = !{}
++!3 = !{i16 6, i16 14}
+-- 
+2.20.1
+

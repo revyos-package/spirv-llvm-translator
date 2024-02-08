@@ -1,0 +1,233 @@
+From a16f3db323862cc49d31135697309a3188a024a8 Mon Sep 17 00:00:00 2001
+From: Haonan Yang <haonan.yang@intel.com>
+Date: Thu, 16 Jun 2022 19:04:27 +0800
+Subject: [PATCH 001/172] Translate atomic_fetch_sub to OpAtomicFAddEXT with
+ negative value operand (#1506)
+
+Backport for https://github.com/KhronosGroup/SPIRV-LLVM-Translator/pull/1492
+
+Signed-off-by: haonanya <haonan.yang@intel.com>
+---
+ lib/SPIRV/OCLToSPIRV.cpp                | 14 +++++-
+ lib/SPIRV/OCLUtil.cpp                   | 10 ++--
+ test/AtomicBuiltinsFloat.ll             | 29 +++--------
+ test/transcoding/AtomicFSubEXTForOCL.ll | 67 +++++++++++++++++++++++++
+ 4 files changed, 90 insertions(+), 30 deletions(-)
+ create mode 100644 test/transcoding/AtomicFSubEXTForOCL.ll
+
+diff --git a/lib/SPIRV/OCLToSPIRV.cpp b/lib/SPIRV/OCLToSPIRV.cpp
+index 5839bac0..45602510 100644
+--- a/lib/SPIRV/OCLToSPIRV.cpp
++++ b/lib/SPIRV/OCLToSPIRV.cpp
+@@ -904,14 +904,24 @@ void OCLToSPIRVBase::transAtomicBuiltin(CallInst *CI,
+         if (!IsFPType(AtomicBuiltinsReturnType))
+           return SPIRVFunctionName;
+         // Translate FP-typed atomic builtins. Currently we only need to
+-        // translate atomic_fetch_[add, max, min] and atomic_fetch_[add, max,
+-        // min]_explicit to related float instructions
++        // translate atomic_fetch_[add, sub, max, min] and atomic_fetch_[add,
++        // sub, max, min]_explicit to related float instructions.
++        // Translate atomic_fetch_sub to OpAtomicFAddEXT with negative value
++        // operand
+         auto SPIRFunctionNameForFloatAtomics =
+             llvm::StringSwitch<std::string>(SPIRVFunctionName)
+                 .Case("__spirv_AtomicIAdd", "__spirv_AtomicFAddEXT")
++                .Case("__spirv_AtomicISub", "__spirv_AtomicFAddEXT")
+                 .Case("__spirv_AtomicSMax", "__spirv_AtomicFMaxEXT")
+                 .Case("__spirv_AtomicSMin", "__spirv_AtomicFMinEXT")
+                 .Default("others");
++        if (SPIRVFunctionName == "__spirv_AtomicISub") {
++          IRBuilder<> IRB(CI);
++          // Set float operand to its negation
++          CI->setOperand(1, IRB.CreateFNeg(CI->getArgOperand(1)));
++          // Update Args which is used to generate new call
++          Args.back() = CI->getArgOperand(1);
++        }
+         return SPIRFunctionNameForFloatAtomics == "others"
+                    ? SPIRVFunctionName
+                    : SPIRFunctionNameForFloatAtomics;
+diff --git a/lib/SPIRV/OCLUtil.cpp b/lib/SPIRV/OCLUtil.cpp
+index 6befd128..de0d5271 100644
+--- a/lib/SPIRV/OCLUtil.cpp
++++ b/lib/SPIRV/OCLUtil.cpp
+@@ -662,20 +662,21 @@ size_t getSPIRVAtomicBuiltinNumMemoryOrderArgs(Op OC) {
+   return 1;
+ }
+ 
+-// atomic_fetch_[add, min, max] and atomic_fetch_[add, min, max]_explicit
+-// functions declared in clang headers should be translated to corresponding
+-// FP-typed Atomic Instructions
++// atomic_fetch_[add, sub, min, max] and atomic_fetch_[add, sub, min,
++// max]_explicit functions declared in clang headers should be translated
++// to corresponding FP-typed Atomic Instructions
+ bool isComputeAtomicOCLBuiltin(StringRef DemangledName) {
+   if (!DemangledName.startswith(kOCLBuiltinName::AtomicPrefix) &&
+       !DemangledName.startswith(kOCLBuiltinName::AtomPrefix))
+     return false;
+ 
+   return llvm::StringSwitch<bool>(DemangledName)
+-      .EndsWith("sub", true)
+       .EndsWith("atomic_add", true)
++      .EndsWith("atomic_sub", true)
+       .EndsWith("atomic_min", true)
+       .EndsWith("atomic_max", true)
+       .EndsWith("atom_add", true)
++      .EndsWith("atom_sub", true)
+       .EndsWith("atom_min", true)
+       .EndsWith("atom_max", true)
+       .EndsWith("inc", true)
+@@ -684,7 +685,6 @@ bool isComputeAtomicOCLBuiltin(StringRef DemangledName) {
+       .EndsWith("and", true)
+       .EndsWith("or", true)
+       .EndsWith("xor", true)
+-      .EndsWith("sub_explicit", true)
+       .EndsWith("or_explicit", true)
+       .EndsWith("xor_explicit", true)
+       .EndsWith("and_explicit", true)
+diff --git a/test/AtomicBuiltinsFloat.ll b/test/AtomicBuiltinsFloat.ll
+index 703e984a..3008f3fe 100644
+--- a/test/AtomicBuiltinsFloat.ll
++++ b/test/AtomicBuiltinsFloat.ll
+@@ -1,6 +1,4 @@
+ ; Check that translator generate atomic instructions for atomic builtins
+-; FP-typed atomic_fetch_sub and atomic_fetch_sub_explicit should be translated
+-; to FunctionCall
+ ; RUN: llvm-as %s -o %t.bc
+ ; RUN: llvm-spirv %t.bc -spirv-text -o - | FileCheck %s
+ ; RUN: llvm-spirv %t.bc -o %t.spv
+@@ -11,13 +9,12 @@
+ ; CHECK-COUNT-3: AtomicStore
+ ; CHECK-COUNT-3: AtomicLoad
+ ; CHECK-COUNT-3: AtomicExchange
+-; CHECK-COUNT-3: FunctionCall
+ 
+ target datalayout = "e-p:32:32-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024"
+ target triple = "spir-unknown-unknown"
+ 
+ ; Function Attrs: convergent norecurse nounwind
+-define dso_local spir_kernel void @test_atomic_kernel(float addrspace(3)* %ff) local_unnamed_addr #0 !kernel_arg_addr_space !3 !kernel_arg_access_qual !4 !kernel_arg_type !5 !kernel_arg_base_type !6 !kernel_arg_type_qual !7 {
++define dso_local spir_kernel void @test_atomic_kernel(float addrspace(3)* %ff) local_unnamed_addr #0 !kernel_arg_addr_space !2 !kernel_arg_access_qual !3 !kernel_arg_type !4 !kernel_arg_base_type !5 !kernel_arg_type_qual !6 {
+ entry:
+   %0 = addrspacecast float addrspace(3)* %ff to float addrspace(4)*
+   tail call spir_func void @_Z11atomic_initPU3AS4VU7_Atomicff(float addrspace(4)* %0, float 1.000000e+00) #2
+@@ -30,9 +27,6 @@ entry:
+   %call3 = tail call spir_func float @_Z15atomic_exchangePU3AS4VU7_Atomicff(float addrspace(4)* %0, float 1.000000e+00) #2
+   %call4 = tail call spir_func float @_Z24atomic_exchange_explicitPU3AS4VU7_Atomicff12memory_order(float addrspace(4)* %0, float 1.000000e+00, i32 0) #2
+   %call5 = tail call spir_func float @_Z24atomic_exchange_explicitPU3AS4VU7_Atomicff12memory_order12memory_scope(float addrspace(4)* %0, float 1.000000e+00, i32 0, i32 1) #2
+-  %call6 = tail call spir_func float @_Z16atomic_fetch_subPU3AS3VU7_Atomicff(float addrspace(3)* %ff, float 1.000000e+00) #2
+-  %call7 = tail call spir_func float @_Z25atomic_fetch_sub_explicitPU3AS3VU7_Atomicff12memory_order(float addrspace(3)* %ff, float 1.000000e+00, i32 0) #2
+-  %call8 = tail call spir_func float @_Z25atomic_fetch_sub_explicitPU3AS3VU7_Atomicff12memory_order12memory_scope(float addrspace(3)* %ff, float 1.000000e+00, i32 0, i32 1) #2
+   ret void
+ }
+ 
+@@ -66,15 +60,6 @@ declare spir_func float @_Z24atomic_exchange_explicitPU3AS4VU7_Atomicff12memory_
+ ; Function Attrs: convergent
+ declare spir_func float @_Z24atomic_exchange_explicitPU3AS4VU7_Atomicff12memory_order12memory_scope(float addrspace(4)*, float, i32, i32) local_unnamed_addr #1
+ 
+-; Function Attrs: convergent
+-declare spir_func float @_Z16atomic_fetch_subPU3AS3VU7_Atomicff(float addrspace(3)*, float) local_unnamed_addr #1
+-
+-; Function Attrs: convergent
+-declare spir_func float @_Z25atomic_fetch_sub_explicitPU3AS3VU7_Atomicff12memory_order(float addrspace(3)*, float, i32) local_unnamed_addr #1
+-
+-; Function Attrs: convergent
+-declare spir_func float @_Z25atomic_fetch_sub_explicitPU3AS3VU7_Atomicff12memory_order12memory_scope(float addrspace(3)*, float, i32, i32) local_unnamed_addr #1
+-
+ attributes #0 = { convergent norecurse nounwind "frame-pointer"="none" "min-legal-vector-width"="0" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "uniform-work-group-size"="false" }
+ attributes #1 = { convergent "frame-pointer"="none" "no-trapping-math"="true" "stack-protector-buffer-size"="8" }
+ attributes #2 = { convergent nounwind }
+@@ -82,13 +67,11 @@ attributes #2 = { convergent nounwind }
+ !llvm.module.flags = !{!0}
+ !opencl.ocl.version = !{!1}
+ !opencl.spir.version = !{!1}
+-!llvm.ident = !{!2}
+ 
+ !0 = !{i32 1, !"wchar_size", i32 4}
+ !1 = !{i32 2, i32 0}
+-!2 = !{!"clang version 14.0.0 (https://github.com/llvm/llvm-project.git 28c4f97a1dc8608cdd4db452b73d7d4afc89acc9)"}
+-!3 = !{i32 3}
+-!4 = !{!"none"}
+-!5 = !{!"atomic_float*"}
+-!6 = !{!"_Atomic(float)*"}
+-!7 = !{!"volatile"}
++!2 = !{i32 3}
++!3 = !{!"none"}
++!4 = !{!"atomic_float*"}
++!5 = !{!"_Atomic(float)*"}
++!6 = !{!"volatile"}
+diff --git a/test/transcoding/AtomicFSubEXTForOCL.ll b/test/transcoding/AtomicFSubEXTForOCL.ll
+new file mode 100644
+index 00000000..81276ce5
+--- /dev/null
++++ b/test/transcoding/AtomicFSubEXTForOCL.ll
+@@ -0,0 +1,67 @@
++;; Check that atomic_fetch_sub is translated to OpAtomicFAddEXT with negative
++;; value operand
++; RUN: llvm-as %s -o %t.bc
++; RUN: llvm-spirv %t.bc --spirv-ext=+SPV_EXT_shader_atomic_float_add -o %t.spv
++; RUN: spirv-val %t.spv
++; RUN: llvm-spirv -to-text %t.spv -o %t.spt
++; RUN: FileCheck < %t.spt %s --check-prefix=CHECK-SPIRV
++
++; RUN: llvm-spirv --spirv-target-env=CL2.0 -r %t.spv -o %t.rev.bc
++; RUN: llvm-dis %t.rev.bc -o - | FileCheck %s --check-prefixes=CHECK-LLVM-CL20
++
++; RUN: llvm-spirv --spirv-target-env=SPV-IR -r %t.spv -o %t.rev.bc
++; RUN: llvm-dis %t.rev.bc -o - | FileCheck %s --check-prefixes=CHECK-LLVM-SPV
++
++target datalayout = "e-p:32:32-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024"
++target triple = "spir-unknown-unknown"
++
++; CHECK-SPIRV: Capability AtomicFloat32AddEXT
++; CHECK-SPIRV: Capability AtomicFloat64AddEXT
++; CHECK-SPIRV: Extension "SPV_EXT_shader_atomic_float_add"
++; CHECK-SPIRV: TypeFloat [[TYPE_FLOAT_32:[0-9]+]] 32
++; CHECK-SPIRV: TypeFloat [[TYPE_FLOAT_64:[0-9]+]] 64
++;; Check float operand of atomic_fetch_sub is handled correctly
++; CHECK-SPIRV: Constant [[TYPE_FLOAT_32]] [[NEGATIVE_229:[0-9]+]] 3278176256
++; CHECK-SPIRV: Constant [[TYPE_FLOAT_64]] [[NEGATIVE_334:[0-9]+]] 0 3228884992
++
++
++; Function Attrs: convergent norecurse nounwind
++define dso_local spir_func void @test_atomic_float(float addrspace(1)* %a) local_unnamed_addr #0 {
++entry:
++  ; CHECK-SPIRV: 7 AtomicFAddEXT [[TYPE_FLOAT_32]] 13 7 10 11 [[NEGATIVE_229]]
++  ; CHECK-LLVM-CL20: call spir_func float @_Z25atomic_fetch_add_explicitPU3AS4VU7_Atomicff12memory_order12memory_scope(float addrspace(4)* %a.as, float -2.290000e+02, i32 0, i32 1) #0
++  ; CHECK-LLVM-SPV: call spir_func float @_Z21__spirv_AtomicFAddEXTPU3AS1fiif(float addrspace(1)* %a, i32 2, i32 0, float -2.290000e+02) #0
++  %call2 = tail call spir_func float @_Z25atomic_fetch_sub_explicitPU3AS1VU7_Atomicff12memory_order12memory_scope(float addrspace(1)*  %a, float  2.290000e+02, i32  0, i32  1) #2
++  ret void
++}
++
++; Function Attrs: convergent
++declare spir_func float @_Z25atomic_fetch_sub_explicitPU3AS1VU7_Atomicff12memory_order12memory_scope(float addrspace(1)* , float , i32 , i32 ) local_unnamed_addr #1
++; CHECK-LLVM-SPV: declare spir_func float @_Z21__spirv_AtomicFAddEXTPU3AS1fiif(float addrspace(1)*, i32, i32, float) #0
++
++; Function Attrs: convergent norecurse nounwind
++define dso_local spir_func void @test_atomic_double(double addrspace(1)* %a) local_unnamed_addr #0 {
++entry:
++  ; CHECK-SPIRV: 7 AtomicFAddEXT [[TYPE_FLOAT_64]] 21 18 10 11 [[NEGATIVE_334]]
++  ; CHECK-LLVM-CL20: call spir_func double @_Z25atomic_fetch_add_explicitPU3AS4VU7_Atomicdd12memory_order12memory_scope(double addrspace(4)* %a.as, double -3.340000e+02, i32 0, i32 1) #0
++  ; CHECK-LLVM-SPV: call spir_func double @_Z21__spirv_AtomicFAddEXTPU3AS1diid(double addrspace(1)* %a, i32 2, i32 0, double -3.340000e+02) #0
++  %call = tail call spir_func double @_Z25atomic_fetch_sub_explicitPU3AS1VU7_Atomicdd12memory_order12memory_scope(double addrspace(1)*  %a, double  3.340000e+02, i32  0, i32  1) #2
++  ret void
++}
++; Function Attrs: convergent
++declare spir_func double @_Z25atomic_fetch_sub_explicitPU3AS1VU7_Atomicdd12memory_order12memory_scope(double addrspace(1)* , double , i32 , i32 ) local_unnamed_addr #1
++; CHECK-LLVM-SPV: declare spir_func double @_Z21__spirv_AtomicFAddEXTPU3AS1diid(double addrspace(1)*, i32, i32, double) #0
++
++; CHECK-LLVM-CL20: declare spir_func float @_Z25atomic_fetch_add_explicitPU3AS4VU7_Atomicff12memory_order12memory_scope(float addrspace(4)*, float, i32, i32) #0
++; CHECK-LLVM-CL20: declare spir_func double @_Z25atomic_fetch_add_explicitPU3AS4VU7_Atomicdd12memory_order12memory_scope(double addrspace(4)*, double, i32, i32) #0
++
++attributes #0 = { convergent norecurse nounwind "frame-pointer"="none" "min-legal-vector-width"="0" "no-trapping-math"="true" "stack-protector-buffer-size"="8" }
++attributes #1 = { convergent "frame-pointer"="none" "no-trapping-math"="true" "stack-protector-buffer-size"="8" }
++attributes #2 = { convergent nounwind }
++
++!llvm.module.flags = !{!0}
++!opencl.ocl.version = !{!1}
++!opencl.spir.version = !{!1}
++
++!0 = !{i32 1, !"wchar_size", i32 4}
++!1 = !{i32 2, i32 0}
+-- 
+2.20.1
+
