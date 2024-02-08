@@ -1,0 +1,91 @@
+From e82ecc2bd7295604fcf1824e47c95fa6a09c6e63 Mon Sep 17 00:00:00 2001
+From: Stanley Gambarin <stanley.gambarin@intel.com>
+Date: Fri, 5 May 2023 16:09:13 -0700
+Subject: [PATCH 46/79] Restore DebugInfoProducer.ll test to original state
+
+---
+ lib/SPIRV/libSPIRV/SPIRVModule.cpp            | 25 +++++++++++--------
+ .../NonSemantic/DebugInfoProducer.ll          |  2 +-
+ 2 files changed, 15 insertions(+), 12 deletions(-)
+
+diff --git a/lib/SPIRV/libSPIRV/SPIRVModule.cpp b/lib/SPIRV/libSPIRV/SPIRVModule.cpp
+index 5733254e..dbfcd9f2 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVModule.cpp
++++ b/lib/SPIRV/libSPIRV/SPIRVModule.cpp
+@@ -1632,8 +1632,9 @@ SPIRVInstruction *SPIRVModuleImpl::addExpectKHRInst(SPIRVType *ResultTy,
+ // Create AliasDomainDeclINTEL/AliasScopeDeclINTEL/AliasScopeListDeclINTEL
+ // instructions
+ template <typename AliasingInstType>
+-SPIRVEntry *SPIRVModuleImpl::getOrAddMemAliasingINTELInst(
+-    std::vector<SPIRVId> Args, llvm::MDNode *MD) {
++SPIRVEntry *
++SPIRVModuleImpl::getOrAddMemAliasingINTELInst(std::vector<SPIRVId> Args,
++                                              llvm::MDNode *MD) {
+   assert(MD && "noalias/alias.scope metadata can't be null");
+   // Don't duplicate aliasing instruction. For that use a map with a MDNode key
+   if (AliasInstMDMap.find(MD) != AliasInstMDMap.end())
+@@ -1644,20 +1645,23 @@ SPIRVEntry *SPIRVModuleImpl::getOrAddMemAliasingINTELInst(
+ }
+ 
+ // Create AliasDomainDeclINTEL instruction
+-SPIRVEntry *SPIRVModuleImpl::getOrAddAliasDomainDeclINTELInst(
+-    std::vector<SPIRVId> Args, llvm::MDNode *MD) {
++SPIRVEntry *
++SPIRVModuleImpl::getOrAddAliasDomainDeclINTELInst(std::vector<SPIRVId> Args,
++                                                  llvm::MDNode *MD) {
+   return getOrAddMemAliasingINTELInst<SPIRVAliasDomainDeclINTEL>(Args, MD);
+ }
+ 
+ // Create AliasScopeDeclINTEL instruction
+-SPIRVEntry *SPIRVModuleImpl::getOrAddAliasScopeDeclINTELInst(
+-    std::vector<SPIRVId> Args, llvm::MDNode *MD) {
++SPIRVEntry *
++SPIRVModuleImpl::getOrAddAliasScopeDeclINTELInst(std::vector<SPIRVId> Args,
++                                                 llvm::MDNode *MD) {
+   return getOrAddMemAliasingINTELInst<SPIRVAliasScopeDeclINTEL>(Args, MD);
+ }
+ 
+ // Create AliasScopeListDeclINTEL instruction
+-SPIRVEntry *SPIRVModuleImpl::getOrAddAliasScopeListDeclINTELInst(
+-    std::vector<SPIRVId> Args, llvm::MDNode *MD) {
++SPIRVEntry *
++SPIRVModuleImpl::getOrAddAliasScopeListDeclINTELInst(std::vector<SPIRVId> Args,
++                                                     llvm::MDNode *MD) {
+   return getOrAddMemAliasingINTELInst<SPIRVAliasScopeListDeclINTEL>(Args, MD);
+ }
+ 
+@@ -1869,7 +1873,7 @@ spv_ostream &operator<<(spv_ostream &O, SPIRVModule &M) {
+   }
+ 
+   if (M.isAllowedToUseExtension(
+-        ExtensionID::SPV_INTEL_memory_access_aliasing)) {
++          ExtensionID::SPV_INTEL_memory_access_aliasing)) {
+     O << SPIRVNL() << MI.AliasInstMDVec;
+   }
+ 
+@@ -1894,8 +1898,7 @@ spv_ostream &operator<<(spv_ostream &O, SPIRVModule &M) {
+                      }),
+       MI.DebugInstVec.end());
+ 
+-  O << SPIRVNL() << MI.DebugInstVec << SPIRVNL()
+-    << MI.FuncVec;
++  O << SPIRVNL() << MI.DebugInstVec << SPIRVNL() << MI.FuncVec;
+   return O;
+ }
+ 
+diff --git a/test/DebugInfo/NonSemantic/DebugInfoProducer.ll b/test/DebugInfo/NonSemantic/DebugInfoProducer.ll
+index 49a894f6..dfe1c8ce 100644
+--- a/test/DebugInfo/NonSemantic/DebugInfoProducer.ll
++++ b/test/DebugInfo/NonSemantic/DebugInfoProducer.ll
+@@ -52,7 +52,7 @@ attributes #0 = { noinline norecurse nounwind optnone "correctly-rounded-divide-
+ ; CHECK-LLVM-200-NOT: producer: "spirv"
+ 
+ ; CHECK-LLVM-100: !DICompileUnit
+-; CHECK-LLVM-100-SAME: producer: "clang{{.*}}version{{.*}}13.0.0{{.*}}(https://github.com/llvm/llvm-project.git{{.*}}16a50c9e642fd085e5ceb68c403b71b5b2e0607c)"
++; CHECK-LLVM-100-SAME: producer: "clang version 13.0.0 (https://github.com/llvm/llvm-project.git 16a50c9e642fd085e5ceb68c403b71b5b2e0607c)"
+ ; CHECK-LLVM-100-SAME: flags: "-O2"
+ 
+ ; CHECK-SPIRV-200: String [[#ProducerId:]] "clang version 13.0.0 (https://github.com/llvm/llvm-project.git 16a50c9e642fd085e5ceb68c403b71b5b2e0607c)"
+-- 
+2.20.1
+

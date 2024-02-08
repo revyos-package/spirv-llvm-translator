@@ -1,0 +1,26 @@
+From c5961bda8281592e3a347ab360275b38f9a9c380 Mon Sep 17 00:00:00 2001
+From: "Sidorov, Dmitry" <dmitry.sidorov@intel.com>
+Date: Tue, 8 Nov 2022 01:50:02 -0800
+Subject: [PATCH 05/79] [NFC] Initialize a variable
+
+Signed-off-by: Sidorov, Dmitry <dmitry.sidorov@intel.com>
+---
+ lib/SPIRV/SPIRVWriter.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
+index 34246e5d..fd890a93 100644
+--- a/lib/SPIRV/SPIRVWriter.cpp
++++ b/lib/SPIRV/SPIRVWriter.cpp
+@@ -4491,7 +4491,7 @@ bool LLVMToSPIRVBase::transExecutionMode() {
+         return false;
+ 
+       auto AddSingleArgExecutionMode = [&](ExecutionMode EMode) {
+-        uint32_t Arg;
++        uint32_t Arg = 0;
+         N.get(Arg);
+         BF->addExecutionMode(BM->add(new SPIRVExecutionMode(BF, EMode, Arg)));
+       };
+-- 
+2.20.1
+

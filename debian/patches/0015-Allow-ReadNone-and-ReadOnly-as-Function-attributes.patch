@@ -1,0 +1,25 @@
+From e6ecc0a953b0fea2ef6f2fbb48563dbaf4bb1084 Mon Sep 17 00:00:00 2001
+From: Stanley Gambarin <stanley.gambarin@intel.com>
+Date: Mon, 13 Feb 2023 16:24:44 -0800
+Subject: [PATCH 15/79] Allow ReadNone and ReadOnly as Function attributes
+
+---
+ lib/SPIRV/SPIRVInternal.h | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/lib/SPIRV/SPIRVInternal.h b/lib/SPIRV/SPIRVInternal.h
+index e593856a..9eaaf6c0 100644
+--- a/lib/SPIRV/SPIRVInternal.h
++++ b/lib/SPIRV/SPIRVInternal.h
+@@ -248,6 +248,8 @@ typedef SPIRVMap<Attribute::AttrKind, SPIRVFuncParamAttrKind>
+ template <>
+ inline void
+ SPIRVMap<Attribute::AttrKind, SPIRVFunctionControlMaskKind>::init() {
++  add(Attribute::ReadNone, FunctionControlPureMask);
++  add(Attribute::ReadOnly, FunctionControlConstMask);
+   add(Attribute::AlwaysInline, FunctionControlInlineMask);
+   add(Attribute::NoInline, FunctionControlDontInlineMask);
+   add(Attribute::OptimizeNone, internal::FunctionControlOptNoneINTELMask);
+-- 
+2.20.1
+

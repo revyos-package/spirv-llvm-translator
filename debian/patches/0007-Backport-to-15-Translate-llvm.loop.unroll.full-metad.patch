@@ -1,0 +1,575 @@
+From 40c693bca9392026442c395bfa86a231e57eb5d4 Mon Sep 17 00:00:00 2001
+From: Dmitry Sidorov <dmitry.sidorov@intel.com>
+Date: Tue, 8 Nov 2022 21:32:27 +0100
+Subject: [PATCH 07/79] [Backport to 15] Translate llvm.loop.unroll.full
+ metadata (#1673)
+
+It can be generated via #pragma clang unroll(full) pragma.
+llvm.loop.unroll.full means attempt to do full unroll of the
+loop and disable the unrolling if the trip count is not known
+at compile time.
+
+Unroll mask to which it was previously mapped doesn't much the
+description.
+
+The way the patch represents it in SPIR-V is:
+ Unroll mask + PartialCount mask with '1' parameter
+
+This patch also removes some overtesting for unroll metadata.
+
+This backports: https://github.com/KhronosGroup/SPIRV-LLVM-Translator/pull/1664
+
+Signed-off-by: Sidorov, Dmitry <dmitry.sidorov@intel.com>
+---
+ lib/SPIRV/SPIRVReader.cpp                     | 10 +-
+ lib/SPIRV/SPIRVWriter.cpp                     | 12 ++-
+ test/DebugInfo/DebugControlFlow.cl            |  4 +-
+ .../DebugInfo/DebugUnstructuredControlFlow.cl |  4 +-
+ test/OpLoopMergeDontUnroll.spt                | 92 -------------------
+ test/OpLoopMergeDontUnrollHint1.spt           | 88 ------------------
+ test/OpLoopMergePartialUnroll.spt             | 88 ------------------
+ test/OpLoopMergeUnroll.spt                    | 89 ------------------
+ test/transcoding/LoopUnroll.ll                | 38 ++++++++
+ 9 files changed, 59 insertions(+), 366 deletions(-)
+ delete mode 100644 test/OpLoopMergeDontUnroll.spt
+ delete mode 100644 test/OpLoopMergeDontUnrollHint1.spt
+ delete mode 100644 test/OpLoopMergePartialUnroll.spt
+ delete mode 100644 test/OpLoopMergeUnroll.spt
+
+diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
+index 500bebb9..0209ccfb 100644
+--- a/lib/SPIRV/SPIRVReader.cpp
++++ b/lib/SPIRV/SPIRVReader.cpp
+@@ -745,7 +745,7 @@ void SPIRVToLLVM::setLLVMLoopMetadata(const LoopInstType *LM,
+   // i.e. check smaller-numbered bits first.
+   // Unroll and UnrollCount loop controls can't be applied simultaneously with
+   // DontUnroll loop control.
+-  if (LC & LoopControlUnrollMask)
++  if (LC & LoopControlUnrollMask && !(LC & LoopControlPartialCountMask))
+     Metadata.push_back(getMetadataFromName("llvm.loop.unroll.enable"));
+   else if (LC & LoopControlDontUnrollMask)
+     Metadata.push_back(getMetadataFromName("llvm.loop.unroll.disable"));
+@@ -783,9 +783,11 @@ void SPIRVToLLVM::setLLVMLoopMetadata(const LoopInstType *LM,
+            "Missing loop control parameter!");
+   }
+   if (LC & LoopControlPartialCountMask && !(LC & LoopControlDontUnrollMask)) {
+-    // If unroll factor is set as '1' - disable loop unrolling
+-    if (1 == LoopControlParameters[NumParam])
+-      Metadata.push_back(getMetadataFromName("llvm.loop.unroll.disable"));
++    // If unroll factor is set as '1' and Unroll mask is applied attempt to do
++    // full unrolling and disable it if the trip count is not known at compile
++    // time.
++    if (1 == LoopControlParameters[NumParam] && (LC & LoopControlUnrollMask))
++      Metadata.push_back(getMetadataFromName("llvm.loop.unroll.full"));
+     else
+       Metadata.push_back(llvm::MDNode::get(
+           *Context,
+diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
+index 3593375a..b4d7f33f 100644
+--- a/lib/SPIRV/SPIRVWriter.cpp
++++ b/lib/SPIRV/SPIRVWriter.cpp
+@@ -1393,8 +1393,18 @@ LLVMToSPIRVBase::getLoopControl(const BranchInst *Branch,
+       // appear first.
+       if (S == "llvm.loop.unroll.disable")
+         LoopControl |= spv::LoopControlDontUnrollMask;
+-      else if (S == "llvm.loop.unroll.full" || S == "llvm.loop.unroll.enable")
++      else if (S == "llvm.loop.unroll.enable")
+         LoopControl |= spv::LoopControlUnrollMask;
++      // Attempt to do full unroll of the loop and disable unrolling if the trip
++      // count is not known at compile time by setting PartialCount to 1
++      else if (S == "llvm.loop.unroll.full") {
++        LoopControl |= spv::LoopControlUnrollMask;
++        if (BM->isAllowedToUseVersion(VersionNumber::SPIRV_1_4)) {
++          BM->setMinSPIRVVersion(VersionNumber::SPIRV_1_4);
++          ParametersToSort.emplace_back(spv::LoopControlPartialCountMask, 1);
++          LoopControl |= spv::LoopControlPartialCountMask;
++        }
++      }
+       // PartialCount must not be used with the DontUnroll bit
+       else if (S == "llvm.loop.unroll.count" &&
+                !(LoopControl & LoopControlDontUnrollMask)) {
+diff --git a/test/DebugInfo/DebugControlFlow.cl b/test/DebugInfo/DebugControlFlow.cl
+index ffe963b2..4224f23b 100644
+--- a/test/DebugInfo/DebugControlFlow.cl
++++ b/test/DebugInfo/DebugControlFlow.cl
+@@ -14,11 +14,11 @@
+ kernel
+ void sample() {
+   int arr[10];
+-  #pragma clang loop unroll(full)
++  #pragma clang loop unroll(enable)
+   for (int i = 0; i < 10; i++)
+     arr[i] = 0;
+   int j = 0;
+-  #pragma clang loop unroll(full)
++  #pragma clang loop unroll(enable)
+   do {
+     arr[j] = 0;
+   } while (j++ < 10);
+diff --git a/test/DebugInfo/DebugUnstructuredControlFlow.cl b/test/DebugInfo/DebugUnstructuredControlFlow.cl
+index 344fcc1c..cb85eba8 100644
+--- a/test/DebugInfo/DebugUnstructuredControlFlow.cl
++++ b/test/DebugInfo/DebugUnstructuredControlFlow.cl
+@@ -18,9 +18,9 @@ void sample() {
+ // Check that all Line items are retained
+ // CHECK-SPIRV: Line [[File:[0-9]+]] 15 0
+ // Loop control
+-// CHECK-SPIRV: 2 LoopControlINTEL 1
++// CHECK-SPIRV: LoopControlINTEL 257 1
+ // CHECK-SPIRV-NEXT: Branch
+ 
+ // CHECK-LLVM: br label %{{.*}}, !dbg !{{[0-9]+}}, !llvm.loop ![[MD:[0-9]+]]
+ // CHECK-LLVM: ![[MD]] = distinct !{![[MD]], ![[MD_unroll:[0-9]+]]}
+-// CHECK-LLVM: ![[MD_unroll]] = !{!"llvm.loop.unroll.enable"}
++// CHECK-LLVM: ![[MD_unroll]] = !{!"llvm.loop.unroll.full"}
+diff --git a/test/OpLoopMergeDontUnroll.spt b/test/OpLoopMergeDontUnroll.spt
+deleted file mode 100644
+index 44e7d67c..00000000
+--- a/test/OpLoopMergeDontUnroll.spt
++++ /dev/null
+@@ -1,92 +0,0 @@
+-119734787 65536 458752 46 0
+-2 Capability Addresses
+-2 Capability Linkage
+-2 Capability Kernel
+-2 Capability Int64
+-3 MemoryModel 2 2
+-11 EntryPoint 6 1 "loop_merge_branch_dont_unroll"
+-3 Source 3 102000
+-3 Name 2 "res"
+-3 Name 3 "in"
+-3 Name 4 "rep"
+-3 Name 5 "num"
+-4 Decorate 6 FuncParamAttr 5
+-2 DecorationGroup 6
+-4 Decorate 7 BuiltIn 28
+-3 Decorate 7 Constant
+-11 Decorate 7 LinkageAttributes "__spirv_GlobalInvocationId" Import
+-4 GroupDecorate 6 2 3
+-4 TypeInt 8 64 0
+-4 TypeInt 14 32 0
+-5 Constant 8 11 32 0
+-4 Constant 14 15 0
+-4 Constant 14 16 1
+-4 TypeVector 9 8 3
+-4 TypePointer 10 0 9
+-2 TypeBool 12
+-2 TypeVoid 13
+-4 TypePointer 17 5 14
+-4 TypePointer 18 7 14
+-7 TypeFunction 19 13 17 17 14 14
+-4 Variable 10 7 0
+-
+-5 Function 13 1 0 19
+-3 FunctionParameter 17 2
+-3 FunctionParameter 17 3
+-3 FunctionParameter 14 4
+-3 FunctionParameter 14 5
+-
+-2 Label 20
+-4 Variable 18 26 7
+-4 Variable 18 27 7
+-6 Load 9 21 7 2 0
+-5 CompositeExtract 8 22 21 0
+-5 ShiftLeftLogical 8 23 22 11
+-5 ShiftRightArithmetic 8 24 23 11
+-4 SConvert 14 25 24
+-5 Store 26 15 2 4
+-5 Store 27 15 2 4
+-2 Branch 28
+-
+-2 Label 28
+-4 LoopMerge 29 30 2
+-2 Branch 31
+-
+-2 Label 31
+-4 Load 14 32 27
+-5 SLessThan 12 33 32 4
+-4 BranchConditional 33 34 29
+-
+-2 Label 34
+-4 Load 14 35 27
+-5 IMul 14 36 35 5
+-5 IAdd 14 37 25 36
+-5 InBoundsPtrAccessChain 17 38 3 37
+-4 Load 14 39 38
+-4 Load 14 40 26
+-5 IAdd 14 41 40 39
+-5 Store 26 41 2 4
+-2 Branch 30
+-
+-2 Label 30
+-4 Load 14 42 27
+-5 IAdd 14 43 42 16
+-3 Store 27 43
+-2 Branch 28
+-
+-2 Label 29
+-4 Load 14 44 26
+-5 InBoundsPtrAccessChain 17 45 2 24
+-5 Store 45 44 2 4
+-1 Return
+-
+-1 FunctionEnd
+-
+-; RUN: llvm-spirv %s -to-binary -o %t.spv
+-; RUN: spirv-val %t.spv
+-; RUN: llvm-spirv -r %t.spv -o %t.bc
+-; RUN: llvm-dis < %t.bc | FileCheck %s --check-prefix=CHECK-LLVM
+-
+-; CHECK-LLVM: br label %{{[0-9]+}}, !llvm.loop ![[MD:[0-9]+]]
+-; CHECK-LLVM: ![[MD]] = distinct !{![[MD]], ![[MD_unroll_disable:[0-9]+]]}
+-; CHECK-LLVM: ![[MD_unroll_disable]] = !{!"llvm.loop.unroll.disable"}
+diff --git a/test/OpLoopMergeDontUnrollHint1.spt b/test/OpLoopMergeDontUnrollHint1.spt
+deleted file mode 100644
+index 59b3da40..00000000
+--- a/test/OpLoopMergeDontUnrollHint1.spt
++++ /dev/null
+@@ -1,88 +0,0 @@
+-119734787 65536 458752 45 0
+-2 Capability Addresses
+-2 Capability Linkage
+-2 Capability Kernel
+-2 Capability Int64
+-3 MemoryModel 2 2
+-13 EntryPoint 6 1 "loop_merge_branch_conditional_unroll"
+-3 Source 3 102000
+-3 Name 2 "res"
+-3 Name 3 "in"
+-3 Name 4 "rep"
+-3 Name 5 "num"
+-4 Decorate 6 FuncParamAttr 5
+-2 DecorationGroup 6
+-4 Decorate 7 BuiltIn 28
+-3 Decorate 7 Constant
+-11 Decorate 7 LinkageAttributes "__spirv_GlobalInvocationId" Import
+-4 GroupDecorate 6 2 3
+-4 TypeInt 8 64 0
+-4 TypeInt 14 32 1
+-5 Constant 8 11 32 0
+-4 Constant 14 15 0
+-4 Constant 14 16 1
+-4 TypeVector 9 8 3
+-4 TypePointer 10 0 9
+-2 TypeBool 12
+-2 TypeVoid 13
+-4 TypePointer 17 5 14
+-4 TypePointer 18 7 14
+-7 TypeFunction 19 13 17 17 14 14
+-4 Variable 10 7 0
+-
+-5 Function 13 1 0 19
+-3 FunctionParameter 17 2
+-3 FunctionParameter 17 3
+-3 FunctionParameter 14 4
+-3 FunctionParameter 14 5
+-
+-2 Label 20
+-6 Load 9 21 7 2 0
+-5 CompositeExtract 8 22 21 0
+-5 ShiftLeftLogical 8 23 22 11
+-5 ShiftRightArithmetic 8 24 23 11
+-4 SConvert 14 25 24
+-4 Variable 18 26 7
+-4 Variable 18 27 7
+-5 Store 26 15 2 4
+-5 Store 27 15 2 4
+-2 Branch 28
+-
+-2 Label 28
+-4 Load 14 29 27
+-5 SLessThan 12 30 29 4
+-5 LoopMerge 31 32 256 1
+-4 BranchConditional 30 33 31
+-
+-2 Label 33
+-4 Load 14 34 27
+-5 IMul 14 35 34 5
+-5 IAdd 14 36 25 35
+-5 InBoundsPtrAccessChain 17 37 3 36
+-4 Load 14 38 37
+-4 Load 14 39 26
+-5 IAdd 14 40 39 38
+-5 Store 26 40 2 4
+-2 Branch 32
+-
+-2 Label 32
+-4 Load 14 41 27
+-5 IAdd 14 42 41 16
+-3 Store 27 42
+-2 Branch 28
+-
+-2 Label 31
+-4 Load 14 43 26
+-5 InBoundsPtrAccessChain 17 44 2 24
+-5 Store 44 43 2 4
+-1 Return
+-
+-1 FunctionEnd
+-
+-; RUN: llvm-spirv %s -to-binary -o %t.spv
+-; RUN: llvm-spirv -r %t.spv -o %t.bc
+-; RUN: llvm-dis < %t.bc | FileCheck %s --check-prefix=CHECK-LLVM
+-
+-; CHECK-LLVM: br label %{{[0-9]+}}, !llvm.loop ![[MD:[0-9]+]]
+-; CHECK-LLVM: ![[MD]] = distinct !{![[MD]], ![[MD_unroll:[0-9]+]]}
+-; CHECK-LLVM: ![[MD_unroll]] = !{!"llvm.loop.unroll.disable"}
+diff --git a/test/OpLoopMergePartialUnroll.spt b/test/OpLoopMergePartialUnroll.spt
+deleted file mode 100644
+index 9118fc63..00000000
+--- a/test/OpLoopMergePartialUnroll.spt
++++ /dev/null
+@@ -1,88 +0,0 @@
+-119734787 65536 458752 45 0
+-2 Capability Addresses
+-2 Capability Linkage
+-2 Capability Kernel
+-2 Capability Int64
+-3 MemoryModel 2 2
+-13 EntryPoint 6 1 "loop_merge_branch_conditional_unroll"
+-3 Source 3 102000
+-3 Name 2 "res"
+-3 Name 3 "in"
+-3 Name 4 "rep"
+-3 Name 5 "num"
+-4 Decorate 6 FuncParamAttr 5
+-2 DecorationGroup 6
+-4 Decorate 7 BuiltIn 28
+-3 Decorate 7 Constant
+-11 Decorate 7 LinkageAttributes "__spirv_GlobalInvocationId" Import
+-4 GroupDecorate 6 2 3
+-4 TypeInt 8 64 0
+-4 TypeInt 14 32 1
+-5 Constant 8 11 32 0
+-4 Constant 14 15 0
+-4 Constant 14 16 1
+-4 TypeVector 9 8 3
+-4 TypePointer 10 0 9
+-2 TypeBool 12
+-2 TypeVoid 13
+-4 TypePointer 17 5 14
+-4 TypePointer 18 7 14
+-7 TypeFunction 19 13 17 17 14 14
+-4 Variable 10 7 0
+-
+-5 Function 13 1 0 19
+-3 FunctionParameter 17 2
+-3 FunctionParameter 17 3
+-3 FunctionParameter 14 4
+-3 FunctionParameter 14 5
+-
+-2 Label 20
+-6 Load 9 21 7 2 0
+-5 CompositeExtract 8 22 21 0
+-5 ShiftLeftLogical 8 23 22 11
+-5 ShiftRightArithmetic 8 24 23 11
+-4 SConvert 14 25 24
+-4 Variable 18 26 7
+-4 Variable 18 27 7
+-5 Store 26 15 2 4
+-5 Store 27 15 2 4
+-2 Branch 28
+-
+-2 Label 28
+-4 Load 14 29 27
+-5 SLessThan 12 30 29 4
+-5 LoopMerge 31 32 256 4
+-4 BranchConditional 30 33 31
+-
+-2 Label 33
+-4 Load 14 34 27
+-5 IMul 14 35 34 5
+-5 IAdd 14 36 25 35
+-5 InBoundsPtrAccessChain 17 37 3 36
+-4 Load 14 38 37
+-4 Load 14 39 26
+-5 IAdd 14 40 39 38
+-5 Store 26 40 2 4
+-2 Branch 32
+-
+-2 Label 32
+-4 Load 14 41 27
+-5 IAdd 14 42 41 16
+-3 Store 27 42
+-2 Branch 28
+-
+-2 Label 31
+-4 Load 14 43 26
+-5 InBoundsPtrAccessChain 17 44 2 24
+-5 Store 44 43 2 4
+-1 Return
+-
+-1 FunctionEnd
+-
+-; RUN: llvm-spirv %s -to-binary -o %t.spv
+-; RUN: llvm-spirv -r %t.spv -o %t.bc
+-; RUN: llvm-dis < %t.bc | FileCheck %s --check-prefix=CHECK-LLVM
+-
+-; CHECK-LLVM: br label %{{[0-9]+}}, !llvm.loop ![[MD:[0-9]+]]
+-; CHECK-LLVM: ![[MD]] = distinct !{![[MD]], ![[MD_unroll:[0-9]+]]}
+-; CHECK-LLVM: ![[MD_unroll]] = !{!"llvm.loop.unroll.count", i32 4}
+diff --git a/test/OpLoopMergeUnroll.spt b/test/OpLoopMergeUnroll.spt
+deleted file mode 100644
+index d976168d..00000000
+--- a/test/OpLoopMergeUnroll.spt
++++ /dev/null
+@@ -1,89 +0,0 @@
+-119734787 65536 458752 45 0
+-2 Capability Addresses
+-2 Capability Linkage
+-2 Capability Kernel
+-2 Capability Int64
+-3 MemoryModel 2 2
+-13 EntryPoint 6 1 "loop_merge_branch_conditional_unroll"
+-3 Source 3 102000
+-3 Name 2 "res"
+-3 Name 3 "in"
+-3 Name 4 "rep"
+-3 Name 5 "num"
+-4 Decorate 6 FuncParamAttr 5
+-2 DecorationGroup 6
+-4 Decorate 7 BuiltIn 28
+-3 Decorate 7 Constant
+-11 Decorate 7 LinkageAttributes "__spirv_GlobalInvocationId" Import
+-4 GroupDecorate 6 2 3
+-4 TypeInt 8 64 0
+-4 TypeInt 14 32 0
+-5 Constant 8 11 32 0
+-4 Constant 14 15 0
+-4 Constant 14 16 1
+-4 TypeVector 9 8 3
+-4 TypePointer 10 0 9
+-2 TypeBool 12
+-2 TypeVoid 13
+-4 TypePointer 17 5 14
+-4 TypePointer 18 7 14
+-7 TypeFunction 19 13 17 17 14 14
+-4 Variable 10 7 0
+-
+-5 Function 13 1 0 19
+-3 FunctionParameter 17 2
+-3 FunctionParameter 17 3
+-3 FunctionParameter 14 4
+-3 FunctionParameter 14 5
+-
+-2 Label 20
+-4 Variable 18 26 7
+-4 Variable 18 27 7
+-6 Load 9 21 7 2 0
+-5 CompositeExtract 8 22 21 0
+-5 ShiftLeftLogical 8 23 22 11
+-5 ShiftRightArithmetic 8 24 23 11
+-4 SConvert 14 25 24
+-5 Store 26 15 2 4
+-5 Store 27 15 2 4
+-2 Branch 28
+-
+-2 Label 28
+-4 Load 14 29 27
+-5 SLessThan 12 30 29 4
+-4 LoopMerge 31 32 1
+-4 BranchConditional 30 33 31
+-
+-2 Label 33
+-4 Load 14 34 27
+-5 IMul 14 35 34 5
+-5 IAdd 14 36 25 35
+-5 InBoundsPtrAccessChain 17 37 3 36
+-4 Load 14 38 37
+-4 Load 14 39 26
+-5 IAdd 14 40 39 38
+-5 Store 26 40 2 4
+-2 Branch 32
+-
+-2 Label 32
+-4 Load 14 41 27
+-5 IAdd 14 42 41 16
+-3 Store 27 42
+-2 Branch 28
+-
+-2 Label 31
+-4 Load 14 43 26
+-5 InBoundsPtrAccessChain 17 44 2 24
+-5 Store 44 43 2 4
+-1 Return
+-
+-1 FunctionEnd
+-
+-; RUN: llvm-spirv %s -to-binary -o %t.spv
+-; RUN: spirv-val %t.spv
+-; RUN: llvm-spirv -r %t.spv -o %t.bc
+-; RUN: llvm-dis < %t.bc | FileCheck %s --check-prefix=CHECK-LLVM
+-
+-; CHECK-LLVM: br label %{{[0-9]+}}, !llvm.loop ![[MD:[0-9]+]]
+-; CHECK-LLVM: ![[MD]] = distinct !{![[MD]], ![[MD_unroll:[0-9]+]]}
+-; CHECK-LLVM: ![[MD_unroll]] = !{!"llvm.loop.unroll.enable"}
+diff --git a/test/transcoding/LoopUnroll.ll b/test/transcoding/LoopUnroll.ll
+index 0bd924d8..832d5388 100644
+--- a/test/transcoding/LoopUnroll.ll
++++ b/test/transcoding/LoopUnroll.ll
+@@ -35,6 +35,16 @@
+ ;
+ ; Command:
+ ; clang -cc1 -triple spir64 -O0 LoopUnroll.cl -emit-llvm -o /test/SPIRV/transcoding/LoopUnroll.ll
++;
++; unroll_full() test was generated from the following source with -O2
++; void foo();
++;
++; void unroll_full() {
++;   #pragma clang unroll(full)
++;   for (int i = 0; i != 1024; ++i) {
++;     foo();
++;   }
++; }
+ 
+ ; RUN: llvm-as < %s > %t.bc
+ ; RUN: llvm-spirv %t.bc -o %t.spv
+@@ -243,6 +253,30 @@ for.end:                                           ; preds = %for.cond
+   ret void
+ }
+ 
++; CHECK-SPIRV: Function
++; CHECK-SPIRV: Label
++; CHECK-SPIRV: Branch [[#Header:]]
++; CHECK-SPIRV: Label [[#Return:]]
++; CHECK-SPIRV: LoopMerge [[#Return]] [[#Header]] 257 1
++; CHECK-SPIRV: BranchConditional [[#]] [[#Return]] [[#Header]]
++; Function Attrs: noinline nounwind optnone
++define spir_func void @unroll_full() {
++  br label %2
++
++1:                                                ; preds = %2
++  ret void
++
++2:                                                ; preds = %0, %2
++  %3 = phi i32 [ 0, %0 ], [ %4, %2 ]
++  tail call void @_Z3foov()
++  %4 = add nuw nsw i32 %3, 1
++  %5 = icmp eq i32 %4, 1024
++  ; CHECK-LLVM: br i1 %[[#]], label %[[#]], label %[[#]], !llvm.loop ![[#FULL:]]
++  br i1 %5, label %1, label %2, !llvm.loop !11
++}
++
++declare void @_Z3foov()
++
+ attributes #0 = { noinline nounwind optnone "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-jump-tables"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="false" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
+ 
+ !llvm.module.flags = !{!0}
+@@ -265,6 +299,8 @@ attributes #0 = { noinline nounwind optnone "correctly-rounded-divide-sqrt-fp-ma
+ !8 = !{!"llvm.loop.unroll.count", i32 8}
+ !9 = distinct !{!9, !10}
+ !10 = !{!"llvm.loop.unroll.enable"}
++!11 = distinct !{!11, !12}
++!12 = !{!"llvm.loop.unroll.full"}
+ 
+ ; CHECK-LLVM: ![[#UNROLLDISABLE]] = distinct !{![[#UNROLLDISABLE]], ![[#DISABLE:]]}
+ ; CHECK-LLVM: ![[#DISABLE]] = !{!"llvm.loop.unroll.disable"}
+@@ -273,3 +309,5 @@ attributes #0 = { noinline nounwind optnone "correctly-rounded-divide-sqrt-fp-ma
+ ; CHECK-LLVM: ![[#UNROLLENABLE1]] = distinct !{![[#UNROLLENABLE1]], ![[#ENABLE:]]}
+ ; CHECK-LLVM: ![[#ENABLE]] = !{!"llvm.loop.unroll.enable"}
+ ; CHECK-LLVM: ![[#UNROLLENABLE2]] = distinct !{![[#UNROLLENABLE2]], ![[#ENABLE]]}
++; CHECK-LLVM: ![[#FULL]] = distinct !{![[#FULL]], ![[#UNROLLFULL:]]}
++; CHECK-LLVM: ![[#UNROLLFULL]] = !{!"llvm.loop.unroll.full"}
+-- 
+2.20.1
+

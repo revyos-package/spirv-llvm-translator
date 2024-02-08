@@ -1,0 +1,507 @@
+From f38c2207215bcc2f79bd40aad36720c3107376c7 Mon Sep 17 00:00:00 2001
+From: Andrzej Ratajewski <andrzej.ratajewski@intel.com>
+Date: Tue, 12 Sep 2023 10:26:03 +0200
+Subject: [PATCH 68/79] Support for SPV_INTEL_cache_controls (#2147)
+
+Specification: https://github.com/KhronosGroup/SPIRV-Registry/pull/216
+
+Cherry-pick of KhronosGroup/SPIRV-LLVM-Translator#2140
+---
+ docs/SPIRVRepresentationInLLVM.rst            | 20 +++++--
+ include/LLVMSPIRVExtensions.inc               |  1 +
+ lib/SPIRV/SPIRVReader.cpp                     | 17 +++---
+ lib/SPIRV/SPIRVReader.h                       |  2 +-
+ lib/SPIRV/SPIRVWriter.cpp                     | 47 ++++++++++++++++-
+ lib/SPIRV/libSPIRV/SPIRVDecorate.h            | 34 ++++++++++++
+ lib/SPIRV/libSPIRV/SPIRVEnum.h                |  4 ++
+ lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h         |  3 ++
+ lib/SPIRV/libSPIRV/spirv_internal.hpp         | 28 +++++++++-
+ .../basic_load_store.ll                       | 52 +++++++++++++++++++
+ .../SPV_INTEL_cache_controls/global_var.ll    | 38 ++++++++++++++
+ .../SPV_INTEL_cache_controls/kernel_arg.ll    | 35 +++++++++++++
+ 12 files changed, 267 insertions(+), 14 deletions(-)
+ create mode 100644 test/extensions/INTEL/SPV_INTEL_cache_controls/basic_load_store.ll
+ create mode 100644 test/extensions/INTEL/SPV_INTEL_cache_controls/global_var.ll
+ create mode 100644 test/extensions/INTEL/SPV_INTEL_cache_controls/kernel_arg.ll
+
+diff --git a/docs/SPIRVRepresentationInLLVM.rst b/docs/SPIRVRepresentationInLLVM.rst
+index 514a448c..ded07826 100644
+--- a/docs/SPIRVRepresentationInLLVM.rst
++++ b/docs/SPIRVRepresentationInLLVM.rst
+@@ -411,14 +411,14 @@ For example:
+ are translated for image types, but they should be encoded in LLVM IR type name
+ rather than function metadata.
+ 
+-Function parameter and global variable decoration through metadata
++Function parameter, instruction and global variable decoration through metadata
+ ------------------------------------------------------------------
+ 
+-Both function parameters and global variables can be decorated using LLVM
++Function parameters, instructions and global variables can be decorated using LLVM
+ metadata through the metadata names ``spirv.ParameterDecorations`` and
+ ``spirv.Decorations`` respectively. ``spirv.ParameterDecorations`` must be tied
+ to the kernel function while ``spirv.Decorations`` is tied directly to the
+-global variable.
++instruction or global variable.
+ 
+ A "decoration-node" is a metadata node consisting of one or more operands. The
+ first operand is an integer literal representing the SPIR-V decoration
+@@ -434,7 +434,7 @@ decoration-nodes.
+ references to decoration-lists, where N is the number of arguments of the
+ function the metadata is tied to.
+ 
+-``spirv.Decorations`` example:
++``spirv.Decorations`` applied on a global variable example:
+ 
+ .. code-block:: llvm
+ 
+@@ -447,6 +447,18 @@ function the metadata is tied to.
+ decorates a global variable ``v`` with ``Constant`` and ``LinkageAttributes``
+ with extra operands ``"v"`` and ``Export`` in SPIR-V.
+ 
++``spirv.Decorations`` applied on an instruction example:
++
++.. code-block:: llvm
++
++  %idx = getelementptr inbounds i32, ptr addrspace(1) %b, i64 1, !spirv.Decorations !1
++  ...
++  !1 = !{!2}
++  !2 = !{i32 6442, i32 1, i32 2}  ; {CacheControlLoadINTEL, CacheLevel=1, Cached}
++
++decorates getelementptr instruction with CacheControlLoadINTEL decoration with
++extra operands ``i32 1`` and ``i32 2``.
++
+ ``spirv.ParameterDecorations`` example:
+ 
+ .. code-block:: llvm
+diff --git a/include/LLVMSPIRVExtensions.inc b/include/LLVMSPIRVExtensions.inc
+index 5e966a5f..e3bc506c 100644
+--- a/include/LLVMSPIRVExtensions.inc
++++ b/include/LLVMSPIRVExtensions.inc
+@@ -58,3 +58,4 @@ EXT(SPV_INTEL_masked_gather_scatter)
+ EXT(SPV_INTEL_tensor_float32_conversion) // TODO: to remove old extension
+ EXT(SPV_INTEL_tensor_float32_rounding)
+ EXT(SPV_EXT_relaxed_printf_string_address_space)
++EXT(SPV_INTEL_cache_controls)
+diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
+index d28f1090..33a9a893 100644
+--- a/lib/SPIRV/SPIRVReader.cpp
++++ b/lib/SPIRV/SPIRVReader.cpp
+@@ -3782,17 +3782,22 @@ transDecorationsToMetadataList(llvm::LLVMContext *Context,
+   return MDNode::get(*Context, MDs);
+ }
+ 
+-void SPIRVToLLVM::transVarDecorationsToMetadata(SPIRVValue *BV, Value *V) {
+-  if (!BV->isVariable())
++void SPIRVToLLVM::transDecorationsToMetadata(SPIRVValue *BV, Value *V) {
++  if (!BV->isVariable() && !BV->isInst())
+     return;
+ 
+-  if (auto *GV = dyn_cast<GlobalVariable>(V)) {
++  auto SetDecorationsMetadata = [&](auto V) {
+     std::vector<SPIRVDecorate const *> Decorates = BV->getDecorations();
+     if (!Decorates.empty()) {
+       MDNode *MDList = transDecorationsToMetadataList(Context, Decorates);
+-      GV->setMetadata(SPIRV_MD_DECORATIONS, MDList);
++      V->setMetadata(SPIRV_MD_DECORATIONS, MDList);
+     }
+-  }
++  };
++
++  if (auto *GV = dyn_cast<GlobalVariable>(V))
++    SetDecorationsMetadata(GV);
++  else if (auto *I = dyn_cast<Instruction>(V))
++    SetDecorationsMetadata(I);
+ }
+ 
+ bool SPIRVToLLVM::transDecoration(SPIRVValue *BV, Value *V) {
+@@ -3804,7 +3809,7 @@ bool SPIRVToLLVM::transDecoration(SPIRVValue *BV, Value *V) {
+ 
+   // Decoration metadata is only enabled in SPIR-V friendly mode
+   if (BM->getDesiredBIsRepresentation() == BIsRepresentation::SPIRVFriendlyIR)
+-    transVarDecorationsToMetadata(BV, V);
++    transDecorationsToMetadata(BV, V);
+ 
+   DbgTran->transDbgInfo(BV, V);
+   return true;
+diff --git a/lib/SPIRV/SPIRVReader.h b/lib/SPIRV/SPIRVReader.h
+index 5a5a711b..5b031765 100644
+--- a/lib/SPIRV/SPIRVReader.h
++++ b/lib/SPIRV/SPIRVReader.h
+@@ -245,7 +245,7 @@ private:
+                          SmallVectorImpl<Function *> &Funcs);
+   void transIntelFPGADecorations(SPIRVValue *BV, Value *V);
+   void transMemAliasingINTELDecorations(SPIRVValue *BV, Value *V);
+-  void transVarDecorationsToMetadata(SPIRVValue *BV, Value *V);
++  void transDecorationsToMetadata(SPIRVValue *BV, Value *V);
+   void transFunctionDecorationsToMetadata(SPIRVFunction *BF, Function *F);
+   void
+   transFunctionPointerCallArgumentAttributes(SPIRVValue *BV, CallInst *CI,
+diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
+index cf1482e2..34d0dd57 100644
+--- a/lib/SPIRV/SPIRVWriter.cpp
++++ b/lib/SPIRV/SPIRVWriter.cpp
+@@ -2414,6 +2414,48 @@ static void transMetadataDecorations(Metadata *MD, SPIRVEntry *Target) {
+           new SPIRVDecorateImplementInCSRINTEL(Target, Value->getZExtValue()));
+       break;
+     }
++    case spv::internal::DecorationCacheControlLoadINTEL: {
++      ErrLog.checkError(
++          NumOperands == 3, SPIRVEC_InvalidLlvmModule,
++          "CacheControlLoadINTEL requires exactly 2 extra operands");
++      auto *CacheLevel =
++          mdconst::dyn_extract<ConstantInt>(DecoMD->getOperand(1));
++      auto *CacheControl =
++          mdconst::dyn_extract<ConstantInt>(DecoMD->getOperand(2));
++      ErrLog.checkError(CacheLevel, SPIRVEC_InvalidLlvmModule,
++                        "CacheControlLoadINTEL cache level operand is required "
++                        "to be an integer");
++      ErrLog.checkError(CacheControl, SPIRVEC_InvalidLlvmModule,
++                        "CacheControlLoadINTEL cache control operand is "
++                        "required to be an integer");
++
++      Target->addDecorate(new SPIRVDecorateCacheControlLoadINTEL(
++          Target, CacheLevel->getZExtValue(),
++          static_cast<internal::LoadCacheControlINTEL>(
++              CacheControl->getZExtValue())));
++      break;
++    }
++    case spv::internal::DecorationCacheControlStoreINTEL: {
++      ErrLog.checkError(
++          NumOperands == 3, SPIRVEC_InvalidLlvmModule,
++          "CacheControlStoreINTEL requires exactly 2 extra operands");
++      auto *CacheLevel =
++          mdconst::dyn_extract<ConstantInt>(DecoMD->getOperand(1));
++      auto *CacheControl =
++          mdconst::dyn_extract<ConstantInt>(DecoMD->getOperand(2));
++      ErrLog.checkError(CacheLevel, SPIRVEC_InvalidLlvmModule,
++                        "CacheControlStoreINTEL cache level operand is "
++                        "required to be an integer");
++      ErrLog.checkError(CacheControl, SPIRVEC_InvalidLlvmModule,
++                        "CacheControlStoreINTEL cache control operand is "
++                        "required to be an integer");
++
++      Target->addDecorate(new SPIRVDecorateCacheControlStoreINTEL(
++          Target, CacheLevel->getZExtValue(),
++          static_cast<internal::StoreCacheControlINTEL>(
++              CacheControl->getZExtValue())));
++      break;
++    }
+     default: {
+       if (NumOperands == 1) {
+         Target->addDecorate(new SPIRVDecorate(DecoKind, Target));
+@@ -2501,9 +2543,12 @@ bool LLVMToSPIRVBase::transDecoration(Value *V, SPIRVValue *BV) {
+         BV->setFPFastMathMode(M);
+     }
+   }
+-  if (Instruction *Inst = dyn_cast<Instruction>(V))
++  if (Instruction *Inst = dyn_cast<Instruction>(V)) {
+     if (shouldTryToAddMemAliasingDecoration(Inst))
+       transMemAliasingINTELDecorations(Inst, BV);
++    if (auto *IDecoMD = Inst->getMetadata(SPIRV_MD_DECORATIONS))
++      transMetadataDecorations(IDecoMD, BV);
++  }
+ 
+   if (auto *CI = dyn_cast<CallInst>(V)) {
+     auto OC = BV->getOpCode();
+diff --git a/lib/SPIRV/libSPIRV/SPIRVDecorate.h b/lib/SPIRV/libSPIRV/SPIRVDecorate.h
+index 60177d1f..2e4458e5 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVDecorate.h
++++ b/lib/SPIRV/libSPIRV/SPIRVDecorate.h
+@@ -178,6 +178,9 @@ public:
+     case internal::DecorationInitModeINTEL:
+     case internal::DecorationImplementInCSRINTEL:
+       return ExtensionID::SPV_INTEL_global_variable_decorations;
++    case internal::DecorationCacheControlLoadINTEL:
++    case internal::DecorationCacheControlStoreINTEL:
++      return ExtensionID::SPV_INTEL_cache_controls;
+     default:
+       return {};
+     }
+@@ -763,6 +766,37 @@ public:
+                       Value){};
+ };
+ 
++class SPIRVDecorateCacheControlLoadINTEL : public SPIRVDecorate {
++public:
++  // Complete constructor for SPIRVDecorateCacheControlLoadINTEL
++  SPIRVDecorateCacheControlLoadINTEL(
++      SPIRVEntry *TheTarget, SPIRVWord CacheLevel,
++      spv::internal::LoadCacheControlINTEL CacheControl)
++      : SPIRVDecorate(spv::internal::DecorationCacheControlLoadINTEL, TheTarget,
++                      CacheLevel, static_cast<SPIRVWord>(CacheControl)){};
++
++  SPIRVWord getCacheLevel() const { return Literals.at(0); };
++  spv::internal::LoadCacheControlINTEL getCacheControl() const {
++    return static_cast<spv::internal::LoadCacheControlINTEL>(Literals.at(1));
++  };
++};
++
++class SPIRVDecorateCacheControlStoreINTEL : public SPIRVDecorate {
++public:
++  // Complete constructor for SPIRVDecorateCacheControlStoreINTEL
++  SPIRVDecorateCacheControlStoreINTEL(
++      SPIRVEntry *TheTarget, SPIRVWord CacheLevel,
++      spv::internal::StoreCacheControlINTEL CacheControl)
++      : SPIRVDecorate(spv::internal::DecorationCacheControlStoreINTEL,
++                      TheTarget, CacheLevel,
++                      static_cast<SPIRVWord>(CacheControl)){};
++
++  SPIRVWord getCacheLevel() const { return Literals.at(0); };
++  spv::internal::StoreCacheControlINTEL getCacheControl() const {
++    return static_cast<spv::internal::StoreCacheControlINTEL>(Literals.at(1));
++  };
++};
++
+ } // namespace SPIRV
+ 
+ #endif // SPIRV_LIBSPIRV_SPIRVDECORATE_H
+diff --git a/lib/SPIRV/libSPIRV/SPIRVEnum.h b/lib/SPIRV/libSPIRV/SPIRVEnum.h
+index 3a62429f..269804f5 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVEnum.h
++++ b/lib/SPIRV/libSPIRV/SPIRVEnum.h
+@@ -458,6 +458,10 @@ template <> inline void SPIRVMap<Decoration, SPIRVCapVec>::init() {
+                {internal::CapabilityGlobalVariableDecorationsINTEL});
+   ADD_VEC_INIT(internal::DecorationArgumentAttributeINTEL,
+                {CapabilityFunctionPointersINTEL});
++  ADD_VEC_INIT(internal::DecorationCacheControlLoadINTEL,
++               {internal::CapabilityCacheControlsINTEL});
++  ADD_VEC_INIT(internal::DecorationCacheControlStoreINTEL,
++               {internal::CapabilityCacheControlsINTEL});
+ }
+ 
+ template <> inline void SPIRVMap<BuiltIn, SPIRVCapVec>::init() {
+diff --git a/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h b/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
+index 4fbdc618..6861f2dd 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
++++ b/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
+@@ -191,6 +191,8 @@ template <> inline void SPIRVMap<Decoration, std::string>::init() {
+   add(internal::DecorationInitModeINTEL, "InitModeINTEL");
+   add(internal::DecorationImplementInCSRINTEL, "ImplementInCSRINTEL");
+   add(internal::DecorationArgumentAttributeINTEL, "ArgumentAttributeINTEL");
++  add(internal::DecorationCacheControlLoadINTEL, "CacheControlLoadINTEL");
++  add(internal::DecorationCacheControlStoreINTEL, "CacheControlStoreINTEL");
+ 
+   add(DecorationMax, "Max");
+ }
+@@ -618,6 +620,7 @@ template <> inline void SPIRVMap<Capability, std::string>::init() {
+   add(internal::CapabilityMaskedGatherScatterINTEL, "MaskedGatherScatterINTEL");
+   add(internal::CapabilityTensorFloat32RoundingINTEL,
+       "TensorFloat32RoundingINTEL");
++  add(internal::CapabilityCacheControlsINTEL, "CacheControlsINTEL");
+ }
+ SPIRV_DEF_NAMEMAP(Capability, SPIRVCapabilityNameMap)
+ 
+diff --git a/lib/SPIRV/libSPIRV/spirv_internal.hpp b/lib/SPIRV/libSPIRV/spirv_internal.hpp
+index c4524196..e0acc6bb 100644
+--- a/lib/SPIRV/libSPIRV/spirv_internal.hpp
++++ b/lib/SPIRV/libSPIRV/spirv_internal.hpp
+@@ -89,7 +89,9 @@ enum InternalDecoration {
+   IDecHostAccessINTEL = 6147,
+   IDecInitModeINTEL = 6148,
+   IDecImplementInCSRINTEL = 6149,
+-  IDecArgumentAttributeINTEL = 6409
++  IDecArgumentAttributeINTEL = 6409,
++  IDecCacheControlLoadINTEL = 6442,
++  IDecCacheControlStoreINTEL = 6443
+ };
+ 
+ enum InternalCapability {
+@@ -106,7 +108,8 @@ enum InternalCapability {
+   ICapGlobalVariableDecorationsINTEL = 6146,
+   ICapabilityComplexFloatMulDivINTEL = 6414,
+   ICapabilityTensorFloat32RoundingINTEL = 6425,
+-  ICapabilityMaskedGatherScatterINTEL = 6427
++  ICapabilityMaskedGatherScatterINTEL = 6427,
++  ICapabilityCacheControlsINTEL = 6441
+ };
+ 
+ enum InternalFunctionControlMask { IFunctionControlOptNoneINTELMask = 0x10000 };
+@@ -135,6 +138,21 @@ enum InternalBuiltIn {
+   IBuiltInGlobalHWThreadIDINTEL = 6136,
+ };
+ 
++enum class LoadCacheControlINTEL {
++  Uncached = 0,
++  Cached = 1,
++  Streaming = 2,
++  InvalidateAfterRead = 3,
++  ConstCached = 4
++};
++
++enum class StoreCacheControlINTEL {
++  Uncached = 0,
++  WriteThrough = 1,
++  WriteBack = 2,
++  Streaming = 3
++};
++
+ #define _SPIRV_OP(x, y) constexpr x x##y = static_cast<x>(I##x##y);
+ _SPIRV_OP(Capability, JointMatrixINTEL)
+ _SPIRV_OP(Op, TypeJointMatrixINTEL)
+@@ -159,6 +177,8 @@ _SPIRV_OP(Op, MaskedScatterINTEL)
+ 
+ _SPIRV_OP(Capability, TensorFloat32RoundingINTEL)
+ _SPIRV_OP(Op, RoundFToTF32INTEL)
++
++_SPIRV_OP(Capability, CacheControlsINTEL)
+ #undef _SPIRV_OP
+ 
+ constexpr SourceLanguage SourceLanguagePython =
+@@ -226,6 +246,10 @@ constexpr Decoration DecorationImplementInCSRINTEL =
+     static_cast<Decoration>(IDecImplementInCSRINTEL);
+ constexpr Decoration DecorationArgumentAttributeINTEL =
+     static_cast<Decoration>(IDecArgumentAttributeINTEL);
++constexpr Decoration DecorationCacheControlLoadINTEL =
++    static_cast<Decoration>(IDecCacheControlLoadINTEL);
++constexpr Decoration DecorationCacheControlStoreINTEL =
++    static_cast<Decoration>(IDecCacheControlStoreINTEL);
+ 
+ constexpr Capability CapabilityFastCompositeINTEL =
+     static_cast<Capability>(ICapFastCompositeINTEL);
+diff --git a/test/extensions/INTEL/SPV_INTEL_cache_controls/basic_load_store.ll b/test/extensions/INTEL/SPV_INTEL_cache_controls/basic_load_store.ll
+new file mode 100644
+index 00000000..45965019
+--- /dev/null
++++ b/test/extensions/INTEL/SPV_INTEL_cache_controls/basic_load_store.ll
+@@ -0,0 +1,52 @@
++; RUN: llvm-as %s -o %t.bc
++; RUN: llvm-spirv --spirv-ext=+SPV_INTEL_cache_controls -spirv-text %t.bc -o - | FileCheck %s --check-prefix=CHECK-SPIRV
++; RUN: llvm-spirv --spirv-ext=+SPV_INTEL_cache_controls %t.bc -o %t.spv
++; RUN: llvm-spirv -r %t.spv --spirv-target-env=SPV-IR -o - | llvm-dis -o - | FileCheck %s --check-prefix=CHECK-LLVM
++
++; CHECK-SPIRV-DAG: Load {{[0-9]+}} {{[0-9]+}} [[LoadPtr:[0-9]+]]
++; CHECK-SPIRV-DAG: Store [[StorePtr:[0-9]+]]
++
++; CHECK-SPIRV-DAG: Decorate [[LoadPtr]] CacheControlLoadINTEL 0 1
++; CHECK-SPIRV-DAG: Decorate [[LoadPtr]] CacheControlLoadINTEL 1 1
++; CHECK-SPIRV-DAG: Decorate [[StorePtr]] CacheControlStoreINTEL 0 1
++; CHECK-SPIRV-DAG: Decorate [[StorePtr]] CacheControlStoreINTEL 1 2
++
++; CHECK-LLVM: %arrayidx = getelementptr inbounds i32, i32 addrspace(1)* %buffer, i64 1, !spirv.Decorations [[LoadMD:![0-9]+]]
++; CHECK-LLVM: load i32, i32 addrspace(1)* %arrayidx, align 4
++
++; CHECK-LLVM: %arrayidx1 = getelementptr inbounds i32, i32 addrspace(1)* %buffer, i64 0, !spirv.Decorations [[StoreMD:![0-9]+]]
++; CHECK-LLVM: store i32 %0, i32 addrspace(1)* %arrayidx1, align 4
++
++; CHECK-LLVM: [[LoadMD]] = !{[[CC0:![0-9]+]], [[CC1:![0-9]+]]}
++; CHECK-LLVM: [[CC0]] = !{i32 6442, i32 0, i32 1}
++; CHECK-LLVM: [[CC1]] = !{i32 6442, i32 1, i32 1}
++
++; CHECK-LLVM: [[StoreMD]] = !{[[CC2:![0-9]+]], [[CC3:![0-9]+]]}
++; CHECK-LLVM: [[CC2]] = !{i32 6443, i32 0, i32 1}
++; CHECK-LLVM: [[CC3]] = !{i32 6443, i32 1, i32 2}
++
++target triple = "spir64-unknown-unknown"
++
++define spir_kernel void @test(i32 addrspace(1)* %buffer) {
++entry:
++  %arrayidx = getelementptr inbounds i32, i32 addrspace(1)* %buffer, i64 1, !spirv.Decorations !3
++  %0 = load i32, i32 addrspace(1)* %arrayidx, align 4
++  %arrayidx1 = getelementptr inbounds i32, i32 addrspace(1)* %buffer, i64 0, !spirv.Decorations !6
++  store i32 %0, i32 addrspace(1)* %arrayidx1, align 4
++  ret void
++}
++
++!spirv.MemoryModel = !{!0}
++!spirv.Source = !{!1}
++!opencl.spir.version = !{!2}
++!opencl.ocl.version = !{!2}
++
++!0 = !{i32 2, i32 2}
++!1 = !{i32 3, i32 102000}
++!2 = !{i32 1, i32 2}
++!3 = !{!4, !5}
++!4 = !{i32 6442, i32 0, i32 1}  ; {CacheControlLoadINTEL, CacheLevel=0, Cached}
++!5 = !{i32 6442, i32 1, i32 1}  ; {CacheControlLoadINTEL, CacheLevel=1, Cached}
++!6 = !{!7, !8}
++!7 = !{i32 6443, i32 0, i32 1}  ; {CacheControlStoreINTEL, CacheLevel=0, WriteThrough}
++!8 = !{i32 6443, i32 1, i32 2}  ; {CacheControlStoreINTEL, CacheLevel=1, WriteBack}
+diff --git a/test/extensions/INTEL/SPV_INTEL_cache_controls/global_var.ll b/test/extensions/INTEL/SPV_INTEL_cache_controls/global_var.ll
+new file mode 100644
+index 00000000..6b4ab1cd
+--- /dev/null
++++ b/test/extensions/INTEL/SPV_INTEL_cache_controls/global_var.ll
+@@ -0,0 +1,38 @@
++; RUN: llvm-as %s -o %t.bc
++; RUN: llvm-spirv --spirv-ext=+SPV_INTEL_cache_controls -spirv-text %t.bc -o - | FileCheck %s --check-prefix=CHECK-SPIRV
++; RUN: llvm-spirv --spirv-ext=+SPV_INTEL_cache_controls %t.bc -o %t.spv
++; RUN: llvm-spirv -r %t.spv --spirv-target-env=SPV-IR -o - | llvm-dis -o - | FileCheck %s --check-prefix=CHECK-LLVM
++
++; CHECK-SPIRV-DAG: Store [[StorePtr:[0-9]+]]
++
++; CHECK-SPIRV-DAG: Decorate [[StorePtr]] CacheControlStoreINTEL 0 1
++; CHECK-SPIRV-DAG: Decorate [[StorePtr]] CacheControlStoreINTEL 1 3
++
++; CHECK-LLVM: @p = common addrspace(1) global i32 0, align 4, !spirv.Decorations [[GlobalMD:![0-9]+]]
++; CHECK-LLVM: store i32 0, i32 addrspace(1)* @p, align 4
++
++; CHECK-LLVM-DAG: [[CC0:![0-9]+]] = !{i32 6443, i32 0, i32 1}
++; CHECK-LLVM-DAG: [[CC1:![0-9]+]] = !{i32 6443, i32 1, i32 3}
++; CHECK-LLVM-DAG: [[GlobalMD]] = {{.*}}[[CC0]]{{.*}}[[CC1]]
++
++target triple = "spir64-unknown-unknown"
++
++@p = common addrspace(1) global i32 0, align 4, !spirv.Decorations !3
++
++define spir_kernel void @test() {
++entry:
++  store i32 0, i32 addrspace(1)* @p, align 4
++  ret void
++}
++
++!spirv.MemoryModel = !{!0}
++!spirv.Source = !{!1}
++!opencl.spir.version = !{!2}
++!opencl.ocl.version = !{!2}
++
++!0 = !{i32 2, i32 2}
++!1 = !{i32 3, i32 102000}
++!2 = !{i32 1, i32 2}
++!3 = !{!4, !5}
++!4 = !{i32 6443, i32 0, i32 1}  ; {CacheControlStoreINTEL, CacheLevel=0, WriteThrough}
++!5 = !{i32 6443, i32 1, i32 3}  ; {CacheControlStoreINTEL, CacheLevel=1, Streaming}
+diff --git a/test/extensions/INTEL/SPV_INTEL_cache_controls/kernel_arg.ll b/test/extensions/INTEL/SPV_INTEL_cache_controls/kernel_arg.ll
+new file mode 100644
+index 00000000..1007021e
+--- /dev/null
++++ b/test/extensions/INTEL/SPV_INTEL_cache_controls/kernel_arg.ll
+@@ -0,0 +1,35 @@
++; RUN: llvm-as %s -o %t.bc
++; RUN: llvm-spirv --spirv-ext=+SPV_INTEL_cache_controls -spirv-text %t.bc -o - | FileCheck %s --check-prefix=CHECK-SPIRV
++; RUN: llvm-spirv --spirv-ext=+SPV_INTEL_cache_controls %t.bc -o %t.spv
++; RUN: llvm-spirv -r %t.spv --spirv-target-env=SPV-IR -o - | llvm-dis -o - | FileCheck %s --check-prefix=CHECK-LLVM
++
++; CHECK-SPIRV: Decorate {{[0-9]+}} CacheControlLoadINTEL 0 0
++; CHECK-SPIRV: Decorate {{[0-9]+}} CacheControlStoreINTEL 0 1
++
++target triple = "spir64-unknown-unknown"
++
++; CHECK-LLVM: spir_kernel {{.*}} !spirv.ParameterDecorations [[ParamDecID:![0-9]+]]
++define spir_kernel void @test(i32 addrspace(1)* %dummy, i32 addrspace(1)* %buffer) !spirv.ParameterDecorations !3 {
++entry:
++  %0 = load i32, i32 addrspace(1)* %buffer, align 4
++  store i32 %0, i32 addrspace(1)* %buffer, align 4
++  ret void
++}
++
++!spirv.MemoryModel = !{!0}
++!spirv.Source = !{!1}
++!opencl.spir.version = !{!2}
++!opencl.ocl.version = !{!2}
++
++!0 = !{i32 2, i32 2}
++!1 = !{i32 3, i32 102000}
++!2 = !{i32 1, i32 2}
++!3 = !{!4, !5}
++!4 = !{}
++!5 = !{!6, !7}
++; CHECK-LLVM: [[ParamDecID]] = !{!{{[0-9]+}}, [[BufferDecID:![0-9]+]]}
++; CHECK-LLVM: [[BufferDecID]] = !{[[StoreDecID:![0-9]+]], [[LoadDecID:![0-9]+]]}
++; CHECK-LLVM: [[StoreDecID]] = !{i32 6442, i32 0, i32 0}
++; CHECK-LLVM: [[LoadDecID]] = !{i32 6443, i32 0, i32 1}
++!6 = !{i32 6442, i32 0, i32 0}  ; {CacheControlLoadINTEL,   CacheLevel=0, Uncached}
++!7 = !{i32 6443, i32 0, i32 1}  ; {CacheControlStoreINTEL,  CacheLevel=0, WriteThrough}
+-- 
+2.20.1
+

@@ -1,0 +1,335 @@
+From b4ac72e83607fa9bcc482f50a5b9a923cb80fd53 Mon Sep 17 00:00:00 2001
+From: Viktoria Maximova <viktoria.maksimova@intel.com>
+Date: Thu, 23 Feb 2023 10:10:43 -0800
+Subject: [PATCH 20/79] [Backport to 15][DebugInfo] Add new Source Languages
+ table used in DebugCompilationUnit  (#1854)
+
+This extended source language table is used by DebugCompilationUnit instruction when the extension is enabled. It enables support for more languages than exists in a core specification.
+Spec: KhronosGroup/SPIRV-Registry#186
+
+Enabling of Fortran language also allowed to fix FortranArray test that was originally XFAIL-ed in 9e234d9.
+---
+ lib/SPIRV/LLVMToSPIRVDbgTran.cpp              |   5 +-
+ lib/SPIRV/SPIRVToLLVMDbgTran.cpp              |   5 +-
+ lib/SPIRV/libSPIRV/SPIRV.debug.h              | 102 +++++++++++++++++-
+ lib/SPIRV/libSPIRV/spirv_internal.hpp         |  52 +++++++++
+ .../NonSemanticKernel100}/FortranArray.ll     |  14 +--
+ .../SourceLanguageLLVMToSPIRV.ll              |  40 +++++++
+ 6 files changed, 202 insertions(+), 16 deletions(-)
+ rename test/{ => DebugInfo/NonSemanticKernel100}/FortranArray.ll (84%)
+ create mode 100644 test/DebugInfo/NonSemanticKernel100/SourceLanguageLLVMToSPIRV.ll
+
+diff --git a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+index 6985665d..cb456910 100644
+--- a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
++++ b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+@@ -508,7 +508,10 @@ LLVMToSPIRVDbgTran::transDbgCompilationUnit(const DICompileUnit *CU) {
+   Ops[SourceIdx] = getSource(CU)->getId();
+   auto DwarfLang =
+       static_cast<llvm::dwarf::SourceLanguage>(CU->getSourceLanguage());
+-  Ops[LanguageIdx] = convertDWARFSourceLangToSPIRV(DwarfLang);
++  Ops[LanguageIdx] =
++      BM->getDebugInfoEIS() == SPIRVEIS_NonSemantic_Kernel_DebugInfo_100
++          ? convertDWARFSourceLangToSPIRVNonSemanticDbgInfo(DwarfLang)
++          : convertDWARFSourceLangToSPIRV(DwarfLang);
+   BM->addModuleProcessed(SPIRVDebug::ProducerPrefix + CU->getProducer().str());
+   // Cache CU in a member.
+   SPIRVCU = static_cast<SPIRVExtInst *>(
+diff --git a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+index b9e1679b..e2d4e9ad 100644
+--- a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
++++ b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+@@ -128,7 +128,10 @@ SPIRVToLLVMDbgTran::transCompileUnit(const SPIRVExtInst *DebugInst) {
+   using namespace SPIRVDebug::Operand::CompilationUnit;
+   assert(Ops.size() == OperandCount && "Invalid number of operands");
+   M->addModuleFlag(llvm::Module::Max, "Dwarf Version", Ops[DWARFVersionIdx]);
+-  unsigned SourceLang = convertSPIRVSourceLangToDWARF(Ops[LanguageIdx]);
++  unsigned SourceLang =
++      DebugInst->getExtSetKind() == SPIRVEIS_NonSemantic_Kernel_DebugInfo_100
++          ? convertSPIRVSourceLangToDWARFNonSemanticDbgInfo(Ops[LanguageIdx])
++          : convertSPIRVSourceLangToDWARF(Ops[LanguageIdx]);
+   auto Producer = findModuleProducer();
+   CU = Builder.createCompileUnit(SourceLang, getFile(Ops[SourceIdx]), Producer,
+                                  false, "", 0);
+diff --git a/lib/SPIRV/libSPIRV/SPIRV.debug.h b/lib/SPIRV/libSPIRV/SPIRV.debug.h
+index dcebe6ea..4c1c3d47 100644
+--- a/lib/SPIRV/libSPIRV/SPIRV.debug.h
++++ b/lib/SPIRV/libSPIRV/SPIRV.debug.h
+@@ -2,6 +2,7 @@
+ #define SPIRV_DEBUG_H
+ #include "SPIRVUtil.h"
+ #include "spirv/unified1/spirv.hpp"
++#include "spirv_internal.hpp"
+ #include "llvm/BinaryFormat/Dwarf.h"
+ 
+ namespace SPIRVDebug {
+@@ -810,9 +811,6 @@ inline spv::SourceLanguage convertDWARFSourceLangToSPIRV(dwarf::SourceLanguage D
+   switch (DwarfLang) {
+   // When updating this function, make sure to also
+   // update convertSPIRVSourceLangToDWARF()
+-
+-  // LLVM does not yet define DW_LANG_C_plus_plus_17
+-  // case dwarf::SourceLanguage::DW_LANG_C_plus_plus_17:
+   case dwarf::SourceLanguage::DW_LANG_C_plus_plus_14:
+   case dwarf::SourceLanguage::DW_LANG_C_plus_plus:
+     return spv::SourceLanguage::SourceLanguageCPP_for_OpenCL;
+@@ -831,8 +829,6 @@ inline dwarf::SourceLanguage convertSPIRVSourceLangToDWARF(unsigned SourceLang)
+   case spv::SourceLanguage::SourceLanguageOpenCL_CPP:
+     return dwarf::SourceLanguage::DW_LANG_C_plus_plus_14;
+   case spv::SourceLanguage::SourceLanguageCPP_for_OpenCL:
+-    // LLVM does not yet define DW_LANG_C_plus_plus_17
+-    // SourceLang = dwarf::SourceLanguage::DW_LANG_C_plus_plus_17;
+     return dwarf::SourceLanguage::DW_LANG_C_plus_plus_14;
+   case spv::SourceLanguage::SourceLanguageOpenCL_C:
+   case spv::SourceLanguage::SourceLanguageESSL:
+@@ -844,6 +840,102 @@ inline dwarf::SourceLanguage convertSPIRVSourceLangToDWARF(unsigned SourceLang)
+   }
+ }
+ 
++inline spv::SourceLanguage convertDWARFSourceLangToSPIRVNonSemanticDbgInfo(
++    dwarf::SourceLanguage DwarfLang) {
++  switch (DwarfLang) {
++  // When updating this function, make sure to also
++  // update convertSPIRVSourceLangToDWARFNonSemanticDbgInfo()
++  case dwarf::SourceLanguage::DW_LANG_OpenCL:
++    return spv::SourceLanguage::SourceLanguageOpenCL_C;
++
++  case dwarf::SourceLanguage::DW_LANG_C_plus_plus_14:
++    return spv::internal::SourceLanguageCPP14;
++  case dwarf::SourceLanguage::DW_LANG_C_plus_plus_11:
++    return spv::internal::SourceLanguageCPP11;
++  case dwarf::SourceLanguage::DW_LANG_C_plus_plus_03:
++    return spv::internal::SourceLanguageCPP03;
++  case dwarf::SourceLanguage::DW_LANG_C_plus_plus:
++    return spv::internal::SourceLanguageCPP;
++
++  case dwarf::SourceLanguage::DW_LANG_C:
++    return spv::internal::SourceLanguageC;
++  case dwarf::SourceLanguage::DW_LANG_C99:
++    return spv::internal::SourceLanguageC99;
++  case dwarf::SourceLanguage::DW_LANG_C11:
++    return spv::internal::SourceLanguageC11;
++
++  case dwarf::SourceLanguage::DW_LANG_Python:
++    return spv::internal::SourceLanguagePython;
++  case dwarf::SourceLanguage::DW_LANG_Julia:
++    return spv::internal::SourceLanguageJulia;
++  case dwarf::SourceLanguage::DW_LANG_Rust:
++    return spv::internal::SourceLanguageRust;
++  case dwarf::SourceLanguage::DW_LANG_D:
++    return spv::internal::SourceLanguageD;
++
++  case dwarf::SourceLanguage::DW_LANG_Fortran95:
++    return spv::internal::SourceLanguageFortran95;
++  case dwarf::SourceLanguage::DW_LANG_Fortran03:
++    return spv::internal::SourceLanguageFortran2003;
++  case dwarf::SourceLanguage::DW_LANG_Fortran08:
++    return spv::internal::SourceLanguageFortran2008;
++  default:
++    return spv::SourceLanguage::SourceLanguageUnknown;
++  }
++}
++
++inline dwarf::SourceLanguage
++convertSPIRVSourceLangToDWARFNonSemanticDbgInfo(unsigned SourceLang) {
++  switch (SourceLang) {
++  // When updating this function, make sure to also
++  // update convertDWARFSourceLangToSPIRVNonSemanticDbgInfo()
++  case spv::SourceLanguage::SourceLanguageOpenCL_CPP:
++    return dwarf::SourceLanguage::DW_LANG_C_plus_plus_14;
++  case spv::SourceLanguage::SourceLanguageCPP_for_OpenCL:
++    return dwarf::SourceLanguage::DW_LANG_C_plus_plus_14;
++
++  case spv::internal::SourceLanguageCPP14:
++    return dwarf::SourceLanguage::DW_LANG_C_plus_plus_14;
++  case spv::internal::SourceLanguageCPP11:
++    return dwarf::SourceLanguage::DW_LANG_C_plus_plus_11;
++  case spv::internal::SourceLanguageCPP03:
++    return dwarf::SourceLanguage::DW_LANG_C_plus_plus_03;
++  case spv::internal::SourceLanguageCPP:
++    return dwarf::SourceLanguage::DW_LANG_C_plus_plus;
++
++  case spv::internal::SourceLanguageC:
++    return dwarf::SourceLanguage::DW_LANG_C;
++  case spv::internal::SourceLanguageC99:
++    return dwarf::SourceLanguage::DW_LANG_C99;
++  case spv::internal::SourceLanguageC11:
++    return dwarf::SourceLanguage::DW_LANG_C11;
++
++  case spv::internal::SourceLanguagePython:
++    return dwarf::SourceLanguage::DW_LANG_Python;
++  case spv::internal::SourceLanguageJulia:
++    return dwarf::SourceLanguage::DW_LANG_Julia;
++  case spv::internal::SourceLanguageRust:
++    return dwarf::SourceLanguage::DW_LANG_Rust;
++  case spv::internal::SourceLanguageD:
++    return dwarf::SourceLanguage::DW_LANG_D;
++
++  case spv::internal::SourceLanguageFortran95:
++    return dwarf::SourceLanguage::DW_LANG_Fortran95;
++  case spv::internal::SourceLanguageFortran2003:
++    return dwarf::SourceLanguage::DW_LANG_Fortran03;
++  case spv::internal::SourceLanguageFortran2008:
++    return dwarf::SourceLanguage::DW_LANG_Fortran08;
++
++  case spv::SourceLanguage::SourceLanguageOpenCL_C:
++  case spv::SourceLanguage::SourceLanguageESSL:
++  case spv::SourceLanguage::SourceLanguageGLSL:
++  case spv::SourceLanguage::SourceLanguageHLSL:
++  case spv::SourceLanguage::SourceLanguageUnknown:
++  default:
++    return dwarf::DW_LANG_OpenCL;
++  }
++}
++
+ namespace SPIRV {
+ typedef SPIRVMap<dwarf::TypeKind, SPIRVDebug::EncodingTag> DbgEncodingMap;
+ template <>
+diff --git a/lib/SPIRV/libSPIRV/spirv_internal.hpp b/lib/SPIRV/libSPIRV/spirv_internal.hpp
+index a39633e3..def8419c 100644
+--- a/lib/SPIRV/libSPIRV/spirv_internal.hpp
++++ b/lib/SPIRV/libSPIRV/spirv_internal.hpp
+@@ -29,6 +29,25 @@
+ namespace spv {
+ namespace internal {
+ 
++enum InternalSourceLanguageNonSemanticDI {
++  ISourceLanguagePython = 101,
++  ISourceLanguageJulia = 102,
++  ISourceLanguageRust = 103,
++  ISourceLanguageD = 104,
++  ISourceLanguageFortran95 = 105,
++  ISourceLanguageFortran2003 = 106,
++  ISourceLanguageFortran2008 = 107,
++  ISourceLanguageC = 108,
++  ISourceLanguageC99 = 109,
++  ISourceLanguageC11 = 110,
++  ISourceLanguageCPP = 111,
++  ISourceLanguageCPP03 = 112,
++  ISourceLanguageCPP11 = 113,
++  ISourceLanguageCPP14 = 114,
++  ISourceLanguageCPP17 = 115,
++  ISourceLanguageCPP20 = 116,
++};
++
+ enum InternalLinkageType {
+   ILTPrev = LinkageTypeMax - 2,
+   ILTInternal
+@@ -132,6 +151,39 @@ _SPIRV_OP(Op, MaskedGatherINTEL)
+ _SPIRV_OP(Op, MaskedScatterINTEL)
+ #undef _SPIRV_OP
+ 
++constexpr SourceLanguage SourceLanguagePython =
++    static_cast<SourceLanguage>(ISourceLanguagePython);
++constexpr SourceLanguage SourceLanguageJulia =
++    static_cast<SourceLanguage>(ISourceLanguageJulia);
++constexpr SourceLanguage SourceLanguageRust =
++    static_cast<SourceLanguage>(ISourceLanguageRust);
++constexpr SourceLanguage SourceLanguageD =
++    static_cast<SourceLanguage>(ISourceLanguageD);
++constexpr SourceLanguage SourceLanguageFortran95 =
++    static_cast<SourceLanguage>(ISourceLanguageFortran95);
++constexpr SourceLanguage SourceLanguageFortran2003 =
++    static_cast<SourceLanguage>(ISourceLanguageFortran2003);
++constexpr SourceLanguage SourceLanguageFortran2008 =
++    static_cast<SourceLanguage>(ISourceLanguageFortran2008);
++constexpr SourceLanguage SourceLanguageC =
++    static_cast<SourceLanguage>(ISourceLanguageC);
++constexpr SourceLanguage SourceLanguageC99 =
++    static_cast<SourceLanguage>(ISourceLanguageC99);
++constexpr SourceLanguage SourceLanguageC11 =
++    static_cast<SourceLanguage>(ISourceLanguageC11);
++constexpr SourceLanguage SourceLanguageCPP =
++    static_cast<SourceLanguage>(ISourceLanguageCPP);
++constexpr SourceLanguage SourceLanguageCPP03 =
++    static_cast<SourceLanguage>(ISourceLanguageCPP03);
++constexpr SourceLanguage SourceLanguageCPP11 =
++    static_cast<SourceLanguage>(ISourceLanguageCPP11);
++constexpr SourceLanguage SourceLanguageCPP14 =
++    static_cast<SourceLanguage>(ISourceLanguageCPP14);
++constexpr SourceLanguage SourceLanguageCPP17 =
++    static_cast<SourceLanguage>(ISourceLanguageCPP17);
++constexpr SourceLanguage SourceLanguageCPP20 =
++    static_cast<SourceLanguage>(ISourceLanguageCPP20);
++
+ constexpr Op OpForward = static_cast<Op>(IOpForward);
+ constexpr Op OpTypeTokenINTEL = static_cast<Op>(IOpTypeTokenINTEL);
+ constexpr Op OpArithmeticFenceINTEL = static_cast<Op>(IOpArithmeticFenceINTEL);
+diff --git a/test/FortranArray.ll b/test/DebugInfo/NonSemanticKernel100/FortranArray.ll
+similarity index 84%
+rename from test/FortranArray.ll
+rename to test/DebugInfo/NonSemanticKernel100/FortranArray.ll
+index 1cb0739a..b9d37447 100644
+--- a/test/FortranArray.ll
++++ b/test/DebugInfo/NonSemanticKernel100/FortranArray.ll
+@@ -1,16 +1,12 @@
+ ; RUN: llvm-as %s -o %t.bc
+ ; Translation shouldn't crash:
+-; RUN: llvm-spirv %t.bc -spirv-text
+-; RUN: llvm-spirv %t.bc -o %t.spv
+-; RUN: llvm-spirv -r %t.spv -o %t.rev.bc
++; RUN: llvm-spirv %t.bc -spirv-text --spirv-debug-info-version=nonsemantic-kernel-100
++; RUN: llvm-spirv %t.bc -o %t.spv --spirv-debug-info-version=nonsemantic-kernel-100
++; RUN: llvm-spirv -r -emit-opaque-pointers %t.spv -o %t.rev.bc
+ ; RUN: llvm-dis %t.rev.bc -o - | FileCheck %s --check-prefix=CHECK-LLVM
+ 
+-; XFAIL: *
+-; The language ID is not preserved when translating from .ll to .spv
+-; and back to .ll. This causes the LLVM IR verifier to fail as there
+-; are different rules for valid DISubRange depending on language ID.
+-
+-; CHECK-LLVM: !DISubrange(lowerBound: !DIExpression(DW_OP_push_object_address, DW_OP_plus_uconst, 64, DW_OP_deref), upperBound: !DIExpression(DW_OP_push_object_address, DW_OP_plus_uconst, 64, DW_OP_deref, DW_OP_push_object_address, DW_OP_plus_uconst, 48, DW_OP_deref, DW_OP_plus, DW_OP_constu, 1, DW_OP_minus))
++; CHECK-LLVM: !DICompileUnit(language: DW_LANG_Fortran95
++; CHECK-LLVM: !DISubrange(lowerBound: !DIExpression(DW_OP_push_object_address, DW_OP_plus_uconst, 64, DW_OP_deref), upperBound: !DIExpression(DW_OP_push_object_address, DW_OP_plus_uconst, 64, DW_OP_deref, DW_OP_push_object_address, DW_OP_plus_uconst, 48, DW_OP_deref, DW_OP_plus, DW_OP_constu, 1, DW_OP_minus), stride: !DIExpression(DW_OP_push_object_address, DW_OP_plus_uconst, 56, DW_OP_deref))
+ 
+ source_filename = "llvm-link"
+ target datalayout = "e-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024-n8:16:32:64"
+diff --git a/test/DebugInfo/NonSemanticKernel100/SourceLanguageLLVMToSPIRV.ll b/test/DebugInfo/NonSemanticKernel100/SourceLanguageLLVMToSPIRV.ll
+new file mode 100644
+index 00000000..fd67dcbe
+--- /dev/null
++++ b/test/DebugInfo/NonSemanticKernel100/SourceLanguageLLVMToSPIRV.ll
+@@ -0,0 +1,40 @@
++; Test checks that DW_LANG_C99, DW_LANG_OpenCL, and all DW_LANG_C_plus_plus_X are mapped to
++; appropriate SourceLanguages in SPIRV when the extended debug info is enabled.
++
++; RUN: sed -e 's/INPUT_LANGUAGE/DW_LANG_C99/' %s | llvm-as - -o %t.bc
++; RUN: llvm-spirv --spirv-debug-info-version=nonsemantic-kernel-100 -spirv-text %t.bc -o - | FileCheck %s --check-prefix=CHECK-C99
++
++; RUN: sed -e 's/INPUT_LANGUAGE/DW_LANG_OpenCL/' %s | llvm-as - -o %t.bc
++; RUN: llvm-spirv --spirv-debug-info-version=nonsemantic-kernel-100 -spirv-text %t.bc -o - | FileCheck %s --check-prefix=CHECK-OPENCLC
++
++; RUN: sed -e 's/INPUT_LANGUAGE/DW_LANG_C_plus_plus/' %s | llvm-as - -o %t.bc
++; RUN: llvm-spirv --spirv-debug-info-version=nonsemantic-kernel-100 -spirv-text %t.bc -o - | FileCheck %s --check-prefix=CHECK-CPP
++
++; RUN: sed -e 's/INPUT_LANGUAGE/DW_LANG_C_plus_plus_14/' %s | llvm-as - -o %t.bc
++; RUN: llvm-spirv --spirv-debug-info-version=nonsemantic-kernel-100 -spirv-text %t.bc -o - | FileCheck %s --check-prefix=CHECK-CPP14
++
++; CHECK-C99: DebugCompileUnit [[#]] [[#]] [[#]] 109
++; CHECK-OPENCLC: DebugCompileUnit [[#]] [[#]] [[#]] 3
++; CHECK-CPP: DebugCompileUnit [[#]] [[#]] [[#]] 111
++; CHECK-CPP14: DebugCompileUnit [[#]] [[#]] [[#]] 114
++
++target datalayout = "e-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024"
++target triple = "spir64-unknown-unknown"
++
++define dso_local spir_kernel void @func() local_unnamed_addr !dbg !7 !kernel_arg_addr_space !2 !kernel_arg_access_qual !2 !kernel_arg_type !2 !kernel_arg_base_type !2 !kernel_arg_type_qual !2 {
++entry:
++  ret void
++}
++
++!llvm.dbg.cu = !{!0}
++!llvm.module.flags = !{!3, !4, !5}
++
++!0 = distinct !DICompileUnit(language: INPUT_LANGUAGE, file: !1)
++!1 = !DIFile(filename: "test.cl", directory: "/tmp", checksumkind: CSK_MD5, checksum: "18aa9ce738eaafc7b7b7181c19092815")
++!2 = !{}
++!3 = !{i32 7, !"Dwarf Version", i32 5}
++!4 = !{i32 2, !"Debug Info Version", i32 3}
++!5 = !{i32 1, !"wchar_size", i32 4}
++!6 = !{i32 2, i32 0}
++!7 = distinct !DISubprogram(name: "func", scope: !8, file: !8, line: 1, scopeLine: 2, flags: DIFlagPrototyped | DIFlagAllCallsDescribed, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !0, retainedNodes: !2)
++!8 = !DIFile(filename: "test.cl", directory: "/tmp", checksumkind: CSK_MD5, checksum: "18aa9ce738eaafc7b7b7181c19092815")
+-- 
+2.20.1
+

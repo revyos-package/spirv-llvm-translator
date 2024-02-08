@@ -1,0 +1,238 @@
+From 0f2c3239c3565c30fd1a5932a6a1dd329e570f78 Mon Sep 17 00:00:00 2001
+From: Viktoria Maximova <viktoria.maksimova@intel.com>
+Date: Sun, 11 Jun 2023 13:39:02 +0200
+Subject: [PATCH 62/79] [DebugInfo] Add Column parameter to DebugInlinedAt
+ instruction (#2042)
+
+The change is done as a part of NonSemantic.Shader.200 spec, and the new
+arguments for the instructions will look like:
+
+| \<id\> Line| \<id\> Column| \<id\> Scope| Optional\<id\> Inlined|
+|--------|--------|--------|--------|
+---
+ lib/SPIRV/LLVMToSPIRVDbgTran.cpp            | 18 ++++++++++++-
+ lib/SPIRV/LLVMToSPIRVDbgTran.h              |  1 +
+ lib/SPIRV/SPIRVToLLVMDbgTran.cpp            | 29 +++++++++++++++++++--
+ lib/SPIRV/SPIRVToLLVMDbgTran.h              |  1 +
+ lib/SPIRV/libSPIRV/SPIRV.debug.h            | 23 +++++++++++++---
+ test/DebugInfo/Generic/inlined-locations.ll | 15 ++++++++---
+ 6 files changed, 77 insertions(+), 10 deletions(-)
+
+diff --git a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+index 0562e809..8945daed 100644
+--- a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
++++ b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+@@ -1389,7 +1389,10 @@ SPIRVEntry *LLVMToSPIRVDbgTran::transDebugLoc(const DebugLoc &Loc,
+ }
+ 
+ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgInlinedAt(const DILocation *Loc) {
+-  using namespace SPIRVDebug::Operand::InlinedAt;
++  // There is a Column operand in NonSemantic.Shader.200 spec
++  if (BM->getDebugInfoEIS() == SPIRVEIS_NonSemantic_Shader_DebugInfo_200)
++    return transDbgInlinedAtNonSemanticShader200(Loc);
++  using namespace SPIRVDebug::Operand::InlinedAt::OpenCL;
+   SPIRVWordVec Ops(MinOperandCount);
+   Ops[LineIdx] = Loc->getLine();
+   Ops[ScopeIdx] = getScope(Loc->getScope())->getId();
+@@ -1400,6 +1403,19 @@ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgInlinedAt(const DILocation *Loc) {
+   return BM->addDebugInfo(SPIRVDebug::InlinedAt, getVoidTy(), Ops);
+ }
+ 
++SPIRVEntry *LLVMToSPIRVDbgTran::transDbgInlinedAtNonSemanticShader200(
++    const DILocation *Loc) {
++  using namespace SPIRVDebug::Operand::InlinedAt::NonSemantic;
++  SPIRVWordVec Ops(MinOperandCount);
++  Ops[LineIdx] = Loc->getLine();
++  Ops[ColumnIdx] = Loc->getColumn();
++  transformToConstant(Ops, {LineIdx, ColumnIdx});
++  Ops[ScopeIdx] = getScope(Loc->getScope())->getId();
++  if (DILocation *IA = Loc->getInlinedAt())
++    Ops.push_back(transDbgEntry(IA)->getId());
++  return BM->addDebugInfo(SPIRVDebug::InlinedAt, getVoidTy(), Ops);
++}
++
+ template <class T>
+ SPIRVExtInst *LLVMToSPIRVDbgTran::getSource(const T *DIEntry) {
+   const std::string FileName = getFullPath(DIEntry);
+diff --git a/lib/SPIRV/LLVMToSPIRVDbgTran.h b/lib/SPIRV/LLVMToSPIRVDbgTran.h
+index 21bd6f2f..fa1e8cf7 100644
+--- a/lib/SPIRV/LLVMToSPIRVDbgTran.h
++++ b/lib/SPIRV/LLVMToSPIRVDbgTran.h
+@@ -144,6 +144,7 @@ private:
+   SPIRVEntry *transDebugLoc(const DebugLoc &Loc, SPIRVBasicBlock *BB,
+                             SPIRVInstruction *InsertBefore = nullptr);
+   SPIRVEntry *transDbgInlinedAt(const DILocation *D);
++  SPIRVEntry *transDbgInlinedAtNonSemanticShader200(const DILocation *D);
+ 
+   template <class T> SPIRVExtInst *getSource(const T *DIEntry);
+   SPIRVEntry *transDbgFileType(const DIFile *F);
+diff --git a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+index 978068e6..ed61b4f6 100644
+--- a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
++++ b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+@@ -1554,7 +1554,12 @@ DebugLoc SPIRVToLLVMDbgTran::transDebugScope(const SPIRVInstruction *Inst) {
+ }
+ 
+ MDNode *SPIRVToLLVMDbgTran::transDebugInlined(const SPIRVExtInst *DebugInst) {
+-  using namespace SPIRVDebug::Operand::InlinedAt;
++  // There is a Column operand in NonSemantic.Shader.200 spec
++  if (DebugInst->getExtSetKind() ==
++      SPIRV::SPIRVEIS_NonSemantic_Shader_DebugInfo_200)
++    return transDebugInlinedNonSemanticShader200(DebugInst);
++
++  using namespace SPIRVDebug::Operand::InlinedAt::OpenCL;
+   SPIRVWordVec Ops = DebugInst->getArguments();
+   assert(Ops.size() >= MinOperandCount && "Invalid number of operands");
+   SPIRVWord Line =
+@@ -1570,6 +1575,25 @@ MDNode *SPIRVToLLVMDbgTran::transDebugInlined(const SPIRVExtInst *DebugInst) {
+   return DILocation::getDistinct(M->getContext(), Line, Col, Scope, InlinedAt);
+ }
+ 
++MDNode *SPIRVToLLVMDbgTran::transDebugInlinedNonSemanticShader200(
++    const SPIRVExtInst *DebugInst) {
++  using namespace SPIRVDebug::Operand::InlinedAt::NonSemantic;
++  SPIRVWordVec Ops = DebugInst->getArguments();
++  assert(Ops.size() >= MinOperandCount && "Invalid number of operands");
++  SPIRVWord Line =
++      getConstantValueOrLiteral(Ops, LineIdx, DebugInst->getExtSetKind());
++  unsigned Col =
++      getConstantValueOrLiteral(Ops, ColumnIdx, DebugInst->getExtSetKind());
++  DILocalScope *Scope =
++      cast<DILocalScope>(getScope(BM->getEntry(Ops[ScopeIdx])));
++  DILocation *InlinedAt = nullptr;
++  if (Ops.size() > InlinedIdx) {
++    InlinedAt =
++        transDebugInst<DILocation>(BM->get<SPIRVExtInst>(Ops[InlinedIdx]));
++  }
++  return DILocation::getDistinct(M->getContext(), Line, Col, Scope, InlinedAt);
++}
++
+ void SPIRVToLLVMDbgTran::finalize() {
+   if (!Enable)
+     return;
+@@ -1673,7 +1697,8 @@ DIBuilder &SPIRVToLLVMDbgTran::getDIBuilder(const SPIRVExtInst *DebugInst) {
+       return *BuilderMap.begin()->second;
+     const SPIRVWordVec &Ops = DebugInst->getArguments();
+     SPIRVWord ParentScopeIdx = 0;
+-    if (!hasDbgInstParentScopeIdx(DebugInst->getExtOp(), ParentScopeIdx))
++    if (!hasDbgInstParentScopeIdx(DebugInst->getExtOp(), ParentScopeIdx,
++                                  DebugInst->getExtSetKind()))
+       return *BuilderMap.begin()->second;
+     if (SPIRVEntry *Scope = BM->getEntry(Ops[ParentScopeIdx])) {
+       DebugInst = static_cast<SPIRVExtInst *>(Scope);
+diff --git a/lib/SPIRV/SPIRVToLLVMDbgTran.h b/lib/SPIRV/SPIRVToLLVMDbgTran.h
+index 05e1506a..b166abc9 100644
+--- a/lib/SPIRV/SPIRVToLLVMDbgTran.h
++++ b/lib/SPIRV/SPIRVToLLVMDbgTran.h
+@@ -104,6 +104,7 @@ private:
+   llvm::DebugLoc transDebugScope(const SPIRVInstruction *Inst);
+ 
+   MDNode *transDebugInlined(const SPIRVExtInst *Inst);
++  MDNode *transDebugInlinedNonSemanticShader200(const SPIRVExtInst *Inst);
+ 
+   DICompileUnit *transCompilationUnit(const SPIRVExtInst *DebugInst,
+                                       const std::string CompilerVersion = "",
+diff --git a/lib/SPIRV/libSPIRV/SPIRV.debug.h b/lib/SPIRV/libSPIRV/SPIRV.debug.h
+index d4823257..ff0bb548 100644
+--- a/lib/SPIRV/libSPIRV/SPIRV.debug.h
++++ b/lib/SPIRV/libSPIRV/SPIRV.debug.h
+@@ -1,5 +1,6 @@
+ #ifndef SPIRV_DEBUG_H
+ #define SPIRV_DEBUG_H
++#include "SPIRVEnum.h"
+ #include "SPIRVUtil.h"
+ #include "spirv/unified1/spirv.hpp"
+ #include "spirv_internal.hpp"
+@@ -692,13 +693,25 @@ namespace NoScope {
+ }
+ 
+ namespace InlinedAt {
++namespace OpenCL {
+ enum {
+   LineIdx         = 0,
+   ScopeIdx        = 1,
+   InlinedIdx      = 2,
+   MinOperandCount = 2
+ };
+-}
++} // namespace OpenCL
++
++namespace NonSemantic {
++enum {
++  LineIdx         = 0,
++  ColumnIdx       = 1,
++  ScopeIdx        = 2,
++  InlinedIdx      = 3,
++  MinOperandCount = 3
++};
++} // namespace NonSemantic
++} // namespace ImportedEntity
+ 
+ namespace LocalVariable {
+ enum {
+@@ -963,7 +976,8 @@ enum {
+ // helper function to get parent scope of debug instruction, to be used
+ // to determine with which compile unit the particular instruction relates
+ inline bool hasDbgInstParentScopeIdx(const uint32_t Kind,
+-                                     uint32_t &ParentScopeIdx) {
++                                     uint32_t &ParentScopeIdx,
++                                     const SPIRV::SPIRVExtInstSetKind ExtKind = SPIRV::SPIRVEIS_OpenCL) {
+   switch (Kind) {
+   case SPIRVDebug::Typedef:
+     ParentScopeIdx = Typedef::ParentIdx;
+@@ -996,7 +1010,10 @@ inline bool hasDbgInstParentScopeIdx(const uint32_t Kind,
+     ParentScopeIdx = Scope::ScopeIdx;
+     return true;
+   case SPIRVDebug::InlinedAt:
+-    ParentScopeIdx = InlinedAt::ScopeIdx;
++    if (ExtKind == SPIRV::SPIRVEIS_NonSemantic_Shader_DebugInfo_200)
++      ParentScopeIdx = InlinedAt::NonSemantic::ScopeIdx;
++    else
++      ParentScopeIdx = InlinedAt::OpenCL::ScopeIdx;
+     return true;
+   case SPIRVDebug::LocalVariable:
+     ParentScopeIdx = LocalVariable::ParentIdx;
+diff --git a/test/DebugInfo/Generic/inlined-locations.ll b/test/DebugInfo/Generic/inlined-locations.ll
+index f2861394..2294dbaa 100644
+--- a/test/DebugInfo/Generic/inlined-locations.ll
++++ b/test/DebugInfo/Generic/inlined-locations.ll
+@@ -1,11 +1,16 @@
+ ; RUN: llvm-as < %s -o %t.bc
+ ; RUN: llvm-spirv %t.bc -o %t.spv
+-; RUN: llvm-spirv -r %t.spv -o - | llvm-dis -o - | FileCheck %s
++; RUN: llvm-spirv -r %t.spv -o - | llvm-dis -o - | FileCheck %s --check-prefixes=CHECK,CHECK-DEFAULT
++
++; RUN: llvm-spirv %t.bc --spirv-debug-info-version=nonsemantic-shader-200 -o %t.spv
++; RUN: llvm-spirv -r %t.spv -o - | llvm-dis -o - | FileCheck %s --check-prefixes=CHECK,CHECK-200
+ 
+ ; Check that the "inlinedAt" attribute of a DILocation references another
+ ; DILocation that is marked as distinct.  Note that the checks for distinct
+ ; DILocations do not include the column number as SPIR-V does not allow for
+-; representing this info.
++; representing this info (except for NonSemantic.Shader.DebugInfo.200). For
++; this specification we check that the column number is preserved during
++; translation.
+ 
+ ; Built with clang -O -g from the source:
+ ; bool f();
+@@ -69,13 +74,15 @@ attributes #2 = { nounwind readnone speculatable }
+ !16 = !DILocalVariable(name: "b", scope: !12, file: !1, line: 3, type: !17)
+ !17 = !DIBasicType(name: "bool", size: 8, encoding: DW_ATE_boolean)
+ !18 = distinct !DILocation(line: 9, column: 15, scope: !19, inlinedAt: !23)
+-; CHECK: ![[loc1]] = distinct !DILocation(line: 9, scope: !{{.*}}, inlinedAt: ![[loc2:[0-9]+]])
++; CHECK-DEFAULT: ![[loc1]] = distinct !DILocation(line: 9, scope: !{{.*}}, inlinedAt: ![[loc2:[0-9]+]])
++; CHECK-200: ![[loc1]] = distinct !DILocation(line: 9, column: 15, scope: !{{.*}}, inlinedAt: ![[loc2:[0-9]+]])
+ !19 = distinct !DILexicalBlock(scope: !20, file: !1, line: 9, column: 11)
+ !20 = distinct !DISubprogram(name: "f2", linkageName: "_Z2f2v", scope: !1, file: !1, line: 8, type: !14, scopeLine: 8, flags: DIFlagPrototyped, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !0, retainedNodes: !21)
+ !21 = !{!22}
+ !22 = !DILocalVariable(name: "i", scope: !19, file: !1, line: 9, type: !10)
+ !23 = distinct !DILocation(line: 15, column: 3, scope: !7)
+-; CHECK: ![[loc2]] = distinct !DILocation(line: 15, scope: !{{.*}})
++; CHECK-DEFAULT: ![[loc2]] = distinct !DILocation(line: 15, scope: !{{.*}})
++; CHECK-200: ![[loc2]] = distinct !DILocation(line: 15, column: 3, scope: !{{.*}})
+ !24 = !DILocation(line: 3, column: 12, scope: !12, inlinedAt: !18)
+ ; CHECK: !{{.*}} = !DILocation(line: 3, column: 12, scope: !{{.*}}, inlinedAt: ![[loc1]])
+ !25 = !DILocation(line: 16, column: 1, scope: !7)
+-- 
+2.20.1
+
