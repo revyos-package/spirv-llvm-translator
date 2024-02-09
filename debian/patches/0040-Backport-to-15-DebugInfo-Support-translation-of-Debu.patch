@@ -1,0 +1,458 @@
+From b2045d29bb6c540081aea0f4ba3918a93c63bbe2 Mon Sep 17 00:00:00 2001
+From: Viktoria Maximova <viktoria.maksimova@intel.com>
+Date: Wed, 26 Apr 2023 04:25:30 -0700
+Subject: [PATCH 40/79] [Backport to 15][DebugInfo] Support translation of
+ DebugEntryPoint instruction (#1973)
+
+This instruction is generated for DWARF `DISPFlagMainSubprogram` flag of
+function as well as for `spir_kernel` functions.
+
+Spec:
+https://github.com/KhronosGroup/SPIRV-Registry/blob/main/nonsemantic/NonSemantic.Shader.DebugInfo.100.asciidoc#DebugEntryPoint
+---
+ lib/SPIRV/LLVMToSPIRVDbgTran.cpp              | 58 +++++++++++++++++--
+ lib/SPIRV/LLVMToSPIRVDbgTran.h                |  1 +
+ lib/SPIRV/SPIRVReader.cpp                     |  7 +++
+ lib/SPIRV/SPIRVToLLVMDbgTran.cpp              | 47 ++++++++++++---
+ lib/SPIRV/SPIRVToLLVMDbgTran.h                |  9 ++-
+ lib/SPIRV/libSPIRV/SPIRV.debug.h              | 16 ++++-
+ lib/SPIRV/libSPIRV/SPIRVExtInst.h             |  1 +
+ test/DebugInfo/NonSemantic/DebugFunction.cl   | 16 +++--
+ .../NonSemantic/DebugInfoProducer.ll          | 15 +++--
+ .../NonSemantic/Shader200/FortranArray.ll     | 12 +++-
+ 10 files changed, 152 insertions(+), 30 deletions(-)
+
+diff --git a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+index e849b435..38a4502c 100644
+--- a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
++++ b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+@@ -1144,6 +1144,7 @@ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgFunction(const DISubprogram *Func) {
+ 
+   SPIRVEntry *DebugFunc = nullptr;
+   SPIRVValue *FuncDef = nullptr;
++  bool IsEntryPointKernel = false;
+   if (!Func->isDefinition()) {
+     DebugFunc =
+         BM->addDebugInfo(SPIRVDebug::FunctionDeclaration, getVoidTy(), Ops);
+@@ -1158,11 +1159,30 @@ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgFunction(const DISubprogram *Func) {
+     Ops[FunctionIdIdx] = getDebugInfoNoneId();
+     for (const llvm::Function &F : M->functions()) {
+       if (Func->describes(&F)) {
++        // Function definition of spir_kernel can have no "spir_kernel" calling
++        // convention because SPIRVRegularizeLLVMBase::addKernelEntryPoint pass
++        // could have turned it to spir_func. The "true" entry point is a
++        // wrapper kernel function, which can be found further in the module.
++        if (FuncDef) {
++          if (F.getCallingConv() == CallingConv::SPIR_KERNEL) {
++            IsEntryPointKernel = true;
++            break;
++          }
++          continue;
++        }
++
+         SPIRVValue *SPIRVFunc = SPIRVWriter->getTranslatedValue(&F);
+         assert(SPIRVFunc && "All function must be already translated");
+         Ops[FunctionIdIdx] = SPIRVFunc->getId();
+         FuncDef = SPIRVFunc;
+-        break;
++        if (!isNonSemanticDebugInfo())
++          break;
++
++        // Most likely unreachable because of Regularise LLVM pass
++        if (F.getCallingConv() == CallingConv::SPIR_KERNEL) {
++          IsEntryPointKernel = true;
++          break;
++        }
+       }
+     }
+     // For NonSemantic.Shader.DebugInfo we store Function Id index as a
+@@ -1196,17 +1216,18 @@ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgFunction(const DISubprogram *Func) {
+     DebugFunc = transDbgTemplateParams(TPA, DebugFunc);
+   }
+ 
+-  if (isNonSemanticDebugInfo())
+-    transDbgFuncDefinition(FuncDef, DebugFunc);
++  if (isNonSemanticDebugInfo() &&
++      (Func->isMainSubprogram() || IsEntryPointKernel)) [[maybe_unused]]
++    SPIRVEntry *Inst = transDbgEntryPoint(Func, DebugFunc);
++
++  if (isNonSemanticDebugInfo() && FuncDef) [[maybe_unused]]
++    SPIRVEntry *Inst = transDbgFuncDefinition(FuncDef, DebugFunc);
+ 
+   return DebugFunc;
+ }
+ 
+ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgFuncDefinition(SPIRVValue *FuncDef,
+                                                        SPIRVEntry *DbgFunc) {
+-  if (!isNonSemanticDebugInfo() || !FuncDef)
+-    return nullptr;
+-
+   using namespace SPIRVDebug::Operand::FunctionDefinition;
+   SPIRVWordVec Ops(OperandCount);
+   Ops[FunctionIdx] = DbgFunc->getId();
+@@ -1219,6 +1240,31 @@ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgFuncDefinition(SPIRVValue *FuncDef,
+                         Ops, BB, BB->getInst(0));
+ }
+ 
++SPIRVEntry *LLVMToSPIRVDbgTran::transDbgEntryPoint(const DISubprogram *Func,
++                                                   SPIRVEntry *DbgFunc) {
++  using namespace SPIRVDebug::Operand::EntryPoint;
++  SPIRVWordVec Ops(OperandCount);
++  Ops[EntryPointIdx] = DbgFunc->getId();
++
++  DICompileUnit *CU = Func->getUnit();
++  if (!CU) {
++    Ops[CompilationUnitIdx] = SPIRVCUMap.begin()->second->getId();
++    SPIRVWord EmptyStrIdx = BM->getString("")->getId();
++    Ops[CompilerSignatureIdx] = EmptyStrIdx;
++    Ops[CommandLineArgsIdx] = EmptyStrIdx;
++    return BM->addDebugInfo(SPIRVDebug::EntryPoint, getVoidTy(), Ops);
++  }
++
++  StringRef Producer = CU->getProducer();
++  StringRef Flags = CU->getFlags();
++  SPIRVEntry *CUVal = SPIRVCUMap[CU] ? SPIRVCUMap[CU] : getDebugInfoNone();
++
++  Ops[CompilationUnitIdx] = CUVal->getId();
++  Ops[CompilerSignatureIdx] = BM->getString(Producer.str())->getId();
++  Ops[CommandLineArgsIdx] = BM->getString(Flags.str())->getId();
++  return BM->addDebugInfo(SPIRVDebug::EntryPoint, getVoidTy(), Ops);
++}
++
+ // Location information
+ 
+ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgScope(const DIScope *S) {
+diff --git a/lib/SPIRV/LLVMToSPIRVDbgTran.h b/lib/SPIRV/LLVMToSPIRVDbgTran.h
+index 984de156..da6685c6 100644
+--- a/lib/SPIRV/LLVMToSPIRVDbgTran.h
++++ b/lib/SPIRV/LLVMToSPIRVDbgTran.h
+@@ -135,6 +135,7 @@ private:
+   SPIRVEntry *transDbgFunction(const DISubprogram *Func);
+ 
+   SPIRVEntry *transDbgFuncDefinition(SPIRVValue *SPVFunc, SPIRVEntry *DbgFunc);
++  SPIRVEntry *transDbgEntryPoint(const DISubprogram *Func, SPIRVEntry *DbgFunc);
+ 
+   // Location information
+   SPIRVEntry *transDbgScope(const DIScope *S);
+diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
+index 85731c3d..6dd1bfdf 100644
+--- a/lib/SPIRV/SPIRVReader.cpp
++++ b/lib/SPIRV/SPIRVReader.cpp
+@@ -3331,12 +3331,19 @@ bool SPIRVToLLVM::translate() {
+       transGlobalCtorDtors(BV);
+   }
+ 
++  // Entry Points should be translated before all debug intrinsics.
++  for (SPIRVExtInst *EI : BM->getDebugInstVec()) {
++    if (EI->getExtOp() == SPIRVDebug::EntryPoint)
++      DbgTran->transDebugInst(EI);
++  }
++
+   // Compile unit might be needed during translation of debug intrinsics.
+   for (SPIRVExtInst *EI : BM->getDebugInstVec()) {
+     // Translate Compile Units first.
+     if (EI->getExtOp() == SPIRVDebug::CompilationUnit)
+       DbgTran->transDebugInst(EI);
+   }
++
+   // Then translate all debug instructions.
+   for (SPIRVExtInst *EI : BM->getDebugInstVec()) {
+     DbgTran->transDebugInst(EI);
+diff --git a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+index 5917fc0c..327c2b47 100644
+--- a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
++++ b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+@@ -152,7 +152,14 @@ DIScope *SPIRVToLLVMDbgTran::getScope(const SPIRVEntry *ScopeInst) {
+ }
+ 
+ DICompileUnit *
+-SPIRVToLLVMDbgTran::transCompilationUnit(const SPIRVExtInst *DebugInst) {
++SPIRVToLLVMDbgTran::transCompilationUnit(const SPIRVExtInst *DebugInst,
++                                         const std::string CompilerVersion,
++                                         const std::string Flags) {
++  // Do nothing in case we have already translated the CU (e.g. during
++  // DebugEntryPoint translation)
++  if (BuilderMap[DebugInst->getId()])
++    return nullptr;
++
+   const SPIRVWordVec &Ops = DebugInst->getArguments();
+ 
+   using namespace SPIRVDebug::Operand::CompilationUnit;
+@@ -184,18 +191,18 @@ SPIRVToLLVMDbgTran::transCompilationUnit(const SPIRVExtInst *DebugInst) {
+ 
+   if (DebugInst->getExtSetKind() == SPIRVEIS_NonSemantic_Shader_DebugInfo_100) {
+     return BuilderMap[DebugInst->getId()]->createCompileUnit(
+-        SourceLang, getFile(Ops[SourceIdx]), "spirv", false, "", 0);
++        SourceLang, getFile(Ops[SourceIdx]), CompilerVersion, false, Flags, 0);
+   }
+   if (DebugInst->getExtSetKind() == SPIRVEIS_NonSemantic_Shader_DebugInfo_200) {
+     StringRef Producer = getString(Ops[ProducerIdx]);
+     return BuilderMap[DebugInst->getId()]->createCompileUnit(
+-        SourceLang, getFile(Ops[SourceIdx]), Producer, false, "", 0);
++        SourceLang, getFile(Ops[SourceIdx]), Producer, false, Flags, 0);
+   }
+   // TODO: Remove this workaround once we switch to NonSemantic.Shader.* debug
+   // info by default
+   auto Producer = findModuleProducer();
+   return BuilderMap[DebugInst->getId()]->createCompileUnit(
+-      SourceLang, getFile(Ops[SourceIdx]), Producer, false, "", 0);
++      SourceLang, getFile(Ops[SourceIdx]), Producer, false, Flags, 0);
+ }
+ 
+ DIBasicType *SPIRVToLLVMDbgTran::transTypeBasic(const SPIRVExtInst *DebugInst) {
+@@ -727,7 +734,8 @@ DINode *SPIRVToLLVMDbgTran::transLexicalBlockDiscriminator(
+                                                         Disc);
+ }
+ 
+-DINode *SPIRVToLLVMDbgTran::transFunction(const SPIRVExtInst *DebugInst) {
++DINode *SPIRVToLLVMDbgTran::transFunction(const SPIRVExtInst *DebugInst,
++                                          bool IsMainSubprogram) {
+   using namespace SPIRVDebug::Operand::Function;
+   const SPIRVWordVec &Ops = DebugInst->getArguments();
+   assert(Ops.size() >= MinOperandCount && "Invalid number of operands");
+@@ -764,11 +772,13 @@ DINode *SPIRVToLLVMDbgTran::transFunction(const SPIRVExtInst *DebugInst) {
+   bool IsDefinition = SPIRVDebugFlags & SPIRVDebug::FlagIsDefinition;
+   bool IsOptimized = SPIRVDebugFlags & SPIRVDebug::FlagIsOptimized;
+   bool IsLocal = SPIRVDebugFlags & SPIRVDebug::FlagIsLocal;
+-  bool IsMainSubprogram =
++  bool IsMainSubprogramFlag =
++      IsMainSubprogram ||
+       BM->isEntryPoint(spv::ExecutionModelKernel, Ops[FunctionIdIdx]);
+-  DISubprogram::DISPFlags SPFlags =
+-      DISubprogram::toSPFlags(IsLocal, IsDefinition, IsOptimized,
+-                              DISubprogram::SPFlagNonvirtual, IsMainSubprogram);
++
++  DISubprogram::DISPFlags SPFlags = DISubprogram::toSPFlags(
++      IsLocal, IsDefinition, IsOptimized, DISubprogram::SPFlagNonvirtual,
++      IsMainSubprogramFlag);
+ 
+   SPIRVWord ScopeLine =
+       getConstantValueOrLiteral(Ops, ScopeLineIdx, DebugInst->getExtSetKind());
+@@ -918,6 +928,22 @@ DINode *SPIRVToLLVMDbgTran::transFunctionDecl(const SPIRVExtInst *DebugInst) {
+   return DIS;
+ }
+ 
++MDNode *SPIRVToLLVMDbgTran::transEntryPoint(const SPIRVExtInst *DebugInst) {
++  using namespace SPIRVDebug::Operand::EntryPoint;
++  const SPIRVWordVec &Ops = DebugInst->getArguments();
++  assert(Ops.size() == OperandCount && "Invalid number of operands");
++
++  SPIRVExtInst *EP = BM->get<SPIRVExtInst>(Ops[EntryPointIdx]);
++  SPIRVExtInst *CU = BM->get<SPIRVExtInst>(Ops[CompilationUnitIdx]);
++  std::string Producer = getString(Ops[CompilerSignatureIdx]);
++  std::string CLArgs = getString(Ops[CommandLineArgsIdx]);
++
++  [[maybe_unused]] DICompileUnit *C =
++      transCompilationUnit(CU, Producer, CLArgs);
++
++  return transFunction(EP, true /*IsMainSubprogram*/);
++}
++
+ MDNode *SPIRVToLLVMDbgTran::transGlobalVariable(const SPIRVExtInst *DebugInst) {
+   using namespace SPIRVDebug::Operand::GlobalVariable;
+   const SPIRVWordVec &Ops = DebugInst->getArguments();
+@@ -1245,6 +1271,9 @@ MDNode *SPIRVToLLVMDbgTran::transDebugInstImpl(const SPIRVExtInst *DebugInst) {
+   case SPIRVDebug::FunctionDefinition:
+     return transFunctionDefinition(DebugInst);
+ 
++  case SPIRVDebug::EntryPoint:
++    return transEntryPoint(DebugInst);
++
+   case SPIRVDebug::GlobalVariable:
+     return transGlobalVariable(DebugInst);
+ 
+diff --git a/lib/SPIRV/SPIRVToLLVMDbgTran.h b/lib/SPIRV/SPIRVToLLVMDbgTran.h
+index b1ded375..c8929300 100644
+--- a/lib/SPIRV/SPIRVToLLVMDbgTran.h
++++ b/lib/SPIRV/SPIRVToLLVMDbgTran.h
+@@ -102,7 +102,9 @@ private:
+ 
+   MDNode *transDebugInlined(const SPIRVExtInst *Inst);
+ 
+-  DICompileUnit *transCompilationUnit(const SPIRVExtInst *DebugInst);
++  DICompileUnit *transCompilationUnit(const SPIRVExtInst *DebugInst,
++                                      const std::string CompilerVersion = "",
++                                      const std::string Flags = "");
+ 
+   DIBasicType *transTypeBasic(const SPIRVExtInst *DebugInst);
+ 
+@@ -140,12 +142,15 @@ private:
+   DINode *transLexicalBlock(const SPIRVExtInst *DebugInst);
+   DINode *transLexicalBlockDiscriminator(const SPIRVExtInst *DebugInst);
+ 
+-  DINode *transFunction(const SPIRVExtInst *DebugInst);
++  DINode *transFunction(const SPIRVExtInst *DebugInst,
++                        bool IsMainSubprogram = false);
+   DINode *transFunctionDefinition(const SPIRVExtInst *DebugInst);
+   void transFunctionBody(DISubprogram *DIS, SPIRVId FuncId);
+ 
+   DINode *transFunctionDecl(const SPIRVExtInst *DebugInst);
+ 
++  MDNode *transEntryPoint(const SPIRVExtInst *DebugInst);
++
+   MDNode *transGlobalVariable(const SPIRVExtInst *DebugInst);
+ 
+   DINode *transLocalVariable(const SPIRVExtInst *DebugInst);
+diff --git a/lib/SPIRV/libSPIRV/SPIRV.debug.h b/lib/SPIRV/libSPIRV/SPIRV.debug.h
+index 86e347e9..1fc6875a 100644
+--- a/lib/SPIRV/libSPIRV/SPIRV.debug.h
++++ b/lib/SPIRV/libSPIRV/SPIRV.debug.h
+@@ -55,6 +55,7 @@ enum Instruction {
+   ModuleINTEL                   = 36,
+   InstCount                     = 37,
+   FunctionDefinition            = 101,
++  EntryPoint                    = 107,
+   Module                        = 200,
+   TypeSubrange                  = 201,
+   TypeArrayDynamic              = 202,
+@@ -552,7 +553,7 @@ enum {
+   FunctionIdIdx   = 9,
+   DeclarationNonSemIdx = 9,
+   DeclarationIdx  = 10,
+-  // Only for NonSemantic.Schader.DebugInfo.200
++  // Only for NonSemantic.Shader.DebugInfo.200
+   TargetFunctionNameIdx  = 10,
+   MinOperandCount = 10
+ };
+@@ -566,6 +567,16 @@ enum {
+ };
+ }
+ 
++namespace EntryPoint {
++enum {
++  EntryPointIdx        = 0,
++  CompilationUnitIdx   = 1,
++  CompilerSignatureIdx = 2,
++  CommandLineArgsIdx   = 3,
++  OperandCount         = 4
++};
++}
++
+ namespace LexicalBlock {
+ enum {
+   SourceIdx       = 0,
+@@ -872,6 +883,9 @@ inline bool hasDbgInstParentScopeIdx(const uint32_t Kind,
+   case SPIRVDebug::Function:
+     ParentScopeIdx = Function::ParentIdx;
+     return true;
++  case SPIRVDebug::EntryPoint:
++    ParentScopeIdx = EntryPoint::CompilationUnitIdx;
++    return true;
+   case SPIRVDebug::LexicalBlock:
+     ParentScopeIdx = LexicalBlock::ParentIdx;
+     return true;
+diff --git a/lib/SPIRV/libSPIRV/SPIRVExtInst.h b/lib/SPIRV/libSPIRV/SPIRVExtInst.h
+index 2fe7b096..b4dd9027 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVExtInst.h
++++ b/lib/SPIRV/libSPIRV/SPIRVExtInst.h
+@@ -261,6 +261,7 @@ template <> inline void SPIRVMap<SPIRVDebugExtOpKind, std::string>::init() {
+   add(SPIRVDebug::Expression, "DebugExpression");
+   add(SPIRVDebug::Operation, "DebugOperation");
+   add(SPIRVDebug::FunctionDefinition, "DebugFunctionDefinition");
++  add(SPIRVDebug::EntryPoint, "DebugEntryPoint");
+ }
+ SPIRV_DEF_NAMEMAP(SPIRVDebugExtOpKind, SPIRVDebugExtOpMap)
+ 
+diff --git a/test/DebugInfo/NonSemantic/DebugFunction.cl b/test/DebugInfo/NonSemantic/DebugFunction.cl
+index 74603e17..9f84a896 100644
+--- a/test/DebugInfo/NonSemantic/DebugFunction.cl
++++ b/test/DebugInfo/NonSemantic/DebugFunction.cl
+@@ -22,11 +22,15 @@ void kernel k() {
+     float a = foo(2);
+ }
+ 
+-// CHECK-SPIRV: String [[foo:[0-9]+]] "foo"
+-// CHECK-SPIRV: String [[k:[0-9]+]] "k"
+-// CHECK-SPIRV: [[CU:[0-9]+]] {{[0-9]+}} DebugCompilationUnit
+-// CHECK-SPIRV: [[#FuncFoo:]] [[#]] DebugFunction [[foo]] {{.*}} [[CU]]
+-// CHECK-SPIRV: [[#FuncK:]] [[#]] DebugFunction [[k]] {{.*}} [[CU]]
++// CHECK-SPIRV-DAG: String [[foo:[0-9]+]] "foo"
++// CHECK-SPIRV-DAG: String [[#EmptyStr:]] ""
++// CHECK-SPIRV-DAG: String [[k:[0-9]+]] "k"
++// CHECK-SPIRV-DAG: String [[#CV:]] {{.*}}clang version [[#]].[[#]].[[#]]
++// CHECK-SPIRV: [[#CU:]] [[#]] DebugCompilationUnit
++// CHECK-SPIRV: [[#FuncFoo:]] [[#]] DebugFunction [[foo]] {{.*}} [[#CU]]
++// CHECK-SPIRV: [[#FuncK:]] [[#]] DebugFunction [[k]] {{.*}} [[#CU]]
++// CHECK-SPIRV: DebugEntryPoint [[#FuncK]] [[#CU]] [[#CV]] [[#EmptyStr]] {{$}}
++// CHECK-SPIRV-NOT: DebugEntryPoint
+ // CHECK-SPIRV-NOT: DebugFunctionDefinition
+ 
+ // CHECK-SPIRV: Function {{[0-9]+}} [[#foo_id:]]
+@@ -38,4 +42,6 @@ void kernel k() {
+ // CHECK-LLVM: define spir_kernel void @k() #{{[0-9]+}} !dbg ![[#k_id:]]
+ 
+ // CHECK-LLVM: ![[#foo_id]] = distinct !DISubprogram(name: "foo"
++// CHECK-LLVM-SAME: spFlags: DISPFlagDefinition,
+ // CHECK-LLVM: ![[#k_id]] = distinct !DISubprogram(name: "k"
++// CHECK-LLVM-SAME: spFlags: DISPFlagDefinition | DISPFlagMainSubprogram,
+diff --git a/test/DebugInfo/NonSemantic/DebugInfoProducer.ll b/test/DebugInfo/NonSemantic/DebugInfoProducer.ll
+index 4bc59dc3..9de3cc59 100644
+--- a/test/DebugInfo/NonSemantic/DebugInfoProducer.ll
++++ b/test/DebugInfo/NonSemantic/DebugInfoProducer.ll
+@@ -47,20 +47,23 @@ attributes #0 = { noinline norecurse nounwind optnone "correctly-rounded-divide-
+ 
+ ; CHECK-LLVM-200: !DICompileUnit
+ ; CHECK-LLVM-200-SAME: producer: "clang version 13.0.0 (https://github.com/llvm/llvm-project.git 16a50c9e642fd085e5ceb68c403b71b5b2e0607c)"
++; CHECK-LLVM-200-SAME: flags: "-O2"
+ ; CHECK-LLVM-200-NOT: producer: "spirv"
+ 
+ ; CHECK-LLVM-100: !DICompileUnit
+-; CHECK-LLVM-100-SAME: producer: "spirv"
+-; CHECK-LLVM-100-NOT: producer: "clang version 13.0.0 (https://github.com/llvm/llvm-project.git 16a50c9e642fd085e5ceb68c403b71b5b2e0607c)"
++; CHECK-LLVM-100-SAME: producer: "clang{{.*}}version{{.*}}13.0.0{{.*}}(https://github.com/llvm/llvm-project.git{{.*}}16a50c9e642fd085e5ceb68c403b71b5b2e0607c)"
++; CHECK-LLVM-100-SAME: flags: "-O2"
+ 
+ ; CHECK-SPIRV-200: String [[#ProducerId:]] "clang version 13.0.0 (https://github.com/llvm/llvm-project.git 16a50c9e642fd085e5ceb68c403b71b5b2e0607c)"
+ ; CHECK-SPIRV-200: DebugCompilationUnit [[#]] [[#]] [[#]] [[#]] [[#ProducerId]]
++; CHECK-SPIRV-200: DebugEntryPoint [[#]] [[#]] [[#ProducerId]] [[#]] {{$}}
+ 
+-; CHECK-SPIRV-100-NOT: "clang version 13.0.0 (https://github.com/llvm/llvm-project.git 16a50c9e642fd085e5ceb68c403b71b5b2e0607c)"
+-; CHECK-SPIRV-100-NOT: DebugCompilationUnit [[#]] [[#]] [[#]] [[#]] [[#]] {{$}}
++; CHECK-SPIRV-100: String [[#ProducerId:]] "clang version 13.0.0 (https://github.com/llvm/llvm-project.git 16a50c9e642fd085e5ceb68c403b71b5b2e0607c)"
++; CHECK-SPIRV-100-NOT: DebugCompilationUnit [[#]] [[#]] [[#]] [[#]] [[#ProducerId]] {{$}}
++; CHECK-SPIRV-100: DebugEntryPoint [[#]] [[#]] [[#ProducerId]] [[#]] {{$}}
+ 
+ 
+-!0 = distinct !DICompileUnit(language: DW_LANG_C_plus_plus_14, file: !1, producer: "clang version 13.0.0 (https://github.com/llvm/llvm-project.git 16a50c9e642fd085e5ceb68c403b71b5b2e0607c)", isOptimized: true, runtimeVersion: 0, emissionKind: FullDebug, enums: !2, nameTableKind: None)
++!0 = distinct !DICompileUnit(language: DW_LANG_C_plus_plus_14, file: !1, producer: "clang version 13.0.0 (https://github.com/llvm/llvm-project.git 16a50c9e642fd085e5ceb68c403b71b5b2e0607c)", isOptimized: true, runtimeVersion: 0, emissionKind: FullDebug, enums: !2, nameTableKind: None, flags: "-O2")
+ !1 = !DIFile(filename: "<stdin>", directory: "oneAPI")
+ !2 = !{}
+ !3 = !{i32 2, !"Debug Info Version", i32 3}
+@@ -68,7 +71,7 @@ attributes #0 = { noinline norecurse nounwind optnone "correctly-rounded-divide-
+ !5 = !{i32 1, !"ThinLTO", i32 0}
+ !6 = !{i32 1, !"EnableSplitLTOUnit", i32 1}
+ !7 = !{!"clang version 13.0.0 (https://github.com/llvm/llvm-project.git 16a50c9e642fd085e5ceb68c403b71b5b2e0607c)"}
+-!8 = distinct !DISubprogram(name: "main", scope: !9, file: !9, line: 1, type: !10, scopeLine: 1, flags: DIFlagPrototyped, spFlags: DISPFlagDefinition, unit: !0, retainedNodes: !2)
++!8 = distinct !DISubprogram(name: "main", scope: !9, file: !9, line: 1, type: !10, scopeLine: 1, flags: DIFlagPrototyped, spFlags: DISPFlagDefinition | DISPFlagMainSubprogram, unit: !0, retainedNodes: !2)
+ !9 = !DIFile(filename: "s.cpp", directory: "C:\\")
+ !10 = !DISubroutineType(types: !11)
+ !11 = !{!12}
+diff --git a/test/DebugInfo/NonSemantic/Shader200/FortranArray.ll b/test/DebugInfo/NonSemantic/Shader200/FortranArray.ll
+index 10278029..bf3a7b96 100644
+--- a/test/DebugInfo/NonSemantic/Shader200/FortranArray.ll
++++ b/test/DebugInfo/NonSemantic/Shader200/FortranArray.ll
+@@ -1,10 +1,20 @@
+ ; RUN: llvm-as %s -o %t.bc
+ ; Translation shouldn't crash:
+-; RUN: llvm-spirv %t.bc -spirv-text --spirv-debug-info-version=nonsemantic-shader-200
++; RUN: llvm-spirv %t.bc -spirv-text --spirv-debug-info-version=nonsemantic-shader-200 -o %t.spt
++; RUN: FileCheck < %t.spt %s -check-prefix=CHECK-SPIRV
+ ; RUN: llvm-spirv %t.bc -o %t.spv --spirv-debug-info-version=nonsemantic-shader-200
+ ; RUN: llvm-spirv -r -emit-opaque-pointers %t.spv -o %t.rev.bc
+ ; RUN: llvm-dis %t.rev.bc -o - | FileCheck %s --check-prefix=CHECK-LLVM
+ 
++
++; CHECK-SPIRV: [[#None:]] [[#]] DebugInfoNone
++; CHECK-SPIRV: [[#CompUnit:]] [[#]] DebugCompilationUnit
++; CHECK-SPIRV: [[#EntryFunc:]] [[#]] DebugFunction
++; CHECK-SPIRV: [[#BaseTy:]] [[#]] DebugTypeBasic
++; CHECK-SPIRV: [[#Subrange:]] [[#]] DebugTypeSubrange
++; CHECK-SPIRV: DebugTypeArrayDynamic [[#BaseTy]] [[#]] [[#]] [[#None]] [[#None]] [[#Subrange]]
++; CHECK-SPIRV: DebugEntryPoint [[#EntryFunc]] [[#CompUnit]] [[#]] [[#]] {{$}}
++
+ ; CHECK-LLVM: !DICompileUnit(language: DW_LANG_Fortran95
+ ; CHECK-LLVM: !DICompositeType(tag: DW_TAG_array_type, baseType: ![[#BaseT:]], size: 32, elements: ![[#Elements:]], dataLocation: !DIExpression(DW_OP_push_object_address, DW_OP_deref), associated: !DIExpression(DW_OP_push_object_address, DW_OP_deref, DW_OP_constu, 0, DW_OP_or))
+ ; CHECK-LLVM: ![[#BaseT:]] = !DIBasicType(name: "INTEGER*4", size: 32, encoding: DW_ATE_signed)
+-- 
+2.20.1
+

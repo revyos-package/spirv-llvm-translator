@@ -1,3 +1,6 @@
+spelling-error-in-patch-description * * [debian/patches/*.patch]
+very-long-line-length-in-source-file * > 512 [debian/patches/*.patch:*]
+
 # test data
 very-long-line-length-in-source-file * > 512 [test/*.cl:*]
 very-long-line-length-in-source-file * > 512 [test/*.ll:*]

@@ -4,6 +4,7 @@ Depends:
  @,
  cmake,
  g++,
+ make,
  pkgconf,
  spirv-headers,
  spirv-tools,
@@ -19,6 +20,7 @@ Depends:
  @,
  cmake,
  g++,
+ make,
  pkgconf,
  spirv-headers,
  spirv-tools,
@@ -27,3 +29,12 @@ Depends:
 Restrictions:
  allow-stderr,
  flaky,
+
+Test-Command: true
+Features: test-name=spirv-headers-compatibility
+Depends:
+ spirv-headers,
+Restrictions:
+ build-needed,
+ allow-stderr,
+ superficial,

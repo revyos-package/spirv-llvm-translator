@@ -1,0 +1,34 @@
+From 29d8d3a7f74217fc7fffbeb1a97447492be683ec Mon Sep 17 00:00:00 2001
+From: "Sidorov, Dmitry" <dmitry.sidorov@intel.com>
+Date: Tue, 8 Nov 2022 01:43:49 -0800
+Subject: [PATCH 04/79] [NFC] Replace getPointerElementType in
+ SPIRVRegularizeLLVM
+
+Signed-off-by: Sidorov, Dmitry <dmitry.sidorov@intel.com>
+---
+ lib/SPIRV/SPIRVRegularizeLLVM.cpp | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/lib/SPIRV/SPIRVRegularizeLLVM.cpp b/lib/SPIRV/SPIRVRegularizeLLVM.cpp
+index 3300aab1..d0e3ae1e 100644
+--- a/lib/SPIRV/SPIRVRegularizeLLVM.cpp
++++ b/lib/SPIRV/SPIRVRegularizeLLVM.cpp
+@@ -371,12 +371,13 @@ void SPIRVRegularizeLLVMBase::adaptStructTypes(StructType *ST) {
+   // register by OpCompositeConstruct. And we can't claim, that the Result type
+   // of OpCompositeConstruct instruction is always the joint matrix type, it's
+   // simply not true.
+-  if (MangledName == "__spirv_JointMatrixINTEL") {
++  if (MangledName == "__spirv_JointMatrixINTEL" && !ST->isOpaquePointerTy()) {
+     auto *PtrTy = dyn_cast<PointerType>(ST->getElementType(0));
+     assert(PtrTy &&
+            "Expected a pointer to an array to represent joint matrix type");
+     std::vector<size_t> TypeLayout;
+-    ArrayType *ArrayTy = dyn_cast<ArrayType>(PtrTy->getPointerElementType());
++    ArrayType *ArrayTy =
++        dyn_cast<ArrayType>(PtrTy->getNonOpaquePointerElementType());
+     assert(ArrayTy && "Expected a pointer element type of an array type to "
+                       "represent joint matrix type");
+     TypeLayout.push_back(ArrayTy->getNumElements());
+-- 
+2.20.1
+

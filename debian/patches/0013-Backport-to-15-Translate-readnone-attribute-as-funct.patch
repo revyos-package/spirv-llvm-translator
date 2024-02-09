@@ -1,0 +1,328 @@
+From f38a2573031bda21410337d75e1e830a2af1193b Mon Sep 17 00:00:00 2001
+From: Dmitry Sidorov <dmitry.sidorov@intel.com>
+Date: Tue, 8 Nov 2022 10:40:39 +0100
+Subject: [PATCH 13/79] [Backport to 15] Translate readnone attribute as
+ function parameter attribute (#1697)
+
+Community restricted readnone, readonly and writeonly attributes
+to be only function parameter attributes. This patch aligns
+the translator with llvm.org.
+
+It also fixes a bug, when readnone attribute is being mapped
+to NoWrite SPIR-V function parameter attribute.
+
+Signed-off-by: Sidorov, Dmitry <dmitry.sidorov@intel.com>
+
+Signed-off-by: Sidorov, Dmitry <dmitry.sidorov@intel.com>
+---
+ lib/SPIRV/SPIRVInternal.h                     |  3 +--
+ lib/SPIRV/SPIRVReader.cpp                     |  4 ++-
+ lib/SPIRV/SPIRVUtil.cpp                       |  4 ++-
+ lib/SPIRV/SPIRVWriter.cpp                     |  4 ++-
+ test/transcoding/OpGenericPtrMemSemantics.ll  |  4 +--
+ test/transcoding/OpImageSampleExplicitLod.ll  |  4 +--
+ test/transcoding/OpSwitch32.ll                |  6 ++---
+ test/transcoding/OpSwitch64.ll                |  6 ++---
+ test/transcoding/bitcast.ll                   |  6 ++---
+ test/transcoding/builtin_calls.ll             |  2 +-
+ .../builtin_function_readnone_attr.ll         | 25 ++++++++++++-------
+ test/transcoding/builtin_vars_arithmetics.ll  |  2 +-
+ test/transcoding/isequal.ll                   |  8 +++---
+ test/transcoding/unreachable.ll               |  4 +--
+ 14 files changed, 47 insertions(+), 35 deletions(-)
+
+diff --git a/lib/SPIRV/SPIRVInternal.h b/lib/SPIRV/SPIRVInternal.h
+index 0629c9c6..e593856a 100644
+--- a/lib/SPIRV/SPIRVInternal.h
++++ b/lib/SPIRV/SPIRVInternal.h
+@@ -240,6 +240,7 @@ inline void SPIRVMap<Attribute::AttrKind, SPIRVFuncParamAttrKind>::init() {
+   add(Attribute::NoAlias, FunctionParameterAttributeNoAlias);
+   add(Attribute::NoCapture, FunctionParameterAttributeNoCapture);
+   add(Attribute::ReadOnly, FunctionParameterAttributeNoWrite);
++  add(Attribute::ReadNone, FunctionParameterAttributeNoReadWrite);
+ }
+ typedef SPIRVMap<Attribute::AttrKind, SPIRVFuncParamAttrKind>
+     SPIRSPIRVFuncParamAttrMap;
+@@ -247,8 +248,6 @@ typedef SPIRVMap<Attribute::AttrKind, SPIRVFuncParamAttrKind>
+ template <>
+ inline void
+ SPIRVMap<Attribute::AttrKind, SPIRVFunctionControlMaskKind>::init() {
+-  add(Attribute::ReadNone, FunctionControlPureMask);
+-  add(Attribute::ReadOnly, FunctionControlConstMask);
+   add(Attribute::AlwaysInline, FunctionControlInlineMask);
+   add(Attribute::NoInline, FunctionControlDontInlineMask);
+   add(Attribute::OptimizeNone, internal::FunctionControlOptNoneINTELMask);
+diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
+index 0209ccfb..c75d0e6d 100644
+--- a/lib/SPIRV/SPIRVReader.cpp
++++ b/lib/SPIRV/SPIRVReader.cpp
+@@ -4413,7 +4413,9 @@ Instruction *SPIRVToLLVM::transOCLBuiltinFromExtInst(SPIRVExtInst *BC,
+     if (isFuncNoUnwind())
+       F->addFnAttr(Attribute::NoUnwind);
+     if (isFuncReadNone(UnmangledName))
+-      F->addFnAttr(Attribute::ReadNone);
++      for (llvm::Argument &Arg : F->args())
++        if (Arg.getType()->isPointerTy())
++          Arg.addAttr(Attribute::ReadNone);
+   }
+   auto Args = transValue(BC->getArgValues(), F, BB);
+   SPIRVDBG(dbgs() << "[transOCLBuiltinFromExtInst] Function: " << *F
+diff --git a/lib/SPIRV/SPIRVUtil.cpp b/lib/SPIRV/SPIRVUtil.cpp
+index 72e9eb5d..98a90516 100644
+--- a/lib/SPIRV/SPIRVUtil.cpp
++++ b/lib/SPIRV/SPIRVUtil.cpp
+@@ -1946,8 +1946,10 @@ bool lowerBuiltinVariableToCall(GlobalVariable *GV,
+     Func = Function::Create(FT, GlobalValue::ExternalLinkage, MangledName, M);
+     Func->setCallingConv(CallingConv::SPIR_FUNC);
+     Func->addFnAttr(Attribute::NoUnwind);
+-    Func->addFnAttr(Attribute::ReadNone);
+     Func->addFnAttr(Attribute::WillReturn);
++    for (llvm::Argument &Arg : Func->args())
++      if (Arg.getType()->isPointerTy())
++        Arg.addAttr(Attribute::ReadNone);
+   }
+ 
+   // Collect instructions in these containers to remove them later.
+diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
+index 13d2a314..c923642b 100644
+--- a/lib/SPIRV/SPIRVWriter.cpp
++++ b/lib/SPIRV/SPIRVWriter.cpp
+@@ -844,8 +844,10 @@ SPIRVFunction *LLVMToSPIRVBase::transFunctionDecl(Function *F) {
+       BA->addAttr(FunctionParameterAttributeNoCapture);
+     if (I->hasStructRetAttr())
+       BA->addAttr(FunctionParameterAttributeSret);
+-    if (I->onlyReadsMemory())
++    if (Attrs.hasParamAttr(ArgNo, Attribute::ReadOnly))
+       BA->addAttr(FunctionParameterAttributeNoWrite);
++    if (Attrs.hasParamAttr(ArgNo, Attribute::ReadNone))
++      BA->addAttr(FunctionParameterAttributeNoReadWrite);
+     if (Attrs.hasParamAttr(ArgNo, Attribute::ZExt))
+       BA->addAttr(FunctionParameterAttributeZext);
+     if (Attrs.hasParamAttr(ArgNo, Attribute::SExt))
+diff --git a/test/transcoding/OpGenericPtrMemSemantics.ll b/test/transcoding/OpGenericPtrMemSemantics.ll
+index 8b7545e7..9da8e260 100644
+--- a/test/transcoding/OpGenericPtrMemSemantics.ll
++++ b/test/transcoding/OpGenericPtrMemSemantics.ll
+@@ -24,7 +24,7 @@ target triple = "spir-unknown-unknown"
+ 
+ @gint = addrspace(1) global i32 1, align 4
+ 
+-; Function Attrs: nounwind readnone
++; Function Attrs: nounwind
+ define spir_func i32 @isFenceValid(i32 %fence) #0 {
+ entry:
+   %switch = icmp ult i32 %fence, 4
+@@ -66,7 +66,7 @@ entry:
+ 
+ declare spir_func i32 @_Z13get_global_idj(i32) #2
+ 
+-attributes #0 = { nounwind readnone "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-realign-stack" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
++attributes #0 = { nounwind "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-realign-stack" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
+ attributes #1 = { nounwind "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-realign-stack" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
+ attributes #2 = { "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-realign-stack" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
+ attributes #3 = { nounwind }
+diff --git a/test/transcoding/OpImageSampleExplicitLod.ll b/test/transcoding/OpImageSampleExplicitLod.ll
+index c214ff9d..b41b7d07 100644
+--- a/test/transcoding/OpImageSampleExplicitLod.ll
++++ b/test/transcoding/OpImageSampleExplicitLod.ll
+@@ -43,14 +43,14 @@ entry:
+ ; Function Attrs: nounwind
+ declare spir_func float @_Z11read_imagef20ocl_image2d_depth_ro11ocl_samplerDv2_i(%opencl.image2d_depth_ro_t addrspace(1)*, i32, <2 x i32>) #0
+ 
+-; Function Attrs: nounwind readnone
++; Function Attrs: nounwind
+ declare spir_func i32 @_Z13get_global_idj(i32) #1
+ 
+ ; Function Attrs: nounwind
+ declare spir_func <2 x i32> @_Z13get_image_dim20ocl_image2d_depth_ro(%opencl.image2d_depth_ro_t addrspace(1)*) #0
+ 
+ attributes #0 = { nounwind }
+-attributes #1 = { nounwind readnone }
++attributes #1 = { nounwind }
+ 
+ !opencl.enable.FP_CONTRACT = !{}
+ !opencl.spir.version = !{!6}
+diff --git a/test/transcoding/OpSwitch32.ll b/test/transcoding/OpSwitch32.ll
+index 228e9324..0954e608 100644
+--- a/test/transcoding/OpSwitch32.ll
++++ b/test/transcoding/OpSwitch32.ll
+@@ -75,12 +75,12 @@ sw.epilog:                                        ; preds = %entry, %sw.bb1, %sw
+   ret void
+ }
+ 
+-; Function Attrs: nounwind readnone
++; Function Attrs: nounwind
+ declare spir_func i64 @_Z13get_global_idj(i32) #1
+ 
+ attributes #0 = { nounwind "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-realign-stack" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
+-attributes #1 = { nounwind readnone "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-realign-stack" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
+-attributes #2 = { nounwind readnone }
++attributes #1 = { nounwind "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-realign-stack" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
++attributes #2 = { nounwind }
+ 
+ !opencl.enable.FP_CONTRACT = !{}
+ !opencl.spir.version = !{!6}
+diff --git a/test/transcoding/OpSwitch64.ll b/test/transcoding/OpSwitch64.ll
+index 43d52389..c5dd16f0 100644
+--- a/test/transcoding/OpSwitch64.ll
++++ b/test/transcoding/OpSwitch64.ll
+@@ -86,12 +86,12 @@ sw.epilog:                                        ; preds = %entry, %sw.bb3, %sw
+   ret void
+ }
+ 
+-; Function Attrs: nounwind readnone
++; Function Attrs: nounwind
+ declare spir_func i64 @_Z13get_global_idj(i32) #1
+ 
+ attributes #0 = { nounwind "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-realign-stack" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
+-attributes #1 = { nounwind readnone "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-realign-stack" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
+-attributes #2 = { nounwind readnone }
++attributes #1 = { nounwind "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-realign-stack" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
++attributes #2 = { nounwind }
+ 
+ !opencl.enable.FP_CONTRACT = !{}
+ !opencl.spir.version = !{!6}
+diff --git a/test/transcoding/bitcast.ll b/test/transcoding/bitcast.ll
+index b1ed929f..44c5f3f2 100644
+--- a/test/transcoding/bitcast.ll
++++ b/test/transcoding/bitcast.ll
+@@ -26,12 +26,12 @@ entry:
+   ret void
+ }
+ 
+-; Function Attrs: nounwind readnone
++; Function Attrs: nounwind
+ declare spir_func i64 @_Z13get_global_idj(i32) #1
+ 
+ attributes #0 = { nounwind "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-realign-stack" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
+-attributes #1 = { nounwind readnone "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-realign-stack" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
+-attributes #2 = { nounwind readnone }
++attributes #1 = { nounwind "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-realign-stack" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
++attributes #2 = { nounwind }
+ 
+ !opencl.enable.FP_CONTRACT = !{}
+ !opencl.spir.version = !{!6}
+diff --git a/test/transcoding/builtin_calls.ll b/test/transcoding/builtin_calls.ll
+index bf2dd880..1fac8632 100644
+--- a/test/transcoding/builtin_calls.ll
++++ b/test/transcoding/builtin_calls.ll
+@@ -16,7 +16,7 @@ target triple = "spir-unknown-unknown"
+ ; CHECK-SPIRV: Variable {{[0-9]+}} [[Id:[0-9]+]]
+ ; CHECK-SPIRV: Variable {{[0-9]+}} [[Id:[0-9]+]]
+ 
+-; Function Attrs: nounwind readnone
++; Function Attrs: nounwind
+ define spir_kernel void @f() #0 !kernel_arg_addr_space !0 !kernel_arg_access_qual !0 !kernel_arg_type !0 !kernel_arg_base_type !0 !kernel_arg_type_qual !0 {
+ entry:
+   %0 = call spir_func i32 @_Z29__spirv_BuiltInGlobalLinearIdv()
+diff --git a/test/transcoding/builtin_function_readnone_attr.ll b/test/transcoding/builtin_function_readnone_attr.ll
+index 5bfb5d04..c99098fa 100644
+--- a/test/transcoding/builtin_function_readnone_attr.ll
++++ b/test/transcoding/builtin_function_readnone_attr.ll
+@@ -1,13 +1,23 @@
+ ; RUN: llvm-as %s -o %t.bc
+ ; RUN: llvm-spirv %t.bc -o %t.spv
+-; RUN: llvm-spirv -r %t.spv -o %t.bc
++; RUN: llvm-spirv %t.spv -to-text -o %t.spt
++; RUN: FileCheck < %t.spt %s --check-prefix=CHECK-SPIRV
++; RUN: llvm-spirv -r -emit-opaque-pointers %t.spv -o %t.bc
+ ; RUN: llvm-dis < %t.bc | FileCheck %s --check-prefix=CHECK-LLVM
+ 
++; CHECK-SPIRV: Name [[#A:]] "a"
++; CHECK-SPIRV: Name [[#B:]] "b"
++; CHECK-SPIRV: Decorate [[#A]] FuncParamAttr 5
++; CHECK-SPIRV: Decorate [[#A]] FuncParamAttr 6
++; CHECK-SPIRV: Decorate [[#B]] FuncParamAttr 7
++
++; CHECK-LLVM: {{.*}}void @test_builtin_readnone(ptr nocapture readonly %{{.*}}, ptr nocapture readnone %{{.*}})
++
+ target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
+ target triple = "spir-unknown-unknown"
+ 
+ ; Function Attrs: convergent nofree norecurse nounwind uwtable
+-define dso_local spir_kernel void @test_builtin_readnone(double* nocapture readonly %a, double* nocapture %b) local_unnamed_addr #0 !kernel_arg_addr_space !3 !kernel_arg_access_qual !4 !kernel_arg_type !5 !kernel_arg_base_type !5 !kernel_arg_type_qual !6 {
++define dso_local spir_kernel void @test_builtin_readnone(double* nocapture readonly %a, double* nocapture readnone %b) local_unnamed_addr #0 !kernel_arg_addr_space !3 !kernel_arg_access_qual !4 !kernel_arg_type !5 !kernel_arg_base_type !5 !kernel_arg_type_qual !6 {
+ entry:
+   %0 = load double, double* %a, align 8, !tbaa !7
+   %call = tail call double @_Z3expd(double %0) #2
+@@ -18,18 +28,15 @@ entry:
+   ret void
+ }
+ 
+-; Function Attrs: convergent nounwind readnone
+-; CHECK-LLVM: declare{{.*}}@_Z3expd{{.*}}#[[#Attrs:]]
++; Function Attrs: convergent nounwind
+ declare dso_local double @_Z3expd(double) local_unnamed_addr #1
+ 
+-; Function Attrs: convergent nounwind readnone
+-; CHECK-LLVM: declare{{.*}}@_Z3cosd{{.*}}#[[#Attrs]]
++; Function Attrs: convergent nounwind
+ declare dso_local double @_Z3cosd(double) local_unnamed_addr #1
+ 
+ attributes #0 = { convergent nofree norecurse nounwind uwtable "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "frame-pointer"="all" "less-precise-fpmad"="false" "min-legal-vector-width"="0" "no-infs-fp-math"="false" "no-jump-tables"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+cx8,+fxsr,+mmx,+sse,+sse2,+x87" "tune-cpu"="generic" "uniform-work-group-size"="false" "unsafe-fp-math"="false" "use-soft-float"="false" }
+-; CHECK-LLVM: attributes #[[#Attrs]] {{.*}} readnone
+-attributes #1 = { convergent nounwind readnone "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "frame-pointer"="all" "less-precise-fpmad"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+cx8,+fxsr,+mmx,+sse,+sse2,+x87" "tune-cpu"="generic" "unsafe-fp-math"="false" "use-soft-float"="false" }
+-attributes #2 = { convergent nounwind readnone }
++attributes #1 = { convergent nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "frame-pointer"="all" "less-precise-fpmad"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+cx8,+fxsr,+mmx,+sse,+sse2,+x87" "tune-cpu"="generic" "unsafe-fp-math"="false" "use-soft-float"="false" }
++attributes #2 = { convergent nounwind }
+ 
+ !llvm.module.flags = !{!0}
+ !opencl.ocl.version = !{!1}
+diff --git a/test/transcoding/builtin_vars_arithmetics.ll b/test/transcoding/builtin_vars_arithmetics.ll
+index 4ecbbb49..0fa2f04b 100644
+--- a/test/transcoding/builtin_vars_arithmetics.ll
++++ b/test/transcoding/builtin_vars_arithmetics.ll
+@@ -123,7 +123,7 @@ entry:
+ 
+ attributes #0 = { norecurse "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "frame-pointer"="all" "less-precise-fpmad"="false" "min-legal-vector-width"="0" "no-infs-fp-math"="false" "no-jump-tables"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "sycl-module-id"="test.cpp" "uniform-work-group-size"="true" "unsafe-fp-math"="false" "use-soft-float"="false" }
+ 
+-; CHECK-LLVM-OCL: attributes #1 = { nounwind readnone willreturn }
++; CHECK-LLVM-OCL: attributes #1 = { nounwind willreturn }
+ 
+ !llvm.module.flags = !{!0}
+ !opencl.spir.version = !{!1}
+diff --git a/test/transcoding/isequal.ll b/test/transcoding/isequal.ll
+index 17841517..777a4967 100644
+--- a/test/transcoding/isequal.ll
++++ b/test/transcoding/isequal.ll
+@@ -30,15 +30,15 @@ entry:
+   ret void
+ }
+ 
+-; Function Attrs: nounwind readnone
++; Function Attrs: nounwind
+ declare spir_func i64 @_Z13get_global_idj(i32) #1
+ 
+-; Function Attrs: nounwind readnone
++; Function Attrs: nounwind
+ declare spir_func <8 x i32> @_Z7isequalDv8_fDv8_f(<8 x float>, <8 x float>) #1
+ 
+ attributes #0 = { nounwind "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-realign-stack" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
+-attributes #1 = { nounwind readnone "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-realign-stack" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
+-attributes #2 = { nounwind readnone }
++attributes #1 = { nounwind "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-realign-stack" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
++attributes #2 = { nounwind }
+ 
+ !opencl.enable.FP_CONTRACT = !{}
+ !opencl.spir.version = !{!6}
+diff --git a/test/transcoding/unreachable.ll b/test/transcoding/unreachable.ll
+index e6b15761..466c107b 100644
+--- a/test/transcoding/unreachable.ll
++++ b/test/transcoding/unreachable.ll
+@@ -30,11 +30,11 @@ define spir_kernel void @unreachable_simple(i32 addrspace(1)* nocapture %in, i32
+   ret void
+ }
+ 
+-; Function Attrs: nounwind readnone
++; Function Attrs: nounwind
+ declare spir_func i64 @_Z13get_global_idj(i32) #1
+ 
+ attributes #0 = { nounwind }
+-attributes #1 = { nounwind readnone }
++attributes #1 = { nounwind }
+ 
+ !opencl.enable.FP_CONTRACT = !{}
+ !spirv.Source = !{!6}
+-- 
+2.20.1
+
