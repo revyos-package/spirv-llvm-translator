@@ -1,8 +1,8 @@
-From 6fd1d4b87ec8eb36a8d15eae6ee22d67d3bd6c19 Mon Sep 17 00:00:00 2001
+From 6bc4fc99931865c71c765f3e069ed6902e133906 Mon Sep 17 00:00:00 2001
 From: Wenju He <wenju.he@intel.com>
-Date: Sat, 3 Feb 2024 01:26:52 +0800
-Subject: [PATCH 30/30] [SPV -> SPV-IR] Fix image builtin mangling of unsigned
- type (#2273) (#2337)
+Date: Thu, 1 Feb 2024 22:46:57 +0800
+Subject: [PATCH 4/5] [SPV -> SPV-IR] Fix image builtin mangling of unsigned
+ type (#2273) (#2336)
 
 Return type of image read and Texel type of image write builtins may be
 unsigned. Before this PR, the builtin names in SPIR-V Friendly IR were
@@ -19,10 +19,10 @@ always mangled with signed type.
  6 files changed, 57 insertions(+), 25 deletions(-)
 
 diff --git a/lib/SPIRV/SPIRVInternal.h b/lib/SPIRV/SPIRVInternal.h
-index 64d3ceb1..9eaba7ac 100644
+index 94a088f0..6a2c2ee4 100644
 --- a/lib/SPIRV/SPIRVInternal.h
 +++ b/lib/SPIRV/SPIRVInternal.h
-@@ -846,6 +846,9 @@ std::string getImageBaseTypeName(StringRef Name);
+@@ -848,6 +848,9 @@ std::string getImageBaseTypeName(StringRef Name);
  /// Extract the image type descriptor from the given image type.
  SPIRVTypeImageDescriptor getImageDescriptor(Type *Ty);
  
@@ -32,7 +32,7 @@ index 64d3ceb1..9eaba7ac 100644
  /// Check if access qualifier is encoded in the type name.
  bool hasAccessQualifiedName(StringRef TyName);
  
-@@ -917,9 +920,11 @@ std::string getSPIRVFriendlyIRFunctionName(OCLExtOpKind ExtOpId,
+@@ -919,9 +922,11 @@ std::string getSPIRVFriendlyIRFunctionName(OCLExtOpKind ExtOpId,
  /// \param OC opcode of corresponding built-in instruction. Used to gather info
  /// for unsigned/constant arguments.
  /// \param Types of arguments of SPIR-V built-in function
@@ -46,10 +46,10 @@ index 64d3ceb1..9eaba7ac 100644
  /// Cast a function to a void(void) funtion pointer.
  Constant *castToVoidFuncPtr(Function *F);
 diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
-index 35573329..29d72531 100644
+index a31bc1a4..b769d9dd 100644
 --- a/lib/SPIRV/SPIRVReader.cpp
 +++ b/lib/SPIRV/SPIRVReader.cpp
-@@ -3084,7 +3084,7 @@ Instruction *SPIRVToLLVM::transBuiltinFromInst(const std::string &FuncName,
+@@ -3176,7 +3176,7 @@ Instruction *SPIRVToLLVM::transBuiltinFromInst(const std::string &FuncName,
      mangleOpenClBuiltin(FuncName, ArgTys, MangledName);
    else
      MangledName =
@@ -58,7 +58,7 @@ index 35573329..29d72531 100644
  
    opaquifyTypedPointers(ArgTys);
  
-@@ -3225,7 +3225,7 @@ Instruction *SPIRVToLLVM::transSPIRVBuiltinFromInst(SPIRVInstruction *BI,
+@@ -3320,7 +3320,7 @@ Instruction *SPIRVToLLVM::transSPIRVBuiltinFromInst(SPIRVInstruction *BI,
    }
    }
  
@@ -67,7 +67,7 @@ index 35573329..29d72531 100644
    switch (OC) {
    case OpConvertFToU:
    case OpSatConvertSToU:
-@@ -3234,8 +3234,17 @@ Instruction *SPIRVToLLVM::transSPIRVBuiltinFromInst(SPIRVInstruction *BI,
+@@ -3329,8 +3329,17 @@ Instruction *SPIRVToLLVM::transSPIRVBuiltinFromInst(SPIRVInstruction *BI,
    case OpUDotAccSatKHR:
      IsRetSigned = false;
      break;
@@ -87,10 +87,10 @@ index 35573329..29d72531 100644
  
    if (AddRetTypePostfix) {
 diff --git a/lib/SPIRV/SPIRVUtil.cpp b/lib/SPIRV/SPIRVUtil.cpp
-index 73c36464..197c0fad 100644
+index 99935fd9..2d5a83d1 100644
 --- a/lib/SPIRV/SPIRVUtil.cpp
 +++ b/lib/SPIRV/SPIRVUtil.cpp
-@@ -1560,6 +1560,18 @@ std::string getImageBaseTypeName(StringRef Name) {
+@@ -1629,6 +1629,18 @@ std::string getImageBaseTypeName(StringRef Name) {
    return ImageTyName;
  }
  
@@ -107,9 +107,9 @@ index 73c36464..197c0fad 100644
 +}
 +
  SPIRVTypeImageDescriptor getImageDescriptor(Type *Ty) {
-   StringRef TyName;
-   [[maybe_unused]] bool IsImg = isOCLImageType(Ty, &TyName);
-@@ -2152,8 +2164,9 @@ bool postProcessBuiltinsWithArrayArguments(Module *M, bool IsCpp) {
+   if (auto *TET = dyn_cast_or_null<TargetExtType>(Ty)) {
+     auto IntParams = TET->int_params();
+@@ -2285,8 +2297,9 @@ bool postProcessBuiltinsWithArrayArguments(Module *M, bool IsCpp) {
  namespace {
  class SPIRVFriendlyIRMangleInfo : public BuiltinFuncMangleInfo {
  public:
@@ -121,7 +121,7 @@ index 73c36464..197c0fad 100644
  
    void init(StringRef UniqUnmangledName) override {
      UnmangledName = UniqUnmangledName.str();
-@@ -2313,6 +2326,15 @@ public:
+@@ -2446,6 +2459,15 @@ public:
      case OpSUDotAccSatKHR:
        addUnsignedArg(1);
        break;
@@ -137,7 +137,7 @@ index 73c36464..197c0fad 100644
      default:;
        // No special handling is needed
      }
-@@ -2321,6 +2343,7 @@ public:
+@@ -2454,6 +2476,7 @@ public:
  private:
    spv::Op OC;
    ArrayRef<Type *> ArgTys;
@@ -145,7 +145,7 @@ index 73c36464..197c0fad 100644
  };
  class OpenCLStdToSPIRVFriendlyIRMangleInfo : public BuiltinFuncMangleInfo {
  public:
-@@ -2390,9 +2413,9 @@ std::string getSPIRVFriendlyIRFunctionName(OCLExtOpKind ExtOpId,
+@@ -2523,9 +2546,9 @@ std::string getSPIRVFriendlyIRFunctionName(OCLExtOpKind ExtOpId,
  }
  
  std::string getSPIRVFriendlyIRFunctionName(const std::string &UniqName,
@@ -198,10 +198,10 @@ index 5d5defdd..8ae4540d 100644
      SPIRVWord ImgOps = Ops[ImgOpsIndex];
      unsigned SignZeroExtMasks = ImageOperandsMask::ImageOperandsSignExtendMask |
 diff --git a/lib/SPIRV/libSPIRV/SPIRVInstruction.h b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
-index ceb5ac96..e5aac6ce 100644
+index 7575d90d..8e1d4614 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVInstruction.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
-@@ -2794,9 +2794,6 @@ public:
+@@ -2814,9 +2814,6 @@ public:
  
  protected:
    void setOpWords(const std::vector<SPIRVWord> &OpsArg) override;
@@ -212,7 +212,7 @@ index ceb5ac96..e5aac6ce 100644
  
  #define _SPIRV_OP(x, ...)                                                      \
 diff --git a/test/transcoding/image_signedness.ll b/test/transcoding/image_signedness.ll
-index 676e8f4e..340646e7 100644
+index d169251e..14cb6fe7 100644
 --- a/test/transcoding/image_signedness.ll
 +++ b/test/transcoding/image_signedness.ll
 @@ -5,6 +5,8 @@

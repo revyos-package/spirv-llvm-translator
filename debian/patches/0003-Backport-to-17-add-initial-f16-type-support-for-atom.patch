@@ -1,8 +1,8 @@
-From 6801ce888297ea5dacaeb5bb6347c0f9cf775628 Mon Sep 17 00:00:00 2001
-From: Mateusz Chudyk <mateuszchudyk@gmail.com>
-Date: Thu, 1 Feb 2024 15:41:48 +0100
-Subject: [PATCH 28/30] [Backport to 16] add initial f16 type support for
- atomicrmw in llvm-spirv translator (#2210) (#2333)
+From bf540a5e07bef1577a50f49b628c6ceabd83b088 Mon Sep 17 00:00:00 2001
+From: Mateusz Chudyk <mateusz.chudyk@intel.com>
+Date: Thu, 1 Feb 2024 15:43:53 +0100
+Subject: [PATCH 3/5] [Backport to 17] add initial f16 type support for
+ atomicrmw in llvm-spirv translator (#2210) (#2334)
 
 This PR aims to add f16 type support for atomicrmw in llvm-spirv translator, with the reference to the extension documented in [1].
 There are two concerns related to the subject:
@@ -33,7 +33,7 @@ Co-authored-by: Vyacheslav Levytskyy <89994100+VyacheslavLevytskyy@users.noreply
  create mode 100644 test/extensions/EXT/SPV_EXT_shader_atomic_float_/atomicrmw_fsub_half.ll
 
 diff --git a/include/LLVMSPIRVExtensions.inc b/include/LLVMSPIRVExtensions.inc
-index 209469c1..566662d2 100644
+index cace48ce..a0f42dcd 100644
 --- a/include/LLVMSPIRVExtensions.inc
 +++ b/include/LLVMSPIRVExtensions.inc
 @@ -2,6 +2,7 @@
@@ -45,10 +45,10 @@ index 209469c1..566662d2 100644
  EXT(SPV_EXT_shader_atomic_float_min_max)
  EXT(SPV_KHR_no_integer_wrap_decoration)
 diff --git a/lib/SPIRV/libSPIRV/SPIRVInstruction.h b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
-index c8f99cd4..ceb5ac96 100644
+index 112f08ec..7575d90d 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVInstruction.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
-@@ -2717,16 +2717,22 @@ public:
+@@ -2737,16 +2737,22 @@ public:
  class SPIRVAtomicFAddEXTInst : public SPIRVAtomicInstBase {
  public:
    std::optional<ExtensionID> getRequiredExtension() const override {
@@ -75,10 +75,10 @@ index c8f99cd4..ceb5ac96 100644
  };
  
 diff --git a/lib/SPIRV/libSPIRV/SPIRVModule.cpp b/lib/SPIRV/libSPIRV/SPIRVModule.cpp
-index 91a2e0b8..ddbe6761 100644
+index 5ac7275e..da10a617 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVModule.cpp
 +++ b/lib/SPIRV/libSPIRV/SPIRVModule.cpp
-@@ -589,6 +589,17 @@ void SPIRVModuleImpl::addExtension(ExtensionID Ext) {
+@@ -655,6 +655,17 @@ void SPIRVModuleImpl::addExtension(ExtensionID Ext) {
      return;
    }
    SPIRVExt.insert(ExtName);
