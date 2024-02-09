@@ -2,6 +2,8 @@ spirv-llvm-translator-17 (17.0.0-4) UNRELEASED; urgency=medium
 
   * Restrict watch file to 17.* releases.
   * Update .symbols control file.
+  * Add build-needed autopkgtest for spirv-headers compat check.
+  * Bump spirv-headers dependency to 1.6.1+1.3.275.0.
 
  -- Andreas Beckmann <anbe@debian.org>  Wed, 07 Feb 2024 17:55:59 +0100
 
@@ -31,6 +33,14 @@ spirv-llvm-translator-17 (17.0.0-1) experimental; urgency=medium
   * Upload to experimental.
 
  -- Andreas Beckmann <anbe@debian.org>  Thu, 12 Oct 2023 16:29:16 +0200
+
+spirv-llvm-translator-16 (16.0.0-6) unstable; urgency=medium
+
+  * Add build-needed autopkgtest for spirv-headers compat check.
+  * Update from llvm_release_160 branch.
+  * Bump spirv-headers dependency to 1.6.1+1.3.275.0.
+
+ -- Andreas Beckmann <anbe@debian.org>  Fri, 09 Feb 2024 14:42:13 +0100
 
 spirv-llvm-translator-16 (16.0.0-5) unstable; urgency=medium
 
@@ -78,6 +88,14 @@ spirv-llvm-translator-16 (16.0.0-1) experimental; urgency=medium
 
  -- Andreas Beckmann <anbe@debian.org>  Thu, 20 Apr 2023 18:57:02 +0200
 
+spirv-llvm-translator-15 (15.0.0-6) unstable; urgency=medium
+
+  * Add build-needed autopkgtest for spirv-headers compat check.
+  * Update from llvm_release_150 branch.
+  * Bump spirv-headers dependency to 1.6.1+1.3.275.0.
+
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 08 Feb 2024 22:48:18 +0100
+
 spirv-llvm-translator-15 (15.0.0-5) unstable; urgency=medium
 
   * Update .symbols control file.
@@ -117,6 +135,15 @@ spirv-llvm-translator-15 (15.0.0-1) unstable; urgency=medium
   * Build with llvm 15.
 
  -- Andreas Beckmann <anbe@debian.org>  Mon, 03 Oct 2022 02:09:37 +0200
+
+spirv-llvm-translator-14 (14.0.0-10) unstable; urgency=medium
+
+  * Add build-needed autopkgtest for spirv-headers compat check.
+  * Update from llvm_release_140 branch.
+  * Bump spirv-headers dependency to 1.6.1+1.3.275.0.
+  * Update .symbols control file.
+
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 08 Feb 2024 03:47:14 +0100
 
 spirv-llvm-translator-14 (14.0.0-9) unstable; urgency=medium
 
