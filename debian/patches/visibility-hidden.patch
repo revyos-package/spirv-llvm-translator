@@ -55,7 +55,7 @@ Description: reduce the amount of symbols exposed by the library
  namespace llvm {
  class IntrinsicInst;
  } // namespace llvm
-@@ -225,4 +227,6 @@ private:
+@@ -245,4 +247,6 @@ private:
  
  } // namespace SPIRV
  
@@ -74,7 +74,7 @@ Description: reduce the amount of symbols exposed by the library
  
 --- a/lib/SPIRV/libSPIRV/SPIRVModule.cpp
 +++ b/lib/SPIRV/libSPIRV/SPIRVModule.cpp
-@@ -2137,6 +2137,7 @@ bool isSpirvBinary(const std::string &Im
+@@ -2166,6 +2166,7 @@ bool isSpirvBinary(const std::string &Im
  
  #ifdef _SPIRV_SUPPORT_TEXT_FMT
  
@@ -82,7 +82,7 @@ Description: reduce the amount of symbols exposed by the library
  bool convertSpirv(std::istream &IS, std::ostream &OS, std::string &ErrMsg,
                    bool FromText, bool ToText) {
    auto SaveOpt = SPIRVUseTextFormat;
-@@ -2173,6 +2174,7 @@ bool isSpirvText(const std::string &Img)
+@@ -2202,6 +2203,7 @@ bool isSpirvText(const std::string &Img)
    return Magic == MagicNumber;
  }
  

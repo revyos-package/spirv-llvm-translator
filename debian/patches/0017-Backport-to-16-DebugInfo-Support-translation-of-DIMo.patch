@@ -1,0 +1,193 @@
+From 66e2a92f1cc1996144392008b813924998bf64b7 Mon Sep 17 00:00:00 2001
+From: Viktoria Maximova <viktoria.maksimova@intel.com>
+Date: Mon, 13 Mar 2023 06:15:51 -0700
+Subject: [PATCH 17/30] [Backport to 16][DebugInfo] Support translation of
+ DIModule (#1878)
+
+This entity represents a module in the programming language, for example a Fortran module.
+Spec:
+KhronosGroup/SPIRV-Registry#186
+
+The implementation is the same as for SPV_INTEL_debug_module extension. Spec for extension:
+https://github.com/intel/llvm/blob/sycl/sycl/doc/design/spirv-extensions/SPV_INTEL_debug_module.asciidoc
+---
+ lib/SPIRV/LLVMToSPIRVDbgTran.cpp              | 25 +++++++--
+ lib/SPIRV/SPIRVToLLVMDbgTran.cpp              | 13 ++++-
+ lib/SPIRV/libSPIRV/SPIRV.debug.h              |  1 +
+ lib/SPIRV/libSPIRV/SPIRVExtInst.h             |  1 +
+ .../NonSemanticKernel100/DIModule.ll          | 52 +++++++++++++++++++
+ 5 files changed, 87 insertions(+), 5 deletions(-)
+ create mode 100644 test/DebugInfo/NonSemanticKernel100/DIModule.ll
+
+diff --git a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+index a3706b69..7ec3dee8 100644
+--- a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
++++ b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+@@ -360,7 +360,8 @@ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgEntryImpl(const MDNode *MDN) {
+       return transDbgImportedEntry(cast<DIImportedEntity>(DIEntry));
+ 
+     case dwarf::DW_TAG_module: {
+-      if (BM->isAllowedToUseExtension(ExtensionID::SPV_INTEL_debug_module))
++      if (BM->isAllowedToUseExtension(ExtensionID::SPV_INTEL_debug_module) ||
++          BM->getDebugInfoEIS() == SPIRVEIS_NonSemantic_Kernel_DebugInfo_100)
+         return transDbgModule(cast<DIModule>(DIEntry));
+       return getDebugInfoNone();
+     }
+@@ -1257,15 +1258,33 @@ LLVMToSPIRVDbgTran::transDbgImportedEntry(const DIImportedEntity *IE) {
+ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgModule(const DIModule *Module) {
+   using namespace SPIRVDebug::Operand::ModuleINTEL;
+   SPIRVWordVec Ops(OperandCount);
++  // The difference in translation of NonSemantic Debug Info and
++  // SPV_INTEL_debug_module extension is that extension allows Line and IsDecl
++  // operands to be Literals, when the non-OpenCL Debug Info allows only IDs to
++  // the constant values.
++  bool IsNonSemanticDI =
++      (BM->getDebugInfoEIS() == SPIRVEIS_NonSemantic_Kernel_DebugInfo_100);
+   Ops[NameIdx] = BM->getString(Module->getName().str())->getId();
+   Ops[SourceIdx] = getSource(Module->getFile())->getId();
+-  Ops[LineIdx] = Module->getLineNo();
++  if (IsNonSemanticDI) {
++    ConstantInt *Line = getUInt(M, Module->getLineNo());
++    Ops[LineIdx] = SPIRVWriter->transValue(Line, nullptr)->getId();
++  } else {
++    Ops[LineIdx] = Module->getLineNo();
++  }
+   Ops[ParentIdx] = getScope(Module->getScope())->getId();
+   Ops[ConfigMacrosIdx] =
+       BM->getString(Module->getConfigurationMacros().str())->getId();
+   Ops[IncludePathIdx] = BM->getString(Module->getIncludePath().str())->getId();
+   Ops[ApiNotesIdx] = BM->getString(Module->getAPINotesFile().str())->getId();
+-  Ops[IsDeclIdx] = Module->getIsDecl();
++  if (IsNonSemanticDI) {
++    ConstantInt *IsDecl = getUInt(M, Module->getIsDecl());
++    Ops[IsDeclIdx] = SPIRVWriter->transValue(IsDecl, nullptr)->getId();
++  } else {
++    Ops[IsDeclIdx] = Module->getIsDecl();
++  }
++  if (IsNonSemanticDI)
++    return BM->addDebugInfo(SPIRVDebug::Module, getVoidTy(), Ops);
+   BM->addExtension(ExtensionID::SPV_INTEL_debug_module);
+   BM->addCapability(spv::CapabilityDebugInfoModuleINTEL);
+   return BM->addDebugInfo(SPIRVDebug::ModuleINTEL, getVoidTy(), Ops);
+diff --git a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+index ef27ba9d..4bf5c690 100644
+--- a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
++++ b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+@@ -1000,14 +1000,22 @@ DINode *SPIRVToLLVMDbgTran::transModule(const SPIRVExtInst *DebugInst) {
+   using namespace SPIRVDebug::Operand::ModuleINTEL;
+   const SPIRVWordVec &Ops = DebugInst->getArguments();
+   assert(Ops.size() >= OperandCount && "Invalid number of operands");
++  bool IsNonSemanticDI =
++      (DebugInst->getExtSetKind() == SPIRVEIS_NonSemantic_Kernel_DebugInfo_100);
+   DIScope *Scope = getScope(BM->getEntry(Ops[ParentIdx]));
+-  unsigned Line = Ops[LineIdx];
++  auto GetInt = [&](SPIRVId Id) -> ConstantInt * {
++    auto *V = BM->get<SPIRVValue>(Id);
++    return cast<ConstantInt>(SPIRVReader->transValue(V, nullptr, nullptr));
++  };
++  unsigned Line =
++      IsNonSemanticDI ? GetInt(Ops[LineIdx])->getZExtValue() : Ops[LineIdx];
+   DIFile *File = getFile(Ops[SourceIdx]);
+   StringRef Name = getString(Ops[NameIdx]);
+   StringRef ConfigMacros = getString(Ops[ConfigMacrosIdx]);
+   StringRef IncludePath = getString(Ops[IncludePathIdx]);
+   StringRef ApiNotes = getString(Ops[ApiNotesIdx]);
+-  bool IsDecl = Ops[IsDeclIdx];
++  bool IsDecl =
++      IsNonSemanticDI ? GetInt(Ops[IsDeclIdx])->getZExtValue() : Ops[IsDeclIdx];
+ 
+   return Builder.createModule(Scope, Name, ConfigMacros, IncludePath, ApiNotes,
+                               File, Line, IsDecl);
+@@ -1115,6 +1123,7 @@ MDNode *SPIRVToLLVMDbgTran::transDebugInstImpl(const SPIRVExtInst *DebugInst) {
+   case SPIRVDebug::ImportedEntity:
+     return transImportedEntry(DebugInst);
+ 
++  case SPIRVDebug::Module:
+   case SPIRVDebug::ModuleINTEL:
+     return transModule(DebugInst);
+ 
+diff --git a/lib/SPIRV/libSPIRV/SPIRV.debug.h b/lib/SPIRV/libSPIRV/SPIRV.debug.h
+index 54c28658..b6ebb90a 100644
+--- a/lib/SPIRV/libSPIRV/SPIRV.debug.h
++++ b/lib/SPIRV/libSPIRV/SPIRV.debug.h
+@@ -53,6 +53,7 @@ enum Instruction {
+   ModuleINTEL                   = 36,
+   InstCount                     = 37,
+   TypeSubrange                  = 110,
++  Module                        = 200,
+   TypeArrayDynamic              = 202,
+   TypeString                    = 203
+ };
+diff --git a/lib/SPIRV/libSPIRV/SPIRVExtInst.h b/lib/SPIRV/libSPIRV/SPIRVExtInst.h
+index 33e50332..2085db6e 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVExtInst.h
++++ b/lib/SPIRV/libSPIRV/SPIRVExtInst.h
+@@ -257,6 +257,7 @@ template <> inline void SPIRVMap<SPIRVDebugExtOpKind, std::string>::init() {
+   add(SPIRVDebug::InlinedAt, "DebugInlinedAt");
+   add(SPIRVDebug::ImportedEntity, "DebugImportedEntity");
+   add(SPIRVDebug::ModuleINTEL, "DebugModuleINTEL");
++  add(SPIRVDebug::Module, "DebugModule");
+   add(SPIRVDebug::Expression, "DebugExpression");
+   add(SPIRVDebug::Operation, "DebugOperation");
+ }
+diff --git a/test/DebugInfo/NonSemanticKernel100/DIModule.ll b/test/DebugInfo/NonSemanticKernel100/DIModule.ll
+new file mode 100644
+index 00000000..4aa22daf
+--- /dev/null
++++ b/test/DebugInfo/NonSemanticKernel100/DIModule.ll
+@@ -0,0 +1,52 @@
++; ModuleID = '/Volumes/Data/apple-internal/llvm/tools/clang/test/Modules/debug-info-moduleimport.m'
++; RUN: llvm-as < %s -o %t.bc
++; RUN: llvm-spirv --spirv-debug-info-version=nonsemantic-kernel-100 %t.bc -o %t.spv
++; RUN: llvm-spirv -r -emit-opaque-pointers %t.spv -o - | llvm-dis -o %t.ll
++
++; RUN: llc -mtriple=x86_64-apple-macosx %t.ll -accel-tables=Dwarf -o %t -filetype=obj
++; RUN: llvm-dwarfdump -debug-info %t | FileCheck %s
++; RUN: llvm-dwarfdump -verify %t
++
++; RUN: llvm-spirv --spirv-debug-info-version=nonsemantic-kernel-100 %t.bc -spirv-text -o %t.spt
++; RUN: FileCheck %s --input-file %t.spt --check-prefix CHECK-SPIRV
++
++; CHECK: DW_TAG_compile_unit
++; CHECK-NOT: DW_TAG
++; CHECK:   DW_TAG_module
++; CHECK-NEXT: DW_AT_name {{.*}}"DebugModule"
++; CHECK-NEXT: DW_AT_LLVM_config_macros {{.*}}"-DMODULES=0"
++; CHECK-NEXT: DW_AT_LLVM_include_path {{.*}}"/llvm/tools/clang/test/Modules/Inputs"
++; CHECK-NEXT: DW_AT_LLVM_apinotes {{.*}}"m.apinotes"
++
++target datalayout = "e-m:o-i64:64-f80:128-n8:16:32:64-S128"
++target triple = "spir64-unknown-unknown"
++
++; CHECK-SPIRV-DAG: ExtInstImport [[#EISId:]] "NonSemantic.Kernel.DebugInfo.100"
++; CHECK-SPIRV: String [[#FileName:]] "/llvm/tools/clang/test/Modules/<stdin>"
++; CHECK-SPIRV: String [[#EmptyStr:]] ""
++; CHECK-SPIRV: String [[#Name:]] "DebugModule"
++; CHECK-SPIRV: String [[#Defines:]] "-DMODULES=0"
++; CHECK-SPIRV: String [[#IncludePath:]] "/llvm/tools/clang/test/Modules/Inputs"
++; CHECK-SPIRV: String [[#ApiNotes:]] "m.apinotes"
++; CHECK-SPIRV: TypeInt [[#TypeInt32:]] 32 0
++; CHECK-SPIRV: Constant [[#TypeInt32]] [[#Constant0:]] 0
++
++; CHECK-SPIRV: ExtInst [[#]] [[#Source:]] [[#]] DebugSource [[#FileName]]
++; CHECK-SPIRV: ExtInst [[#]] [[#Parent:]] [[#]] DebugCompileUnit 65536 4
++; CHECK-SPIRV: ExtInst [[#]] [[#SourceEmpty:]] [[#]] DebugSource [[#EmptyStr]]
++; CHECK-SPIRV: ExtInst [[#]] [[#Module:]] [[#]] DebugModule [[#Name]] [[#SourceEmpty]] [[#Constant0]] [[#Parent]] [[#Defines]] [[#IncludePath]] [[#ApiNotes]] [[#Constant0]]
++; CHECK-SPIRV: ExtInst [[#]] [[#]] [[#]] DebugImportedEntity [[#]] [[#]] [[#]] [[#Source]] [[#Module]]
++
++!llvm.dbg.cu = !{!0}
++!llvm.module.flags = !{!6, !7}
++!llvm.ident = !{!8}
++
++!0 = distinct !DICompileUnit(language: DW_LANG_ObjC, file: !1, producer: "LLVM version 3.7.0", isOptimized: false, runtimeVersion: 2, emissionKind: FullDebug, enums: !2, retainedTypes: !2, globals: !2, imports: !3,  sysroot: "/")
++!1 = !DIFile(filename: "/llvm/tools/clang/test/Modules/<stdin>", directory: "/")
++!2 = !{}
++!3 = !{!4}
++!4 = !DIImportedEntity(tag: DW_TAG_imported_declaration, scope: !0, entity: !5, file: !1, line: 5)
++!5 = !DIModule(scope: null, name: "DebugModule", configMacros: "-DMODULES=0", includePath: "/llvm/tools/clang/test/Modules/Inputs", apinotes: "m.apinotes")
++!6 = !{i32 2, !"Dwarf Version", i32 4}
++!7 = !{i32 2, !"Debug Info Version", i32 3}
++!8 = !{!"LLVM version 3.7.0"}
+-- 
+2.20.1
+

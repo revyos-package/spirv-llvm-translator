@@ -1,0 +1,651 @@
+From fbd1cc8c76a6dd51ae5a14db99a40b6522185bc2 Mon Sep 17 00:00:00 2001
+From: Viktoria Maximova <viktoria.maksimova@intel.com>
+Date: Mon, 20 Feb 2023 14:22:05 -0800
+Subject: [PATCH 11/30] [Backport to 16] Initial support
+ NonSemantic.Kernel.DebugInfo.100 (#1846)
+
+This patch implements the initial support for the new debug specification NonSemantic.Kernel.DebugInfo.100.
+It also introduces support for the new debug instruction DISubrange.
+
+Spec: KhronosGroup/SPIRV-Registry#186
+---
+ include/LLVMSPIRVOpts.h                       |   6 +-
+ lib/SPIRV/LLVMToSPIRVDbgTran.cpp              |  88 ++++++++++++
+ lib/SPIRV/LLVMToSPIRVDbgTran.h                |   3 +
+ lib/SPIRV/SPIRVReader.cpp                     |   1 +
+ lib/SPIRV/SPIRVToLLVMDbgTran.cpp              |  68 +++++++++-
+ lib/SPIRV/SPIRVToLLVMDbgTran.h                |   8 +-
+ lib/SPIRV/libSPIRV/SPIRV.debug.h              |  14 +-
+ lib/SPIRV/libSPIRV/SPIRVEnum.h                |   3 +
+ lib/SPIRV/libSPIRV/SPIRVExtInst.h             |   1 +
+ lib/SPIRV/libSPIRV/SPIRVFunction.cpp          |   6 +-
+ lib/SPIRV/libSPIRV/SPIRVInstruction.h         |   5 +-
+ lib/SPIRV/libSPIRV/SPIRVModule.cpp            |   3 +-
+ lib/SPIRV/libSPIRV/SPIRVModule.h              |   2 +
+ .../NonSemanticKernel100/DebugInfoSubrange.ll | 128 ++++++++++++++++++
+ .../{ => OpenCL100}/DebugInfoSubrange.ll      |   0
+ tools/llvm-spirv/llvm-spirv.cpp               |  12 +-
+ 16 files changed, 340 insertions(+), 8 deletions(-)
+ create mode 100644 test/DebugInfo/NonSemanticKernel100/DebugInfoSubrange.ll
+ rename test/DebugInfo/{ => OpenCL100}/DebugInfoSubrange.ll (100%)
+
+diff --git a/include/LLVMSPIRVOpts.h b/include/LLVMSPIRVOpts.h
+index 29f619f0..24e24df9 100644
+--- a/include/LLVMSPIRVOpts.h
++++ b/include/LLVMSPIRVOpts.h
+@@ -80,7 +80,11 @@ enum class BIsRepresentation : uint32_t { OpenCL12, OpenCL20, SPIRVFriendlyIR };
+ 
+ enum class FPContractMode : uint32_t { On, Off, Fast };
+ 
+-enum class DebugInfoEIS : uint32_t { SPIRV_Debug, OpenCL_DebugInfo_100 };
++enum class DebugInfoEIS : uint32_t {
++  SPIRV_Debug,
++  OpenCL_DebugInfo_100,
++  NonSemantic_Kernel_DebugInfo_100
++};
+ 
+ /// \brief Helper class to manage SPIR-V translation
+ class TranslatorOpts {
+diff --git a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+index ffd6b3a4..f34609ac 100644
+--- a/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
++++ b/lib/SPIRV/LLVMToSPIRVDbgTran.cpp
+@@ -277,6 +277,12 @@ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgEntryImpl(const MDNode *MDN) {
+     case dwarf::DW_TAG_array_type:
+       return transDbgArrayType(cast<DICompositeType>(DIEntry));
+ 
++    case dwarf::DW_TAG_subrange_type:
++      if (BM->getDebugInfoEIS() == SPIRVEIS_NonSemantic_Kernel_DebugInfo_100)
++        return transDbgSubrangeType(cast<DISubrange>(DIEntry));
++      else
++        return getDebugInfoNone();
++
+     case dwarf::DW_TAG_const_type:
+     case dwarf::DW_TAG_restrict_type:
+     case dwarf::DW_TAG_volatile_type:
+@@ -552,6 +558,14 @@ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgQualifiedType(const DIDerivedType *QT) {
+ }
+ 
+ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgArrayType(const DICompositeType *AT) {
++  if (BM->getDebugInfoEIS() == SPIRVEIS_NonSemantic_Kernel_DebugInfo_100)
++    return transDbgArrayTypeNonSemantic(AT);
++
++  return transDbgArrayTypeOpenCL(AT);
++}
++
++SPIRVEntry *
++LLVMToSPIRVDbgTran::transDbgArrayTypeOpenCL(const DICompositeType *AT) {
+   using namespace SPIRVDebug::Operand::TypeArray;
+   SPIRVWordVec Ops(MinOperandCount);
+   SPIRVEntry *Base = transDbgEntry(AT->getBaseType());
+@@ -594,6 +608,80 @@ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgArrayType(const DICompositeType *AT) {
+   return BM->addDebugInfo(SPIRVDebug::TypeArray, getVoidTy(), Ops);
+ }
+ 
++SPIRVEntry *
++LLVMToSPIRVDbgTran::transDbgArrayTypeNonSemantic(const DICompositeType *AT) {
++  using namespace SPIRVDebug::Operand::TypeArray;
++  SPIRVWordVec Ops(MinOperandCount);
++  SPIRVEntry *Base = transDbgEntry(AT->getBaseType());
++  Ops[BaseTypeIdx] = Base->getId();
++
++  DINodeArray AR(AT->getElements());
++  // For N-dimensianal arrays AR.getNumElements() == N
++  const unsigned N = AR.size();
++  Ops.resize(SubrangesIdx + N);
++  for (unsigned I = 0; I < N; ++I) {
++    DISubrange *SR = cast<DISubrange>(AR[I]);
++    ConstantInt *Count = SR->getCount().get<ConstantInt *>();
++    if (AT->isVector()) {
++      assert(N == 1 && "Multidimensional vector is not expected!");
++      Ops[ComponentCountIdx] = static_cast<SPIRVWord>(Count->getZExtValue());
++      return BM->addDebugInfo(SPIRVDebug::TypeVector, getVoidTy(), Ops);
++    }
++    Ops[SubrangesIdx + I] = transDbgEntry(SR)->getId();
++  }
++  return BM->addDebugInfo(SPIRVDebug::TypeArray, getVoidTy(), Ops);
++}
++
++SPIRVEntry *LLVMToSPIRVDbgTran::transDbgSubrangeType(const DISubrange *ST) {
++  using namespace SPIRVDebug::Operand::TypeSubrange;
++  SPIRVWordVec Ops(OperandCount);
++  auto TransOperand = [&Ops, this, ST](int Idx) -> void {
++    Metadata *RawNode = nullptr;
++    switch (Idx) {
++    case LowerBoundIdx:
++      RawNode = ST->getRawLowerBound();
++      break;
++    case UpperBoundIdx:
++      RawNode = ST->getRawUpperBound();
++      break;
++    case CountIdx:
++      RawNode = ST->getRawCountNode();
++      break;
++    case StrideIdx:
++      RawNode = ST->getRawStride();
++      break;
++    }
++    if (!RawNode) {
++      Ops[Idx] = getDebugInfoNoneId();
++      return;
++    }
++    if (auto *Node = dyn_cast<MDNode>(RawNode)) {
++      Ops[Idx] = transDbgEntry(Node)->getId();
++    } else {
++      ConstantInt *IntNode = nullptr;
++      switch (Idx) {
++      case LowerBoundIdx:
++        IntNode = ST->getLowerBound().get<ConstantInt *>();
++        break;
++      case UpperBoundIdx:
++        IntNode = ST->getUpperBound().get<ConstantInt *>();
++        break;
++      case CountIdx:
++        IntNode = ST->getCount().get<ConstantInt *>();
++        break;
++      case StrideIdx:
++        IntNode = ST->getStride().get<ConstantInt *>();
++        break;
++      }
++      Ops[Idx] = IntNode ? SPIRVWriter->transValue(IntNode, nullptr)->getId()
++                         : getDebugInfoNoneId();
++    }
++  };
++  for (int Idx = CountIdx; Idx < OperandCount; ++Idx)
++    TransOperand(Idx);
++  return BM->addDebugInfo(SPIRVDebug::TypeSubrange, getVoidTy(), Ops);
++}
++
+ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgTypeDef(const DIDerivedType *DT) {
+   using namespace SPIRVDebug::Operand::Typedef;
+   SPIRVWordVec Ops(OperandCount);
+diff --git a/lib/SPIRV/LLVMToSPIRVDbgTran.h b/lib/SPIRV/LLVMToSPIRVDbgTran.h
+index a82ebabb..4a824bb3 100644
+--- a/lib/SPIRV/LLVMToSPIRVDbgTran.h
++++ b/lib/SPIRV/LLVMToSPIRVDbgTran.h
+@@ -105,6 +105,9 @@ private:
+   SPIRVEntry *transDbgPointerType(const DIDerivedType *PT);
+   SPIRVEntry *transDbgQualifiedType(const DIDerivedType *QT);
+   SPIRVEntry *transDbgArrayType(const DICompositeType *AT);
++  SPIRVEntry *transDbgArrayTypeOpenCL(const DICompositeType *AT);
++  SPIRVEntry *transDbgArrayTypeNonSemantic(const DICompositeType *AT);
++  SPIRVEntry *transDbgSubrangeType(const DISubrange *ST);
+   SPIRVEntry *transDbgTypeDef(const DIDerivedType *D);
+   SPIRVEntry *transDbgSubroutineType(const DISubroutineType *FT);
+   SPIRVEntry *transDbgEnumType(const DICompositeType *ET);
+diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
+index a7960135..c053c53e 100644
+--- a/lib/SPIRV/SPIRVReader.cpp
++++ b/lib/SPIRV/SPIRVReader.cpp
+@@ -2298,6 +2298,7 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
+       return mapValue(BV, transOCLBuiltinFromExtInst(ExtInst, BB));
+     case SPIRVEIS_Debug:
+     case SPIRVEIS_OpenCL_DebugInfo_100:
++    case SPIRVEIS_NonSemantic_Kernel_DebugInfo_100:
+       return mapValue(BV, DbgTran->transDebugIntrinsic(ExtInst, BB));
+     default:
+       llvm_unreachable("Unknown extended instruction set!");
+diff --git a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+index a85bfabd..40182ec8 100644
+--- a/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
++++ b/lib/SPIRV/SPIRVToLLVMDbgTran.cpp
+@@ -91,7 +91,8 @@ SPIRVExtInst *SPIRVToLLVMDbgTran::getDbgInst(const SPIRVId Id) {
+   if (isa<OpExtInst>(E)) {
+     SPIRVExtInst *EI = static_cast<SPIRVExtInst *>(E);
+     if (EI->getExtSetKind() == SPIRV::SPIRVEIS_Debug ||
+-        EI->getExtSetKind() == SPIRV::SPIRVEIS_OpenCL_DebugInfo_100)
++        EI->getExtSetKind() == SPIRV::SPIRVEIS_OpenCL_DebugInfo_100 ||
++        EI->getExtSetKind() == SPIRV::SPIRVEIS_NonSemantic_Kernel_DebugInfo_100)
+       return EI;
+   }
+   return nullptr;
+@@ -192,6 +193,14 @@ DIType *SPIRVToLLVMDbgTran::transTypePointer(const SPIRVExtInst *DebugInst) {
+ 
+ DICompositeType *
+ SPIRVToLLVMDbgTran::transTypeArray(const SPIRVExtInst *DebugInst) {
++  if (DebugInst->getExtSetKind() == SPIRVEIS_NonSemantic_Kernel_DebugInfo_100)
++    return transTypeArrayNonSemantic(DebugInst);
++
++  return transTypeArrayOpenCL(DebugInst);
++}
++
++DICompositeType *
++SPIRVToLLVMDbgTran::transTypeArrayOpenCL(const SPIRVExtInst *DebugInst) {
+   using namespace SPIRVDebug::Operand::TypeArray;
+   const SPIRVWordVec &Ops = DebugInst->getArguments();
+   assert(Ops.size() >= MinOperandCount && "Invalid number of operands");
+@@ -246,6 +255,28 @@ SPIRVToLLVMDbgTran::transTypeArray(const SPIRVExtInst *DebugInst) {
+   return Builder.createArrayType(Size, 0 /*align*/, BaseTy, SubscriptArray);
+ }
+ 
++DICompositeType *
++SPIRVToLLVMDbgTran::transTypeArrayNonSemantic(const SPIRVExtInst *DebugInst) {
++  using namespace SPIRVDebug::Operand::TypeArray;
++  const SPIRVWordVec &Ops = DebugInst->getArguments();
++  assert(Ops.size() >= MinOperandCount && "Invalid number of operands");
++  DIType *BaseTy =
++      transDebugInst<DIType>(BM->get<SPIRVExtInst>(Ops[BaseTypeIdx]));
++  size_t TotalCount = 1;
++  SmallVector<llvm::Metadata *, 8> Subscripts;
++  if (DebugInst->getExtOp() == SPIRVDebug::TypeArray) {
++    for (size_t I = SubrangesIdx; I < Ops.size(); ++I) {
++      auto *SR = transDebugInst<DISubrange>(BM->get<SPIRVExtInst>(Ops[I]));
++      if (auto *Count = SR->getCount().get<ConstantInt *>())
++        TotalCount *= Count->getZExtValue() > 0 ? Count->getZExtValue() : 0;
++      Subscripts.push_back(SR);
++    }
++  }
++  DINodeArray SubscriptArray = Builder.getOrCreateArray(Subscripts);
++  size_t Size = getDerivedSizeInBits(BaseTy) * TotalCount;
++  return Builder.createArrayType(Size, 0 /*align*/, BaseTy, SubscriptArray);
++}
++
+ DICompositeType *
+ SPIRVToLLVMDbgTran::transTypeVector(const SPIRVExtInst *DebugInst) {
+   using namespace SPIRVDebug::Operand::TypeVector;
+@@ -286,6 +317,8 @@ SPIRVToLLVMDbgTran::transTypeComposite(const SPIRVExtInst *DebugInst) {
+   SPIRVEntry *SizeEntry = BM->getEntry(Ops[SizeIdx]);
+   if (!(SizeEntry->isExtInst(SPIRVEIS_Debug, SPIRVDebug::DebugInfoNone) ||
+         SizeEntry->isExtInst(SPIRVEIS_OpenCL_DebugInfo_100,
++                             SPIRVDebug::DebugInfoNone) ||
++        SizeEntry->isExtInst(SPIRVEIS_NonSemantic_Kernel_DebugInfo_100,
+                              SPIRVDebug::DebugInfoNone))) {
+     Size = BM->get<SPIRVConstant>(Ops[SizeIdx])->getZExtIntValue();
+   }
+@@ -341,6 +374,36 @@ SPIRVToLLVMDbgTran::transTypeComposite(const SPIRVExtInst *DebugInst) {
+   return CT;
+ }
+ 
++DISubrange *
++SPIRVToLLVMDbgTran::transTypeSubrange(const SPIRVExtInst *DebugInst) {
++  using namespace SPIRVDebug::Operand::TypeSubrange;
++  const SPIRVWordVec &Ops = DebugInst->getArguments();
++  assert(Ops.size() == OperandCount && "Invalid number of operands");
++  std::vector<Metadata *> TranslatedOps(OperandCount, nullptr);
++  auto TransOperand = [&Ops, &TranslatedOps, this](int Idx) -> void {
++    if (!getDbgInst<SPIRVDebug::DebugInfoNone>(Ops[Idx])) {
++      if (auto *GlobalVar = getDbgInst<SPIRVDebug::GlobalVariable>(Ops[Idx])) {
++        TranslatedOps[Idx] =
++            cast<Metadata>(transDebugInst<DIGlobalVariable>(GlobalVar));
++      } else if (auto *LocalVar =
++                     getDbgInst<SPIRVDebug::LocalVariable>(Ops[Idx])) {
++        TranslatedOps[Idx] =
++            cast<Metadata>(transDebugInst<DILocalVariable>(LocalVar));
++      } else if (auto *Expr = getDbgInst<SPIRVDebug::Expression>(Ops[Idx])) {
++        TranslatedOps[Idx] = cast<Metadata>(transDebugInst<DIExpression>(Expr));
++      } else if (auto *Const = BM->get<SPIRVConstant>(Ops[Idx])) {
++        int64_t ConstantAsInt = static_cast<int64_t>(Const->getZExtIntValue());
++        TranslatedOps[Idx] = cast<Metadata>(ConstantAsMetadata::get(
++            ConstantInt::get(M->getContext(), APInt(64, ConstantAsInt))));
++      }
++    }
++  };
++  for (int Idx = CountIdx; Idx < OperandCount; ++Idx)
++    TransOperand(Idx);
++  return Builder.getOrCreateSubrange(TranslatedOps[0], TranslatedOps[1],
++                                     TranslatedOps[2], TranslatedOps[3]);
++}
++
+ DINode *SPIRVToLLVMDbgTran::transTypeMember(const SPIRVExtInst *DebugInst) {
+   using namespace SPIRVDebug::Operand::TypeMember;
+   const SPIRVWordVec &Ops = DebugInst->getArguments();
+@@ -887,6 +950,9 @@ MDNode *SPIRVToLLVMDbgTran::transDebugInstImpl(const SPIRVExtInst *DebugInst) {
+   case SPIRVDebug::TypeArray:
+     return transTypeArray(DebugInst);
+ 
++  case SPIRVDebug::TypeSubrange:
++    return transTypeSubrange(DebugInst);
++
+   case SPIRVDebug::TypeVector:
+     return transTypeVector(DebugInst);
+ 
+diff --git a/lib/SPIRV/SPIRVToLLVMDbgTran.h b/lib/SPIRV/SPIRVToLLVMDbgTran.h
+index b6b65e3f..391e5622 100644
+--- a/lib/SPIRV/SPIRVToLLVMDbgTran.h
++++ b/lib/SPIRV/SPIRVToLLVMDbgTran.h
+@@ -70,7 +70,9 @@ public:
+   template <typename T = MDNode>
+   T *transDebugInst(const SPIRVExtInst *DebugInst) {
+     assert((DebugInst->getExtSetKind() == SPIRVEIS_Debug ||
+-            DebugInst->getExtSetKind() == SPIRVEIS_OpenCL_DebugInfo_100) &&
++            DebugInst->getExtSetKind() == SPIRVEIS_OpenCL_DebugInfo_100 ||
++            DebugInst->getExtSetKind() ==
++                SPIRVEIS_NonSemantic_Kernel_DebugInfo_100) &&
+            "Unexpected extended instruction set");
+     auto It = DebugInstCache.find(DebugInst);
+     if (It != DebugInstCache.end())
+@@ -108,11 +110,15 @@ private:
+   DIType *transTypePointer(const SPIRVExtInst *DebugInst);
+ 
+   DICompositeType *transTypeArray(const SPIRVExtInst *DebugInst);
++  DICompositeType *transTypeArrayOpenCL(const SPIRVExtInst *DebugInst);
++  DICompositeType *transTypeArrayNonSemantic(const SPIRVExtInst *DebugInst);
+ 
+   DICompositeType *transTypeVector(const SPIRVExtInst *DebugInst);
+ 
+   DICompositeType *transTypeComposite(const SPIRVExtInst *DebugInst);
+ 
++  DISubrange *transTypeSubrange(const SPIRVExtInst *DebugInst);
++
+   DINode *transTypeMember(const SPIRVExtInst *DebugInst);
+ 
+   DINode *transTypeEnum(const SPIRVExtInst *DebugInst);
+diff --git a/lib/SPIRV/libSPIRV/SPIRV.debug.h b/lib/SPIRV/libSPIRV/SPIRV.debug.h
+index 026a3083..007783cb 100644
+--- a/lib/SPIRV/libSPIRV/SPIRV.debug.h
++++ b/lib/SPIRV/libSPIRV/SPIRV.debug.h
+@@ -50,7 +50,8 @@ enum Instruction {
+   ImportedEntity                = 34,
+   Source                        = 35,
+   ModuleINTEL                   = 36,
+-  InstCount                     = 37
++  InstCount                     = 37,
++  TypeSubrange                  = 110
+ };
+ 
+ enum Flag {
+@@ -323,12 +324,23 @@ namespace TypeArray {
+ enum {
+   BaseTypeIdx       = 0,
+   ComponentCountIdx = 1,
++  SubrangesIdx      = 1,
+   MinOperandCount   = 2
+ };
+ }
+ 
+ namespace TypeVector = TypeArray;
+ 
++namespace TypeSubrange {
++enum {
++  CountIdx        = 0,
++  LowerBoundIdx   = 1,
++  UpperBoundIdx   = 2,
++  StrideIdx       = 3,
++  OperandCount    = 4
++};
++}
++
+ namespace Typedef {
+ enum {
+   NameIdx      = 0,
+diff --git a/lib/SPIRV/libSPIRV/SPIRVEnum.h b/lib/SPIRV/libSPIRV/SPIRVEnum.h
+index 5dab80ad..cf7623d9 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVEnum.h
++++ b/lib/SPIRV/libSPIRV/SPIRVEnum.h
+@@ -78,6 +78,7 @@ enum SPIRVExtInstSetKind {
+   SPIRVEIS_OpenCL,
+   SPIRVEIS_Debug,
+   SPIRVEIS_OpenCL_DebugInfo_100,
++  SPIRVEIS_NonSemantic_Kernel_DebugInfo_100,
+   SPIRVEIS_Count,
+ };
+ 
+@@ -129,6 +130,8 @@ template <> inline void SPIRVMap<SPIRVExtInstSetKind, std::string>::init() {
+   add(SPIRVEIS_OpenCL, "OpenCL.std");
+   add(SPIRVEIS_Debug, "SPIRV.debug");
+   add(SPIRVEIS_OpenCL_DebugInfo_100, "OpenCL.DebugInfo.100");
++  add(SPIRVEIS_NonSemantic_Kernel_DebugInfo_100,
++      "NonSemantic.Kernel.DebugInfo.100");
+ }
+ typedef SPIRVMap<SPIRVExtInstSetKind, std::string> SPIRVBuiltinSetNameMap;
+ 
+diff --git a/lib/SPIRV/libSPIRV/SPIRVExtInst.h b/lib/SPIRV/libSPIRV/SPIRVExtInst.h
+index 9f1aa91a..24555290 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVExtInst.h
++++ b/lib/SPIRV/libSPIRV/SPIRVExtInst.h
+@@ -239,6 +239,7 @@ template <> inline void SPIRVMap<SPIRVDebugExtOpKind, std::string>::init() {
+       "DebugTemplateTemplateParameter");
+   add(SPIRVDebug::TypeTemplate, "DebugTemplate");
+   add(SPIRVDebug::TypePtrToMember, "DebugTypePtrToMember,");
++  add(SPIRVDebug::TypeSubrange, "DebugTypeSubrange");
+   add(SPIRVDebug::Inheritance, "DebugInheritance");
+   add(SPIRVDebug::Function, "DebugFunction");
+   add(SPIRVDebug::FunctionDecl, "DebugFunctionDecl");
+diff --git a/lib/SPIRV/libSPIRV/SPIRVFunction.cpp b/lib/SPIRV/libSPIRV/SPIRVFunction.cpp
+index da1ba0df..c91a6506 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVFunction.cpp
++++ b/lib/SPIRV/libSPIRV/SPIRVFunction.cpp
+@@ -161,10 +161,14 @@ bool SPIRVFunction::decodeBB(SPIRVDecoder &Decoder) {
+       Module->add(Inst);
+     } else {
+       if (Inst->isExtInst(SPIRVEIS_Debug, SPIRVDebug::Scope) ||
+-          Inst->isExtInst(SPIRVEIS_OpenCL_DebugInfo_100, SPIRVDebug::Scope)) {
++          Inst->isExtInst(SPIRVEIS_OpenCL_DebugInfo_100, SPIRVDebug::Scope) ||
++          Inst->isExtInst(SPIRVEIS_NonSemantic_Kernel_DebugInfo_100,
++                          SPIRVDebug::Scope)) {
+         DebugScope = Inst;
+       } else if (Inst->isExtInst(SPIRVEIS_Debug, SPIRVDebug::NoScope) ||
+                  Inst->isExtInst(SPIRVEIS_OpenCL_DebugInfo_100,
++                                 SPIRVDebug::NoScope) ||
++                 Inst->isExtInst(SPIRVEIS_NonSemantic_Kernel_DebugInfo_100,
+                                  SPIRVDebug::NoScope)) {
+         DebugScope = nullptr;
+       } else {
+diff --git a/lib/SPIRV/libSPIRV/SPIRVInstruction.h b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
+index 57add6b5..491972f2 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVInstruction.h
++++ b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
+@@ -1761,7 +1761,8 @@ public:
+     assert(Module && "Invalid module");
+     ExtSetKind = Module->getBuiltinSet(ExtSetId);
+     assert((ExtSetKind == SPIRVEIS_OpenCL || ExtSetKind == SPIRVEIS_Debug ||
+-            ExtSetKind == SPIRVEIS_OpenCL_DebugInfo_100) &&
++            ExtSetKind == SPIRVEIS_OpenCL_DebugInfo_100 ||
++            ExtSetKind == SPIRVEIS_NonSemantic_Kernel_DebugInfo_100) &&
+            "not supported");
+   }
+   void encode(spv_ostream &O) const override {
+@@ -1772,6 +1773,7 @@ public:
+       break;
+     case SPIRVEIS_Debug:
+     case SPIRVEIS_OpenCL_DebugInfo_100:
++    case SPIRVEIS_NonSemantic_Kernel_DebugInfo_100:
+       getEncoder(O) << ExtOpDebug;
+       break;
+     default:
+@@ -1789,6 +1791,7 @@ public:
+       break;
+     case SPIRVEIS_Debug:
+     case SPIRVEIS_OpenCL_DebugInfo_100:
++    case SPIRVEIS_NonSemantic_Kernel_DebugInfo_100:
+       getDecoder(I) >> ExtOpDebug;
+       break;
+     default:
+diff --git a/lib/SPIRV/libSPIRV/SPIRVModule.cpp b/lib/SPIRV/libSPIRV/SPIRVModule.cpp
+index ed974829..c8387b45 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVModule.cpp
++++ b/lib/SPIRV/libSPIRV/SPIRVModule.cpp
+@@ -642,7 +642,8 @@ void SPIRVModuleImpl::layoutEntry(SPIRVEntry *E) {
+   case OpExtInst: {
+     SPIRVExtInst *EI = static_cast<SPIRVExtInst *>(E);
+     if ((EI->getExtSetKind() == SPIRVEIS_Debug ||
+-         EI->getExtSetKind() == SPIRVEIS_OpenCL_DebugInfo_100) &&
++         EI->getExtSetKind() == SPIRVEIS_OpenCL_DebugInfo_100 ||
++         EI->getExtSetKind() == SPIRVEIS_NonSemantic_Kernel_DebugInfo_100) &&
+         EI->getExtOp() != SPIRVDebug::Declare &&
+         EI->getExtOp() != SPIRVDebug::Value &&
+         EI->getExtOp() != SPIRVDebug::Scope &&
+diff --git a/lib/SPIRV/libSPIRV/SPIRVModule.h b/lib/SPIRV/libSPIRV/SPIRVModule.h
+index a8c15445..2ec832c0 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVModule.h
++++ b/lib/SPIRV/libSPIRV/SPIRVModule.h
+@@ -528,6 +528,8 @@ public:
+       return SPIRVEIS_Debug;
+     case DebugInfoEIS::OpenCL_DebugInfo_100:
+       return SPIRVEIS_OpenCL_DebugInfo_100;
++    case DebugInfoEIS::NonSemantic_Kernel_DebugInfo_100:
++      return SPIRVEIS_NonSemantic_Kernel_DebugInfo_100;
+     }
+     assert(false && "Unexpected debug info EIS!");
+     return SPIRVEIS_Debug;
+diff --git a/test/DebugInfo/NonSemanticKernel100/DebugInfoSubrange.ll b/test/DebugInfo/NonSemanticKernel100/DebugInfoSubrange.ll
+new file mode 100644
+index 00000000..0a901ae8
+--- /dev/null
++++ b/test/DebugInfo/NonSemanticKernel100/DebugInfoSubrange.ll
+@@ -0,0 +1,128 @@
++; RUN: llvm-as %s -o %t.bc
++; RUN: llvm-spirv -spirv-text %t.bc -o %t.spt --spirv-debug-info-version=nonsemantic-kernel-100
++; RUN: FileCheck < %t.spt %s -check-prefix=CHECK-SPIRV
++; RUN: llvm-spirv -to-binary %t.spt -o %t.spv
++
++; RUN: llvm-spirv -r %t.spv -o %t.rev.bc
++; RUN: llvm-dis %t.rev.bc -o %t.rev.ll
++; RUN: FileCheck < %t.rev.ll %s -check-prefix=CHECK-LLVM
++
++; CHECK-SPIRV: ExtInstImport [[#EISId:]] "NonSemantic.Kernel.DebugInfo.100"
++
++; CHECK-SPIRV: String [[#LocalVarNameId:]] "A$1$upperbound"
++; CHECK-SPIRV: TypeInt [[#TyInt64Id:]] 64 0
++; CHECK-SPIRV-DAG: Constant [[#TyInt64Id]] [[#Constant1Id:]] 1 0
++; CHECK-SPIRV-DAG: Constant [[#TyInt64Id]] [[#Constant1000Id:]] 1000 0
++; CHECK-SPIRV: [[#DINoneId:]] [[#EISId]] DebugInfoNone
++
++; CHECK-SPIRV: [[#DebugFuncId:]] [[#EISId]] DebugFunction
++; CHECK-SPIRV: [[#DebugTemplate:]] [[#EISId]] DebugTemplate [[#DebugFuncId]]
++; CHECK-SPIRV: [[#LocalVarId:]] [[#EISId]] DebugLocalVariable [[#LocalVarNameId]] [[#]] [[#]] [[#]] [[#]] [[#DebugTemplate]]
++; CHECK-SPIRV: [[#EISId]] DebugTypeSubrange [[#DINoneId]] [[#Constant1Id]] [[#LocalVarId]]  [[#DINoneId]]
++
++; CHECK-SPIRV: [[#DIExprId:]] [[#EISId]] DebugExpression
++; CHECK-SPIRV: [[#EISId]] DebugTypeSubrange [[#DINoneId]] [[#DIExprId]] [[#DIExprId]] [[#DINoneId]]
++
++; CHECK-SPIRV: [[#EISId]] DebugTypeSubrange [[#Constant1000Id]] [[#Constant1Id]] [[#DINoneId]] [[#DINoneId]]
++
++; CHECK-LLVM: [[#Subrange1:]] = !DISubrange(lowerBound: 1, upperBound: ![[#UpperBound:]])
++; CHECK-LLVM: [[#UpperBound]] = !DILocalVariable(name: "A$1$upperbound"
++; CHECK-LLVM: !DISubrange(lowerBound: !DIExpression(), upperBound: !DIExpression())
++; CHECK-LLVM: !DISubrange(count: 1000, lowerBound: 1)
++
++; ModuleID = 'DebugInfoSubrangeUpperBound.bc'
++target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024"
++target triple = "spir64-unknown-unknown"
++
++%structtype = type { [72 x i1] }
++%"QNCA_a0$float" = type { float addrspace(4)*, i64, i64, i64, i64, i64, [1 x %structtype2] }
++%structtype2 = type { i64, i64, i64 }
++
++; Function Attrs: noinline nounwind
++define spir_kernel void @__omp_offloading_811_198142f_random_fill_sp_l25(i32 addrspace(1)* noalias %0, %structtype* byval(%structtype) %"ascast$val", [1000 x i32] addrspace(1)* noalias %"ascastB$val") #0 !kernel_arg_addr_space !9 !kernel_arg_access_qual !10 !kernel_arg_type !11 !kernel_arg_type_qual !12 !kernel_arg_base_type !11 {
++newFuncRoot:
++  %.ascast = bitcast %structtype* %"ascast$val" to %"QNCA_a0$float"*
++  call void @llvm.dbg.value(metadata %"QNCA_a0$float"* %.ascast, metadata !13, metadata !DIExpression(DW_OP_deref)), !dbg !27
++  call void @llvm.dbg.value(metadata %"QNCA_a0$float"* %.ascast, metadata !28, metadata !DIExpression(DW_OP_deref)), !dbg !42
++  call void @llvm.dbg.value(metadata [1000 x i32] addrspace(1)* %"ascastB$val", metadata !47, metadata !DIExpression(DW_OP_deref)), !dbg !51
++  call void @llvm.dbg.value(metadata i32 addrspace(1)* %0, metadata !54, metadata !DIExpression(DW_OP_deref)), !dbg !59
++  ret void
++}
++
++; Function Attrs: nofree nosync nounwind readnone speculatable willreturn
++declare void @llvm.dbg.value(metadata, metadata, metadata) #1
++
++attributes #0 = { noinline nounwind }
++attributes #1 = { nofree nosync nounwind readnone speculatable willreturn }
++
++!llvm.module.flags = !{!0, !1}
++!llvm.dbg.cu = !{!2}
++!spirv.MemoryModel = !{!4}
++!opencl.enable.FP_CONTRACT = !{}
++!spirv.Source = !{!5}
++!opencl.spir.version = !{!6}
++!opencl.ocl.version = !{!6}
++!opencl.used.extensions = !{!7}
++!opencl.used.optional.core.features = !{!7}
++!spirv.Generator = !{!8}
++
++!0 = !{i32 7, !"Dwarf Version", i32 4}
++!1 = !{i32 2, !"Debug Info Version", i32 3}
++!2 = distinct !DICompileUnit(language: DW_LANG_OpenCL, file: !3, producer: "Fortran", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)
++!3 = !DIFile(filename: "f.f90", directory: "Fortran")
++!4 = !{i32 2, i32 2}
++!5 = !{i32 4, i32 200000}
++!6 = !{i32 2, i32 0}
++!7 = !{}
++!8 = !{i16 6, i16 14}
++!9 = !{i32 0}
++!10 = !{!"none"}
++!11 = !{!"structtype"}
++!12 = !{!""}
++!13 = !DILocalVariable(name: "a", scope: !14, file: !3, line: 15, type: !18)
++!14 = distinct !DISubprogram(name: "random_fill_sp.DIR.OMP.TARGET.8.split.split.split.split", scope: null, file: !3, line: 25, type: !15, scopeLine: 25, flags: DIFlagArtificial, spFlags: DISPFlagLocalToUnit | DISPFlagDefinition, unit: !2, templateParams: !7, retainedNodes: !17)
++!15 = !DISubroutineType(types: !16)
++!16 = !{null}
++!17 = !{!13}
++!18 = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !19, size: 64)
++!19 = !DICompositeType(tag: DW_TAG_array_type, baseType: !20, size: 32, elements: !21)
++!20 = !DIBasicType(name: "REAL*4", size: 32, encoding: DW_ATE_float)
++!21 = !{!22}
++!22 = !DISubrange(lowerBound: 1, upperBound: !23)
++!23 = !DILocalVariable(name: "A$1$upperbound", scope: !24, type: !26, flags: DIFlagArtificial)
++!24 = distinct !DISubprogram(name: "random_fill_sp", linkageName: "random_fill_sp", scope: null, file: !3, line: 15, type: !15, scopeLine: 15, spFlags: DISPFlagDefinition, unit: !2, templateParams: !7, retainedNodes: !25)
++!25 = !{!23}
++!26 = !DIBasicType(name: "INTEGER*8", size: 64, encoding: DW_ATE_signed)
++!27 = !DILocation(line: 15, column: 67, scope: !14)
++!28 = !DILocalVariable(name: "a", scope: !29, file: !3, line: 15, type: !33)
++!29 = distinct !DISubprogram(name: "random_fill_sp.DIR.OMP.TARGET.8.split.split.split.split", scope: null, file: !3, line: 25, type: !30, scopeLine: 25, flags: DIFlagArtificial, spFlags: DISPFlagLocalToUnit | DISPFlagDefinition, unit: !2, templateParams: !7, retainedNodes: !32)
++!30 = !DISubroutineType(types: !31)
++!31 = !{null}
++!32 = !{!28}
++!33 = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !34, size: 64)
++!34 = !DICompositeType(tag: DW_TAG_array_type, baseType: !35, size: 32, elements: !36)
++!35 = !DIBasicType(name: "REAL*4", size: 32, encoding: DW_ATE_float)
++!36 = !{!37}
++!37 = !DISubrange(lowerBound: !DIExpression(), upperBound: !DIExpression())
++!38 = !DILocalVariable(name: "A$1$upperbound", scope: !39, type: !41, flags: DIFlagArtificial)
++!39 = distinct !DISubprogram(name: "random_fill_sp", linkageName: "random_fill_sp", scope: null, file: !3, line: 15, type: !30, scopeLine: 15, spFlags: DISPFlagDefinition, unit: !2, templateParams: !7, retainedNodes: !40)
++!40 = !{!38}
++!41 = !DIBasicType(name: "INTEGER*8", size: 64, encoding: DW_ATE_signed)
++!42 = !DILocation(line: 15, column: 67, scope: !29)
++!43 = !DIBasicType(name: "INTEGER*4", size: 32, encoding: DW_ATE_signed)
++!44 = !{}
++!45 = !DISubroutineType(types: !44)
++!46 = distinct !DISubprogram(name: "test_target_map_array_default_IP_test_array_map_no_map_type_.DIR.OMP.TARGET.340.split", scope: !3, file: !3, line: 32, type: !45, scopeLine: 32, flags: DIFlagArtificial, spFlags: DISPFlagLocalToUnit | DISPFlagDefinition, unit: !2)
++!47 = !DILocalVariable(name: "compute_array", scope: !46, file: !3, line: 27, type: !48)
++!48 = !DICompositeType(tag: DW_TAG_array_type, baseType: !43, elements: !49)
++!49 = !{!50}
++!50 = !DISubrange(count: 1000, lowerBound: 1)
++!51 = !DILocation(line: 27, column: 24, scope: !46)
++!52 = distinct !DISubprogram(name: "test", scope: !3, file: !3, line: 51, type: !53, scopeLine: 51, flags: DIFlagArtificial, spFlags: DISPFlagLocalToUnit | DISPFlagDefinition, unit: !2)
++!53 = !DISubroutineType(types: !7)
++!54 = !DILocalVariable(name: "isHost", scope: !52, file: !3, line: 34, type: !55)
++!55 = !DICompositeType(tag: DW_TAG_array_type, baseType: !56, elements: !57)
++!56 = !DIBasicType(name: "int", size: 32, encoding: DW_ATE_signed)
++!57 = !{!58}
++!58 = !DISubrange(count: -1)
++!59 = !DILocation(line: 34, column: 33, scope: !52)
+diff --git a/test/DebugInfo/DebugInfoSubrange.ll b/test/DebugInfo/OpenCL100/DebugInfoSubrange.ll
+similarity index 100%
+rename from test/DebugInfo/DebugInfoSubrange.ll
+rename to test/DebugInfo/OpenCL100/DebugInfoSubrange.ll
+diff --git a/tools/llvm-spirv/llvm-spirv.cpp b/tools/llvm-spirv/llvm-spirv.cpp
+index 535699e1..75b7b55f 100644
+--- a/tools/llvm-spirv/llvm-spirv.cpp
++++ b/tools/llvm-spirv/llvm-spirv.cpp
+@@ -228,7 +228,14 @@ static cl::opt<SPIRV::DebugInfoEIS> DebugEIS(
+         clEnumValN(SPIRV::DebugInfoEIS::OpenCL_DebugInfo_100, "ocl-100",
+                    "Emit debug info compliant with the OpenCL.DebugInfo.100 "
+                    "extended instruction set. This version of SPIR-V debug "
+-                   "info format is compatible with the SPIRV-Tools")));
++                   "info format is compatible with the SPIRV-Tools"),
++        clEnumValN(
++            SPIRV::DebugInfoEIS::NonSemantic_Kernel_DebugInfo_100,
++            "nonsemantic-kernel-100",
++            "Emit debug info compliant with the "
++            "NonSemantic.Kernel.DebugInfo.100 extended instruction set. This "
++            "version of SPIR-V debug info format is compatible with the rules "
++            "regarding non-semantic instruction sets.")));
+ 
+ static cl::opt<bool> SPIRVReplaceLLVMFmulAddWithOpenCLMad(
+     "spirv-replace-fmuladd-with-ocl-mad",
+@@ -726,6 +733,9 @@ int main(int Ac, char **Av) {
+                 "affects translation from LLVM IR to SPIR-V";
+     } else {
+       Opts.setDebugInfoEIS(DebugEIS);
++      if (DebugEIS.getValue() ==
++          SPIRV::DebugInfoEIS::NonSemantic_Kernel_DebugInfo_100)
++        Opts.setAllowExtraDIExpressionsEnabled(true);
+     }
+   }
+ 
+-- 
+2.20.1
+

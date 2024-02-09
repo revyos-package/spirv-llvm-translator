@@ -1,6 +1,7 @@
 spirv-llvm-translator-16 (16.0.0-6) UNRELEASED; urgency=medium
 
   * Add build-needed autopkgtest for spirv-headers compat check.
+  * Update from llvm_release_160 branch.
   * Bump spirv-headers dependency to 1.6.1+1.3.275.0.
 
  -- Andreas Beckmann <anbe@debian.org>  Fri, 09 Feb 2024 11:17:12 +0100

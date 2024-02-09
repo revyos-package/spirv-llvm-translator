@@ -1,0 +1,137 @@
+From 0d64ec3848b4ff20c26b4d96a5527ee3112ce9c4 Mon Sep 17 00:00:00 2001
+From: Viktoria Maximova <viktoria.maksimova@intel.com>
+Date: Tue, 21 Mar 2023 13:13:51 -0700
+Subject: [PATCH 20/30] [Backport to 16][DebugInfo] Add more source languages
+ and align to spec changes (#1894)
+
+Spec: KhronosGroup/SPIRV-Registry#186
+---
+ lib/SPIRV/libSPIRV/SPIRV.debug.h              |  8 ++++
+ lib/SPIRV/libSPIRV/spirv_internal.hpp         | 44 ++++++++++++-------
+ .../Shader200/SourceLanguageLLVMToSPIRV.ll    |  6 +--
+ 3 files changed, 39 insertions(+), 19 deletions(-)
+
+diff --git a/lib/SPIRV/libSPIRV/SPIRV.debug.h b/lib/SPIRV/libSPIRV/SPIRV.debug.h
+index 4d9c30e5..dfe2535b 100644
+--- a/lib/SPIRV/libSPIRV/SPIRV.debug.h
++++ b/lib/SPIRV/libSPIRV/SPIRV.debug.h
+@@ -900,6 +900,10 @@ inline spv::SourceLanguage convertDWARFSourceLangToSPIRVNonSemanticDbgInfo(
+   case dwarf::SourceLanguage::DW_LANG_D:
+     return spv::internal::SourceLanguageD;
+ 
++  case dwarf::SourceLanguage::DW_LANG_Fortran77:
++    return spv::internal::SourceLanguageFortran77;
++  case dwarf::SourceLanguage::DW_LANG_Fortran90:
++    return spv::internal::SourceLanguageFortran90;
+   case dwarf::SourceLanguage::DW_LANG_Fortran95:
+     return spv::internal::SourceLanguageFortran95;
+   case dwarf::SourceLanguage::DW_LANG_Fortran03:
+@@ -946,6 +950,10 @@ convertSPIRVSourceLangToDWARFNonSemanticDbgInfo(unsigned SourceLang) {
+   case spv::internal::SourceLanguageD:
+     return dwarf::SourceLanguage::DW_LANG_D;
+ 
++  case spv::internal::SourceLanguageFortran77:
++    return dwarf::SourceLanguage::DW_LANG_Fortran77;
++  case spv::internal::SourceLanguageFortran90:
++    return dwarf::SourceLanguage::DW_LANG_Fortran90;
+   case spv::internal::SourceLanguageFortran95:
+     return dwarf::SourceLanguage::DW_LANG_Fortran95;
+   case spv::internal::SourceLanguageFortran2003:
+diff --git a/lib/SPIRV/libSPIRV/spirv_internal.hpp b/lib/SPIRV/libSPIRV/spirv_internal.hpp
+index f916be98..3b9fbe20 100644
+--- a/lib/SPIRV/libSPIRV/spirv_internal.hpp
++++ b/lib/SPIRV/libSPIRV/spirv_internal.hpp
+@@ -30,22 +30,26 @@ namespace spv {
+ namespace internal {
+ 
+ enum InternalSourceLanguageNonSemanticDI {
+-  ISourceLanguagePython = 101,
+-  ISourceLanguageJulia = 102,
+-  ISourceLanguageRust = 103,
+-  ISourceLanguageD = 104,
+-  ISourceLanguageFortran95 = 105,
+-  ISourceLanguageFortran2003 = 106,
+-  ISourceLanguageFortran2008 = 107,
+-  ISourceLanguageC = 108,
+-  ISourceLanguageC99 = 109,
+-  ISourceLanguageC11 = 110,
+-  ISourceLanguageCPP = 111,
+-  ISourceLanguageCPP03 = 112,
+-  ISourceLanguageCPP11 = 113,
+-  ISourceLanguageCPP14 = 114,
+-  ISourceLanguageCPP17 = 115,
+-  ISourceLanguageCPP20 = 116,
++  ISourceLanguagePython = 200,
++  ISourceLanguageJulia = 201,
++  ISourceLanguageRust = 202,
++  ISourceLanguageD = 203,
++  ISourceLanguageFortran77 = 204,
++  ISourceLanguageFortran90 = 205,
++  ISourceLanguageFortran95 = 206,
++  ISourceLanguageFortran2003 = 207,
++  ISourceLanguageFortran2008 = 208,
++  ISourceLanguageFortran2018 = 209,
++  ISourceLanguageC = 210,
++  ISourceLanguageC99 = 211,
++  ISourceLanguageC11 = 212,
++  ISourceLanguageC17 = 213,
++  ISourceLanguageCPP = 214,
++  ISourceLanguageCPP03 = 215,
++  ISourceLanguageCPP11 = 216,
++  ISourceLanguageCPP14 = 217,
++  ISourceLanguageCPP17 = 218,
++  ISourceLanguageCPP20 = 219,
+ };
+ 
+ enum InternalLinkageType {
+@@ -175,18 +179,26 @@ constexpr SourceLanguage SourceLanguageRust =
+     static_cast<SourceLanguage>(ISourceLanguageRust);
+ constexpr SourceLanguage SourceLanguageD =
+     static_cast<SourceLanguage>(ISourceLanguageD);
++constexpr SourceLanguage SourceLanguageFortran77 =
++    static_cast<SourceLanguage>(ISourceLanguageFortran77);
++constexpr SourceLanguage SourceLanguageFortran90 =
++    static_cast<SourceLanguage>(ISourceLanguageFortran90);
+ constexpr SourceLanguage SourceLanguageFortran95 =
+     static_cast<SourceLanguage>(ISourceLanguageFortran95);
+ constexpr SourceLanguage SourceLanguageFortran2003 =
+     static_cast<SourceLanguage>(ISourceLanguageFortran2003);
+ constexpr SourceLanguage SourceLanguageFortran2008 =
+     static_cast<SourceLanguage>(ISourceLanguageFortran2008);
++constexpr SourceLanguage SourceLanguageFortran2018 =
++    static_cast<SourceLanguage>(ISourceLanguageFortran2018);
+ constexpr SourceLanguage SourceLanguageC =
+     static_cast<SourceLanguage>(ISourceLanguageC);
+ constexpr SourceLanguage SourceLanguageC99 =
+     static_cast<SourceLanguage>(ISourceLanguageC99);
+ constexpr SourceLanguage SourceLanguageC11 =
+     static_cast<SourceLanguage>(ISourceLanguageC11);
++constexpr SourceLanguage SourceLanguageC17 =
++    static_cast<SourceLanguage>(ISourceLanguageC17);
+ constexpr SourceLanguage SourceLanguageCPP =
+     static_cast<SourceLanguage>(ISourceLanguageCPP);
+ constexpr SourceLanguage SourceLanguageCPP03 =
+diff --git a/test/DebugInfo/NonSemantic/Shader200/SourceLanguageLLVMToSPIRV.ll b/test/DebugInfo/NonSemantic/Shader200/SourceLanguageLLVMToSPIRV.ll
+index 19ab5719..c1b3d8ca 100644
+--- a/test/DebugInfo/NonSemantic/Shader200/SourceLanguageLLVMToSPIRV.ll
++++ b/test/DebugInfo/NonSemantic/Shader200/SourceLanguageLLVMToSPIRV.ll
+@@ -13,13 +13,13 @@
+ ; RUN: sed -e 's/INPUT_LANGUAGE/DW_LANG_C_plus_plus_14/' %s | llvm-as - -o %t.bc
+ ; RUN: llvm-spirv --spirv-debug-info-version=nonsemantic-shader-200 -spirv-text %t.bc -o - | FileCheck %s --check-prefix=CHECK-CPP14
+ 
+-; CHECK-C99: Constant [[#]] [[#Constant:]] 109
++; CHECK-C99: Constant [[#]] [[#Constant:]] 211
+ ; CHECK-C99: DebugCompileUnit [[#]] [[#]] [[#]] [[#Constant]]
+ ; CHECK-OPENCLC: Constant [[#]] [[#Constant:]] 3
+ ; CHECK-OPENCLC: DebugCompileUnit [[#]] [[#]] [[#]] [[#Constant]]
+-; CHECK-CPP: Constant [[#]] [[#Constant:]] 111
++; CHECK-CPP: Constant [[#]] [[#Constant:]] 214
+ ; CHECK-CPP: DebugCompileUnit [[#]] [[#]] [[#]] [[#Constant]]
+-; CHECK-CPP14: Constant [[#]] [[#Constant:]] 114
++; CHECK-CPP14: Constant [[#]] [[#Constant:]] 217
+ ; CHECK-CPP14: DebugCompileUnit [[#]] [[#]] [[#]] [[#Constant]]
+ 
+ target datalayout = "e-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024"
+-- 
+2.20.1
+
