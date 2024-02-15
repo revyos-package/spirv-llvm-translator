@@ -294,7 +294,7 @@ void SPIRVRegularizeLLVMBase::expandSYCLTypeUsing(Module *M) {
   std::vector<Function *> ToExpandVIDWithSYCLTypeByValComp;
 
   for (auto &F : *M) {
-    if (F.getName().startswith("_Z28__spirv_VectorExtractDynamic") &&
+    if (F.getName().starts_with("_Z28__spirv_VectorExtractDynamic") &&
         F.hasStructRetAttr()) {
       auto *SRetTy = F.getParamStructRetType(0);
       if (isSYCLHalfType(SRetTy) || isSYCLBfloat16Type(SRetTy))
@@ -304,7 +304,7 @@ void SPIRVRegularizeLLVMBase::expandSYCLTypeUsing(Module *M) {
                          "instruction cannot be a structure other than SYCL "
                          "half.");
     }
-    if (F.getName().startswith("_Z27__spirv_VectorInsertDynamic") &&
+    if (F.getName().starts_with("_Z27__spirv_VectorInsertDynamic") &&
         F.getArg(1)->getType()->isPointerTy()) {
       auto *ET = F.getParamByValType(1);
       if (isSYCLHalfType(ET) || isSYCLBfloat16Type(ET))
@@ -320,31 +320,6 @@ void SPIRVRegularizeLLVMBase::expandSYCLTypeUsing(Module *M) {
     expandVEDWithSYCLTypeSRetArg(F);
   for (auto *F : ToExpandVIDWithSYCLTypeByValComp)
     expandVIDWithSYCLTypeByValComp(F);
-}
-
-Value *SPIRVRegularizeLLVMBase::extendBitInstBoolArg(Instruction *II) {
-  IRBuilder<> Builder(II);
-  auto *ArgTy = II->getOperand(0)->getType();
-  Type *NewArgType = nullptr;
-  if (ArgTy->isIntegerTy()) {
-    NewArgType = Builder.getInt32Ty();
-  } else if (ArgTy->isVectorTy() &&
-             cast<VectorType>(ArgTy)->getElementType()->isIntegerTy()) {
-    unsigned NumElements = cast<FixedVectorType>(ArgTy)->getNumElements();
-    NewArgType = VectorType::get(Builder.getInt32Ty(), NumElements, false);
-  } else {
-    llvm_unreachable("Unexpected type");
-  }
-  auto *NewBase = Builder.CreateZExt(II->getOperand(0), NewArgType);
-  auto *NewShift = Builder.CreateZExt(II->getOperand(1), NewArgType);
-  switch (II->getOpcode()) {
-  case Instruction::LShr:
-    return Builder.CreateLShr(NewBase, NewShift);
-  case Instruction::Shl:
-    return Builder.CreateShl(NewBase, NewShift);
-  default:
-    return II;
-  }
 }
 
 bool SPIRVRegularizeLLVMBase::runRegularizeLLVM(Module &Module) {
@@ -376,7 +351,7 @@ bool SPIRVRegularizeLLVMBase::regularize() {
     std::vector<Instruction *> ToErase;
     for (BasicBlock &BB : *F) {
       for (Instruction &II : BB) {
-        if (auto Call = dyn_cast<CallInst>(&II)) {
+        if (auto *Call = dyn_cast<CallInst>(&II)) {
           Call->setTailCall(false);
           Function *CF = Call->getCalledFunction();
           if (CF && CF->isIntrinsic()) {
@@ -393,23 +368,57 @@ bool SPIRVRegularizeLLVMBase::regularize() {
           }
         }
 
-        // Translator treats i1 as boolean, but bit instructions take
-        // a scalar/vector integers, so we have to extend such arguments
-        if (II.isLogicalShift() &&
-            II.getOperand(0)->getType()->isIntOrIntVectorTy(1)) {
-          auto *NewInst = extendBitInstBoolArg(&II);
-          for (auto *U : II.users()) {
-            if (cast<Instruction>(U)->getOpcode() == Instruction::ZExt) {
-              U->dropAllReferences();
-              U->replaceAllUsesWith(NewInst);
-              ToErase.push_back(cast<Instruction>(U));
+        if (II.isLogicalShift()) {
+          // Translator treats i1 as boolean, but bit instructions take
+          // a scalar/vector integers, so we have to extend such arguments.
+          // shl i1 %a %b and lshr i1 %a %b are now converted on:
+          // %0 = select i1 %a, i32 1, i32 0
+          // %1 = select i1 %b, i32 1, i32 0
+          // %2 = lshr i32 %0, %1
+          // if any other instruction other than zext was dependant:
+          // %3 = icmp ne i32 %2, 0
+          // which converts it back to i1 and replace original result with %3
+          // to dependant instructions.
+          if (II.getOperand(0)->getType()->isIntOrIntVectorTy(1)) {
+            IRBuilder<> Builder(&II);
+            Value *CmpNEInst = nullptr;
+            Constant *ConstZero = ConstantInt::get(Builder.getInt32Ty(), 0);
+            Constant *ConstOne = ConstantInt::get(Builder.getInt32Ty(), 1);
+            if (auto *VecTy =
+                    dyn_cast<FixedVectorType>(II.getOperand(0)->getType())) {
+              const unsigned NumElements = VecTy->getNumElements();
+              ConstZero = ConstantVector::getSplat(
+                  ElementCount::getFixed(NumElements), ConstZero);
+              ConstOne = ConstantVector::getSplat(
+                  ElementCount::getFixed(NumElements), ConstOne);
             }
+            Value *ExtendedBase =
+                Builder.CreateSelect(II.getOperand(0), ConstOne, ConstZero);
+            Value *ExtendedShift =
+                Builder.CreateSelect(II.getOperand(1), ConstOne, ConstZero);
+            Value *ExtendedShiftedVal =
+                Builder.CreateLShr(ExtendedBase, ExtendedShift);
+            SmallVector<User *, 8> Users(II.users());
+            for (User *U : Users) {
+              if (auto *UI = dyn_cast<Instruction>(U)) {
+                if (UI->getOpcode() == Instruction::ZExt) {
+                  UI->dropAllReferences();
+                  UI->replaceAllUsesWith(ExtendedShiftedVal);
+                  ToErase.push_back(UI);
+                  continue;
+                }
+              }
+              if (!CmpNEInst) {
+                CmpNEInst = Builder.CreateICmpNE(ExtendedShiftedVal, ConstZero);
+              }
+              U->replaceUsesOfWith(&II, CmpNEInst);
+            }
+            ToErase.push_back(&II);
           }
-          ToErase.push_back(&II);
         }
 
         // Remove optimization info not supported by SPIRV
-        if (auto BO = dyn_cast<BinaryOperator>(&II)) {
+        if (auto *BO = dyn_cast<BinaryOperator>(&II)) {
           if (isa<PossiblyExactOperator>(BO) && BO->isExact())
             BO->setIsExact(false);
         }
@@ -426,7 +435,6 @@ bool SPIRVRegularizeLLVMBase::regularize() {
 
         // Remove metadata not supported by SPIRV
         static const char *MDs[] = {
-            "fpmath",
             "tbaa",
             "range",
         };
@@ -435,7 +443,7 @@ bool SPIRVRegularizeLLVMBase::regularize() {
             II.setMetadata(MDName, nullptr);
           }
         }
-        if (auto Cmpxchg = dyn_cast<AtomicCmpXchgInst>(&II)) {
+        if (auto *Cmpxchg = dyn_cast<AtomicCmpXchgInst>(&II)) {
           // Transform:
           // %1 = cmpxchg i32* %ptr, i32 %comparator, i32 %0 seq_cst acquire
           // To:
@@ -446,13 +454,13 @@ bool SPIRVRegularizeLLVMBase::regularize() {
           // %1 = insertvalue { i32, i1 } undef, i32 %cmpxchg.res, 0
           // %2 = insertvalue { i32, i1 } %1, i1 %cmpxchg.success, 1
 
-          // To get memory scope argument we might use Cmpxchg->getSyncScopeID()
+          // To get memory scope argument we use Cmpxchg->getSyncScopeID()
           // but LLVM's cmpxchg instruction is not aware of OpenCL(or SPIR-V)
-          // memory scope enumeration. And assuming the produced SPIR-V module
-          // will be consumed in an OpenCL environment, we can use the same
-          // memory scope as OpenCL atomic functions that do not have
-          // memory_scope argument, i.e. memory_scope_device. See the OpenCL C
-          // specification p6.13.11. Atomic Functions
+          // memory scope enumeration. If the scope is not set and assuming the
+          // produced SPIR-V module will be consumed in an OpenCL environment,
+          // we can use the same memory scope as OpenCL atomic functions that do
+          // not have memory_scope argument, i.e. memory_scope_device. See the
+          // OpenCL C specification p6.13.11. Atomic Functions
 
           // cmpxchg LLVM instruction returns a pair {i32, i1}: the original
           // value and a flag indicating success (true) or failure (false).
@@ -464,7 +472,16 @@ bool SPIRVRegularizeLLVMBase::regularize() {
           // comparator, which matches with semantics of the flag returned by
           // cmpxchg.
           Value *Ptr = Cmpxchg->getPointerOperand();
-          Value *MemoryScope = getInt32(M, spv::ScopeDevice);
+          SmallVector<StringRef> SSIDs;
+          Cmpxchg->getContext().getSyncScopeNames(SSIDs);
+
+          spv::Scope S;
+          // Fill unknown syncscope value to default Device scope.
+          if (!OCLStrMemScopeMap::find(SSIDs[Cmpxchg->getSyncScopeID()].str(),
+                                       &S)) {
+            S = ScopeDevice;
+          }
+          Value *MemoryScope = getInt32(M, S);
           auto SuccessOrder = static_cast<OCLMemOrderKind>(
               llvm::toCABI(Cmpxchg->getSuccessOrdering()));
           auto FailureOrder = static_cast<OCLMemOrderKind>(

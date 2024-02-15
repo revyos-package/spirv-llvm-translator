@@ -113,7 +113,7 @@ std::string mapLLVMTypeToOCLType(const Type *Ty, bool Signed, Type *PET) {
     return "float";
   if (Ty->isDoubleTy())
     return "double";
-  if (auto IntTy = dyn_cast<IntegerType>(Ty)) {
+  if (const auto *IntTy = dyn_cast<IntegerType>(Ty)) {
     std::string SignPrefix;
     std::string Stem;
     if (!Signed)
@@ -137,7 +137,7 @@ std::string mapLLVMTypeToOCLType(const Type *Ty, bool Signed, Type *PET) {
     }
     return SignPrefix + Stem;
   }
-  if (auto VecTy = dyn_cast<FixedVectorType>(Ty)) {
+  if (const auto *VecTy = dyn_cast<FixedVectorType>(Ty)) {
     Type *EleTy = VecTy->getElementType();
     unsigned Size = VecTy->getNumElements();
     std::stringstream Ss;
@@ -160,7 +160,7 @@ std::string mapLLVMTypeToOCLType(const Type *Ty, bool Signed, Type *PET) {
 }
 
 StructType *getOrCreateOpaqueStructType(Module *M, StringRef Name) {
-  auto OpaqueType = StructType::getTypeByName(M->getContext(), Name);
+  auto *OpaqueType = StructType::getTypeByName(M->getContext(), Name);
   if (!OpaqueType)
     OpaqueType = StructType::create(M->getContext(), Name);
   return OpaqueType;
@@ -206,7 +206,7 @@ bool isSPIRVStructType(llvm::Type *Ty, StringRef BaseTyName,
         std::string(kSPIRVTypeName::PrefixAndDelim) + BaseTyName.str();
     if (FullName != N)
       N = N + kSPIRVTypeName::Delimiter;
-    if (FullName.startswith(N)) {
+    if (FullName.starts_with(N)) {
       if (Postfix)
         *Postfix = FullName.drop_front(N.size());
       return true;
@@ -222,9 +222,9 @@ bool isSYCLHalfType(llvm::Type *Ty) {
     StringRef Name = ST->getName();
     if (!Name.consume_front("class."))
       return false;
-    if ((Name.startswith("sycl::") || Name.startswith("cl::sycl::") ||
-         Name.startswith("__sycl_internal::")) &&
-        Name.endswith("::half")) {
+    if ((Name.starts_with("sycl::") || Name.starts_with("cl::sycl::") ||
+         Name.starts_with("__sycl_internal::")) &&
+        Name.ends_with("::half")) {
       return true;
     }
   }
@@ -238,9 +238,9 @@ bool isSYCLBfloat16Type(llvm::Type *Ty) {
     StringRef Name = ST->getName();
     if (!Name.consume_front("class."))
       return false;
-    if ((Name.startswith("sycl::") || Name.startswith("cl::sycl::") ||
-         Name.startswith("__sycl_internal::")) &&
-        Name.endswith("::bfloat16")) {
+    if ((Name.starts_with("sycl::") || Name.starts_with("cl::sycl::") ||
+         Name.starts_with("__sycl_internal::")) &&
+        Name.ends_with("::bfloat16")) {
       return true;
     }
   }
@@ -268,7 +268,7 @@ Function *getOrCreateFunction(Module *M, Type *RetTy, ArrayRef<Type *> ArgTypes,
     report_fatal_error(llvm::Twine(SS.str()), false);
   }
   if (!F || F->getFunctionType() != FT) {
-    auto NewF =
+    auto *NewF =
         Function::Create(FT, GlobalValue::ExternalLinkage, MangledName, M);
     if (F && TakeName) {
       NewF->takeName(F);
@@ -309,28 +309,13 @@ Scope getArgAsScope(CallInst *CI, unsigned I) {
   return static_cast<Scope>(getArgAsInt(CI, I));
 }
 
-Decoration getArgAsDecoration(CallInst *CI, unsigned I) {
-  return static_cast<Decoration>(getArgAsInt(CI, I));
-}
-
-std::string decorateSPIRVFunction(const std::string &S) {
-  return std::string(kSPIRVName::Prefix) + S + kSPIRVName::Postfix;
-}
-
-StringRef undecorateSPIRVFunction(StringRef S) {
-  assert(S.find(kSPIRVName::Prefix) == 0);
-  const size_t Start = strlen(kSPIRVName::Prefix);
-  auto End = S.rfind(kSPIRVName::Postfix);
-  return S.substr(Start, End - Start);
-}
-
 std::string prefixSPIRVName(const std::string &S) {
   return std::string(kSPIRVName::Prefix) + S;
 }
 
 StringRef dePrefixSPIRVName(StringRef R, SmallVectorImpl<StringRef> &Postfix) {
   const size_t Start = strlen(kSPIRVName::Prefix);
-  if (!R.startswith(kSPIRVName::Prefix))
+  if (!R.starts_with(kSPIRVName::Prefix))
     return R;
   R = R.drop_front(Start);
   R.split(Postfix, "_", -1, false);
@@ -373,7 +358,7 @@ SPIRVDecorate *mapPostfixToDecorate(StringRef Postfix, SPIRVEntry *Target) {
   if (Postfix == kSPIRVPostfix::Sat)
     return new SPIRVDecorate(spv::DecorationSaturatedConversion, Target);
 
-  if (Postfix.startswith(kSPIRVPostfix::Rt))
+  if (Postfix.starts_with(kSPIRVPostfix::Rt))
     return new SPIRVDecorate(spv::DecorationFPRoundingMode, Target,
                              map<SPIRVFPRoundingModeKind>(Postfix.str()));
 
@@ -383,21 +368,9 @@ SPIRVDecorate *mapPostfixToDecorate(StringRef Postfix, SPIRVEntry *Target) {
 SPIRVValue *addDecorations(SPIRVValue *Target,
                            const SmallVectorImpl<std::string> &Decs) {
   for (auto &I : Decs)
-    if (auto Dec = mapPostfixToDecorate(I, Target))
+    if (auto *Dec = mapPostfixToDecorate(I, Target))
       Target->addDecorate(Dec);
   return Target;
-}
-
-std::string getPostfix(Decoration Dec, unsigned Value) {
-  switch (Dec) {
-  default:
-    llvm_unreachable("not implemented");
-    return "unknown";
-  case spv::DecorationSaturatedConversion:
-    return kSPIRVPostfix::Sat;
-  case spv::DecorationFPRoundingMode:
-    return rmap<std::string>(static_cast<SPIRVFPRoundingModeKind>(Value));
-  }
 }
 
 std::string getPostfixForReturnType(CallInst *CI, bool IsSigned) {
@@ -413,7 +386,7 @@ std::string getPostfixForReturnType(const Type *PRetTy, bool IsSigned,
 // Enqueue kernel, kernel query, pipe and address space cast built-ins
 // are not mangled.
 bool isNonMangledOCLBuiltin(StringRef Name) {
-  if (!Name.startswith("__"))
+  if (!Name.starts_with("__"))
     return false;
 
   return isEnqueueKernelBI(Name) || isKernelQueryBI(Name) ||
@@ -427,7 +400,7 @@ Op getSPIRVFuncOC(StringRef S, SmallVectorImpl<std::string> *Dec) {
   if (!oclIsBuiltin(S, Name))
     Name = S;
   StringRef R(Name);
-  if ((!Name.startswith(kSPIRVName::Prefix) && !isNonMangledOCLBuiltin(S)) ||
+  if ((!Name.starts_with(kSPIRVName::Prefix) && !isNonMangledOCLBuiltin(S)) ||
       !getByName(dePrefixSPIRVName(R, Postfix).str(), OC)) {
     return OpNop;
   }
@@ -457,13 +430,13 @@ bool oclIsBuiltin(StringRef Name, StringRef &DemangledName, bool IsCpp) {
     DemangledName = Name.drop_front(2);
     return true;
   }
-  if (!Name.startswith("_Z"))
+  if (!Name.starts_with("_Z"))
     return false;
   // OpenCL C++ built-ins are declared in cl namespace.
   // TODO: consider using 'St' abbriviation for cl namespace mangling.
   // Similar to ::std:: in C++.
   if (IsCpp) {
-    if (!Name.startswith("_ZN"))
+    if (!Name.starts_with("_ZN"))
       return false;
     // Skip CV and ref qualifiers.
     size_t NameSpaceStart = Name.find_first_not_of("rVKRO", 3);
@@ -558,11 +531,6 @@ bool containsUnsignedAtomicType(StringRef Name) {
       Name[Loc + strlen(kMangledName::AtomicPrefixIncoming)]);
 }
 
-Constant *castToVoidFuncPtr(Function *F) {
-  auto T = getVoidFuncPtrType(F->getParent());
-  return ConstantExpr::getBitCast(F, T);
-}
-
 bool hasArrayArg(Function *F) {
   for (auto I = F->arg_begin(), E = F->arg_end(); I != E; ++I) {
     LLVM_DEBUG(dbgs() << "[hasArrayArg] " << *I << '\n');
@@ -576,7 +544,7 @@ bool hasArrayArg(Function *F) {
 /// Convert a struct name from the name given to it in Itanium name mangling to
 /// the name given to it as an LLVM opaque struct.
 static std::string demangleBuiltinOpenCLTypeName(StringRef MangledStructName) {
-  assert(MangledStructName.startswith("ocl_") &&
+  assert(MangledStructName.starts_with("ocl_") &&
          "Not a valid builtin OpenCL mangled name");
   // Bare structure type that starts with ocl_ is a builtin opencl type.
   // See clang/lib/CodeGen/CGOpenCLRuntime for how these map to LLVM types
@@ -595,7 +563,7 @@ static std::string demangleBuiltinOpenCLTypeName(StringRef MangledStructName) {
   if (LlvmStructName.empty()) {
     LlvmStructName = "opencl.";
     LlvmStructName += MangledStructName.substr(4); // Strip off ocl_
-    if (!MangledStructName.endswith("_t"))
+    if (!MangledStructName.ends_with("_t"))
       LlvmStructName += "_t";
   }
   return LlvmStructName;
@@ -700,7 +668,7 @@ parseNode(Module *M, const llvm::itanium_demangle::Node *ParamType,
     // pointer element types, the only relevant names are those corresponding
     // to the OpenCL special types (which all begin with "ocl_").
     StringRef Arg(stringify(Name));
-    if (Arg.startswith("ocl_")) {
+    if (Arg.starts_with("ocl_")) {
       const std::string StructName = demangleBuiltinOpenCLTypeName(Arg);
       PointeeTy = GetStructType(StructName);
     } else if (Arg.consume_front("__spirv_")) {
@@ -749,9 +717,9 @@ parseNode(Module *M, const llvm::itanium_demangle::Node *ParamType,
           StructName += NameSuffixPair.second;
         }
         PointeeTy = GetStructType(StructName);
-      } else if (MangledStructName.startswith("opencl.")) {
+      } else if (MangledStructName.starts_with("opencl.")) {
         PointeeTy = GetStructType(MangledStructName);
-      } else if (MangledStructName.startswith("ocl_")) {
+      } else if (MangledStructName.starts_with("ocl_")) {
         const std::string StructName =
             demangleBuiltinOpenCLTypeName(MangledStructName);
         PointeeTy = TypedPointerType::get(GetStructType(StructName), 0);
@@ -794,8 +762,8 @@ bool getParameterTypes(Function *F, SmallVectorImpl<Type *> &ArgTys,
   // If there's no mangled name, we can't do anything. Also, if there's no
   // parameters, do nothing.
   StringRef Name = F->getName();
-  if (!Name.startswith("_Z") || F->arg_empty())
-    return Name.startswith("_Z");
+  if (!Name.starts_with("_Z") || F->arg_empty())
+    return Name.starts_with("_Z");
 
   Module *M = F->getParent();
   auto GetStructType = [&](StringRef Name) {
@@ -901,6 +869,46 @@ bool getParameterTypes(Function *F, SmallVectorImpl<Type *> &ArgTys,
   return DemangledSuccessfully;
 }
 
+bool getRetParamSignedness(Function *F, ParamSignedness &RetSignedness,
+                           SmallVectorImpl<ParamSignedness> &ArgSignedness) {
+  using namespace llvm::itanium_demangle;
+  StringRef Name = F->getName();
+  if (!Name.starts_with("_Z") || F->arg_empty())
+    return false;
+
+  ManglingParser<DefaultAllocator> Demangler(Name.begin(), Name.end());
+  // If it's not a function name encoding, bail out.
+  auto *RootNode = dyn_cast_or_null<FunctionEncoding>(Demangler.parse());
+  if (!RootNode)
+    return false;
+
+  auto GetSignedness = [](const itanium_demangle::Node *N) {
+    if (!N)
+      return ParamSignedness::Unknown;
+    if (const auto *Vec = dyn_cast<itanium_demangle::VectorType>(N))
+      N = Vec->getBaseType();
+    if (const auto *Name = dyn_cast<NameType>(N)) {
+      StringRef Arg(stringify(Name));
+      if (Arg.starts_with("unsigned"))
+        return ParamSignedness::Unsigned;
+      if (Arg.equals("char") || Arg.equals("short") || Arg.equals("int") ||
+          Arg.equals("long"))
+        return ParamSignedness::Signed;
+    }
+    return ParamSignedness::Unknown;
+  };
+  RetSignedness = GetSignedness(RootNode->getReturnType());
+  ArgSignedness.resize(F->arg_size());
+  for (const auto &[I, ParamType] : llvm::enumerate(RootNode->getParams())) {
+    if (F->getArg(I)->getType()->isIntOrIntVectorTy())
+      ArgSignedness[I] = GetSignedness(ParamType);
+    else
+      ArgSignedness[I] = ParamSignedness::Unknown;
+  }
+
+  return true;
+}
+
 CallInst *mutateCallInst(
     Module *M, CallInst *CI,
     std::function<std::string(CallInst *, std::vector<Value *> &)> ArgMutate,
@@ -914,7 +922,7 @@ CallInst *mutateCallInst(
     InstName = CI->getName().str();
     CI->setName(InstName + ".old");
   }
-  auto NewCI = addCallInst(M, NewName, CI->getType(), Args, Attrs, CI, Mangle,
+  auto *NewCI = addCallInst(M, NewName, CI->getType(), Args, Attrs, CI, Mangle,
                            InstName, TakeFuncName);
   NewCI->setDebugLoc(CI->getDebugLoc());
   LLVM_DEBUG(dbgs() << " => " << *NewCI << '\n');
@@ -935,9 +943,9 @@ Instruction *mutateCallInst(
   Type *RetTy = CI->getType();
   auto NewName = ArgMutate(CI, Args, RetTy);
   StringRef InstName = CI->getName();
-  auto NewCI = addCallInst(M, NewName, RetTy, Args, Attrs, CI, Mangle, InstName,
+  auto *NewCI = addCallInst(M, NewName, RetTy, Args, Attrs, CI, Mangle, InstName,
                            TakeFuncName);
-  auto NewI = RetMutate(NewCI);
+  auto *NewI = RetMutate(NewCI);
   NewI->takeName(CI);
   NewI->setDebugLoc(CI->getDebugLoc());
   LLVM_DEBUG(dbgs() << " => " << *NewI << '\n');
@@ -951,9 +959,9 @@ void mutateFunction(
     Function *F,
     std::function<std::string(CallInst *, std::vector<Value *> &)> ArgMutate,
     BuiltinFuncMangleInfo *Mangle, AttributeList *Attrs, bool TakeFuncName) {
-  auto M = F->getParent();
+  auto *M = F->getParent();
   for (auto I = F->user_begin(), E = F->user_end(); I != E;) {
-    if (auto CI = dyn_cast<CallInst>(*I++))
+    if (auto *CI = dyn_cast<CallInst>(*I++))
       mutateCallInst(M, CI, ArgMutate, Mangle, Attrs, TakeFuncName);
   }
   if (F->use_empty())
@@ -980,10 +988,10 @@ CallInst *addCallInst(Module *M, StringRef FuncName, Type *RetTy,
                       Instruction *Pos, BuiltinFuncMangleInfo *Mangle,
                       StringRef InstName, bool TakeFuncName) {
 
-  auto F = getOrCreateFunction(M, RetTy, getTypes(Args), FuncName, Mangle,
+  auto *F = getOrCreateFunction(M, RetTy, getTypes(Args), FuncName, Mangle,
                                Attrs, TakeFuncName);
   // Cannot assign a Name to void typed values
-  auto CI = CallInst::Create(F, Args, RetTy->isVoidTy() ? "" : InstName, Pos);
+  auto *CI = CallInst::Create(F, Args, RetTy->isVoidTy() ? "" : InstName, Pos);
   CI->setCallingConv(F->getCallingConv());
   CI->setAttributes(F->getAttributes());
   return CI;
@@ -1012,7 +1020,7 @@ Value *addVector(Instruction *InsPos, ValueVecRange Range) {
     return *Range.first;
   assert(isValidVectorSize(VecSize) && "Invalid vector size");
   IRBuilder<> Builder(InsPos);
-  auto Vec = Builder.CreateVectorSplat(VecSize, *Range.first);
+  auto *Vec = Builder.CreateVectorSplat(VecSize, *Range.first);
   unsigned Index = 1;
   for (++Range.first; Range.first != Range.second; ++Range.first, ++Index)
     Vec = Builder.CreateInsertElement(
@@ -1023,17 +1031,13 @@ Value *addVector(Instruction *InsPos, ValueVecRange Range) {
 
 void makeVector(Instruction *InsPos, std::vector<Value *> &Ops,
                 ValueVecRange Range) {
-  auto Vec = addVector(InsPos, Range);
+  auto *Vec = addVector(InsPos, Range);
   Ops.erase(Range.first, Range.second);
   Ops.push_back(Vec);
 }
 
-Constant *castToInt8Ptr(Constant *V, unsigned Addr = 0) {
-  return ConstantExpr::getBitCast(V, Type::getInt8PtrTy(V->getContext(), Addr));
-}
-
 PointerType *getInt8PtrTy(PointerType *T) {
-  return Type::getInt8PtrTy(T->getContext(), T->getAddressSpace());
+  return PointerType::get(T->getContext(), T->getAddressSpace());
 }
 
 Value *castToInt8Ptr(Value *V, Instruction *Pos) {
@@ -1044,14 +1048,6 @@ Value *castToInt8Ptr(Value *V, Instruction *Pos) {
 IntegerType *getSizetType(Module *M) {
   return IntegerType::getIntNTy(M->getContext(),
                                 M->getDataLayout().getPointerSizeInBits(0));
-}
-
-Type *getVoidFuncType(Module *M) {
-  return FunctionType::get(Type::getVoidTy(M->getContext()), false);
-}
-
-Type *getVoidFuncPtrType(Module *M, unsigned AddrSpace) {
-  return PointerType::get(getVoidFuncType(M), AddrSpace);
 }
 
 ConstantInt *getInt64(Module *M, int64_t Value) {
@@ -1159,17 +1155,8 @@ std::tuple<unsigned, unsigned, std::string> getSPIRVSource(Module *M) {
   return Tup;
 }
 
-ConstantInt *mapUInt(Module *M, ConstantInt *I,
-                     std::function<unsigned(unsigned)> F) {
-  return ConstantInt::get(I->getType(), F(I->getZExtValue()), false);
-}
-
-ConstantInt *mapSInt(Module *M, ConstantInt *I, std::function<int(int)> F) {
-  return ConstantInt::get(I->getType(), F(I->getSExtValue()), true);
-}
-
 bool isDecoratedSPIRVFunc(const Function *F, StringRef &UndecoratedName) {
-  if (!F->hasName() || !F->getName().startswith(kSPIRVName::Prefix))
+  if (!F->hasName() || !F->getName().starts_with(kSPIRVName::Prefix))
     return false;
   UndecoratedName = F->getName();
   return true;
@@ -1322,9 +1309,9 @@ static SPIR::RefParamType transTypeDesc(Type *Ty,
     auto Name = Ty->getStructName();
     std::string Tmp;
 
-    if (Name.startswith(kLLVMTypeName::StructPrefix))
+    if (Name.starts_with(kLLVMTypeName::StructPrefix))
       Name = Name.drop_front(strlen(kLLVMTypeName::StructPrefix));
-    if (Name.startswith(kSPIRVTypeName::PrefixAndDelim)) {
+    if (Name.starts_with(kSPIRVTypeName::PrefixAndDelim)) {
       Name = Name.substr(sizeof(kSPIRVTypeName::PrefixAndDelim) - 1);
       Tmp = Name.str();
       auto Pos = Tmp.find(kSPIRVTypeName::Delimiter); // first dot
@@ -1376,10 +1363,10 @@ static SPIR::RefParamType transTypeDesc(Type *Ty,
     if (isa<FunctionType>(ET)) {
       assert(isVoidFuncTy(cast<FunctionType>(ET)) && "Not supported");
       EPT = new SPIR::BlockType;
-    } else if (auto StructTy = dyn_cast<StructType>(ET)) {
+    } else if (auto *StructTy = dyn_cast<StructType>(ET)) {
       LLVM_DEBUG(dbgs() << "ptr to struct: " << *Ty << '\n');
       auto TyName = StructTy->getStructName();
-      if (TyName.startswith(kSPR2TypeName::OCLPrefix)) {
+      if (TyName.starts_with(kSPR2TypeName::OCLPrefix)) {
         auto DelimPos = TyName.find_first_of(kSPR2TypeName::Delimiter,
                                              strlen(kSPR2TypeName::OCLPrefix));
         if (DelimPos != StringRef::npos)
@@ -1390,13 +1377,13 @@ static SPIR::RefParamType transTypeDesc(Type *Ty,
       auto Prim = getOCLTypePrimitiveEnum(TyName);
       if (StructTy->isOpaque()) {
         if (TyName == "opencl.block") {
-          auto BlockTy = new SPIR::BlockType;
+          auto *BlockTy = new SPIR::BlockType;
           // Handle block with local memory arguments according to OpenCL 2.0
           // spec.
           if (Info.IsLocalArgBlock) {
             SPIR::RefParamType VoidTyRef(
                 new SPIR::PrimitiveType(SPIR::PRIMITIVE_VOID));
-            auto VoidPtrTy = new SPIR::PointerType(VoidTyRef);
+            auto *VoidPtrTy = new SPIR::PointerType(VoidTyRef);
             VoidPtrTy->setAddressSpace(SPIR::ATTR_LOCAL);
             // "__local void *"
             BlockTy->setParam(0, SPIR::RefParamType(VoidPtrTy));
@@ -1409,7 +1396,7 @@ static SPIR::RefParamType transTypeDesc(Type *Ty,
           if (Prim == SPIR::PRIMITIVE_PIPE_RO_T ||
               Prim == SPIR::PRIMITIVE_PIPE_WO_T) {
             SPIR::RefParamType OpaqueTyRef(new SPIR::PrimitiveType(Prim));
-            auto OpaquePtrTy = new SPIR::PointerType(OpaqueTyRef);
+            auto *OpaquePtrTy = new SPIR::PointerType(OpaqueTyRef);
             OpaquePtrTy->setAddressSpace(getOCLOpaqueTypeAddrSpace(Prim));
             EPT = OpaquePtrTy;
           } else {
@@ -1465,9 +1452,9 @@ Value *getScalarOrArray(Value *V, unsigned Size, Instruction *Pos) {
 }
 
 Constant *getScalarOrVectorConstantInt(Type *T, uint64_t V, bool IsSigned) {
-  if (auto IT = dyn_cast<IntegerType>(T))
+  if (auto *IT = dyn_cast<IntegerType>(T))
     return ConstantInt::get(IT, V);
-  if (auto VT = dyn_cast<FixedVectorType>(T)) {
+  if (auto *VT = dyn_cast<FixedVectorType>(T)) {
     std::vector<Constant *> EV(
         VT->getNumElements(),
         getScalarOrVectorConstantInt(VT->getElementType(), V, IsSigned));
@@ -1479,7 +1466,7 @@ Constant *getScalarOrVectorConstantInt(Type *T, uint64_t V, bool IsSigned) {
 
 Value *getScalarOrArrayConstantInt(Instruction *Pos, Type *T, unsigned Len,
                                    uint64_t V, bool IsSigned) {
-  if (auto IT = dyn_cast<IntegerType>(T)) {
+  if (auto *IT = dyn_cast<IntegerType>(T)) {
     assert(Len == 1 && "Invalid length");
     return ConstantInt::get(IT, V, IsSigned);
   }
@@ -1487,23 +1474,23 @@ Value *getScalarOrArrayConstantInt(Instruction *Pos, Type *T, unsigned Len,
     unsigned PointerSize =
         Pos->getModule()->getDataLayout().getPointerTypeSizeInBits(T);
     auto *ET = Type::getIntNTy(T->getContext(), PointerSize);
-    auto AT = ArrayType::get(ET, Len);
+    auto *AT = ArrayType::get(ET, Len);
     std::vector<Constant *> EV(Len, ConstantInt::get(ET, V, IsSigned));
-    auto CA = ConstantArray::get(AT, EV);
-    auto Alloca = new AllocaInst(AT, 0, "", Pos);
+    auto *CA = ConstantArray::get(AT, EV);
+    auto *Alloca = new AllocaInst(AT, 0, "", Pos);
     new StoreInst(CA, Alloca, Pos);
-    auto Zero = ConstantInt::getNullValue(Type::getInt32Ty(T->getContext()));
+    auto *Zero = ConstantInt::getNullValue(Type::getInt32Ty(T->getContext()));
     Value *Index[] = {Zero, Zero};
     auto *Ret = GetElementPtrInst::CreateInBounds(AT, Alloca, Index, "", Pos);
     LLVM_DEBUG(dbgs() << "[getScalarOrArrayConstantInt] Alloca: " << *Alloca
                       << ", Return: " << *Ret << '\n');
     return Ret;
   }
-  if (auto AT = dyn_cast<ArrayType>(T)) {
-    auto ET = AT->getArrayElementType();
+  if (auto *AT = dyn_cast<ArrayType>(T)) {
+    auto *ET = AT->getArrayElementType();
     assert(AT->getArrayNumElements() == Len);
     std::vector<Constant *> EV(Len, ConstantInt::get(ET, V, IsSigned));
-    auto Ret = ConstantArray::get(AT, EV);
+    auto *Ret = ConstantArray::get(AT, EV);
     LLVM_DEBUG(dbgs() << "[getScalarOrArrayConstantInt] Array type: " << *AT
                       << ", Return: " << *Ret << '\n');
     return Ret;
@@ -1534,35 +1521,6 @@ bool isSPIRVConstantName(StringRef TyName) {
     return true;
 
   return false;
-}
-
-std::string getSPIRVImageSampledTypeName(SPIRVType *Ty) {
-  switch (Ty->getOpCode()) {
-  case OpTypeVoid:
-    return kSPIRVImageSampledTypeName::Void;
-  case OpTypeInt:
-    if (Ty->getIntegerBitWidth() == 32) {
-      if (static_cast<SPIRVTypeInt *>(Ty)->isSigned())
-        return kSPIRVImageSampledTypeName::Int;
-      else
-        return kSPIRVImageSampledTypeName::UInt;
-    }
-    break;
-  case OpTypeFloat:
-    switch (Ty->getFloatBitWidth()) {
-    case 16:
-      return kSPIRVImageSampledTypeName::Half;
-    case 32:
-      return kSPIRVImageSampledTypeName::Float;
-    default:
-      break;
-    }
-    break;
-  default:
-    break;
-  }
-  llvm_unreachable("Invalid sampled type for image");
-  return std::string();
 }
 
 // ToDo: Find a way to represent uint sampled type in LLVM, maybe an
@@ -1616,7 +1574,7 @@ std::string getImageBaseTypeName(StringRef Name) {
   SmallVector<StringRef, 4> SubStrs;
   const char Delims[] = {kSPR2TypeName::Delimiter, 0};
   Name.split(SubStrs, Delims);
-  if (Name.startswith(kSPR2TypeName::OCLPrefix)) {
+  if (Name.starts_with(kSPR2TypeName::OCLPrefix)) {
     Name = SubStrs[1];
   } else {
     Name = SubStrs[0];
@@ -1627,6 +1585,18 @@ std::string getImageBaseTypeName(StringRef Name) {
     ImageTyName.erase(ImageTyName.size() - 5, 3);
 
   return ImageTyName;
+}
+
+size_t getImageOperandsIndex(Op OpCode) {
+  switch (OpCode) {
+  case OpImageRead:
+  case OpImageSampleExplicitLod:
+    return 2;
+  case OpImageWrite:
+    return 3;
+  default:
+    return ~0U;
+  }
 }
 
 SPIRVTypeImageDescriptor getImageDescriptor(Type *Ty) {
@@ -1652,8 +1622,8 @@ bool eraseIfNoUse(Function *F) {
 
   dumpUsers(F, "[eraseIfNoUse] ");
   for (auto UI = F->user_begin(), UE = F->user_end(); UI != UE;) {
-    auto U = *UI++;
-    if (auto CE = dyn_cast<ConstantExpr>(U)) {
+    auto *U = *UI++;
+    if (auto *CE = dyn_cast<ConstantExpr>(U)) {
       if (CE->use_empty()) {
         CE->dropAllReferences();
         Changed = true;
@@ -1666,20 +1636,6 @@ bool eraseIfNoUse(Function *F) {
     Changed = true;
   }
   return Changed;
-}
-
-void eraseIfNoUse(Value *V) {
-  if (!V->use_empty())
-    return;
-  if (Constant *C = dyn_cast<Constant>(V)) {
-    C->destroyConstant();
-    return;
-  }
-  if (Instruction *I = dyn_cast<Instruction>(V)) {
-    if (!I->mayHaveSideEffects())
-      I->eraseFromParent();
-  }
-  eraseIfNoUse(dyn_cast<Function>(V));
 }
 
 bool eraseUselessFunctions(Module *M) {
@@ -1728,7 +1684,7 @@ std::string mangleBuiltin(StringRef UniqName, ArrayRef<Type *> ArgTypes,
     for (unsigned I = 0, E = BIVarArgNegative ? ArgTypes.size()
                                               : (unsigned)BtnInfo->getVarArg();
          I != E; ++I) {
-      auto T = ArgTypes[I];
+      auto *T = ArgTypes[I];
       auto MangleInfo = BtnInfo->getTypeMangleInfo(I);
       if (MangleInfo.PointerTy && T->isPointerTy()) {
         T = MangleInfo.PointerTy;
@@ -1812,7 +1768,7 @@ bool isSPIRVOCLExtInst(const CallInst *CI, OCLExtOpKind *ExtOp) {
   if (!oclIsBuiltin(CI->getCalledFunction()->getName(), DemangledName))
     return false;
   StringRef S = DemangledName;
-  if (!S.startswith(kSPIRVName::Prefix))
+  if (!S.starts_with(kSPIRVName::Prefix))
     return false;
   S = S.drop_front(strlen(kSPIRVName::Prefix));
   auto Loc = S.find(kSPIRVPostfix::Divider);
@@ -1989,19 +1945,20 @@ bool isSPIRVBuiltinVariable(GlobalVariable *GV,
 /// are accumulated in the AccumulatedOffset parameter, which will eventually be
 /// used to figure out which index of a variable is being used.
 static void replaceUsesOfBuiltinVar(Value *V, const APInt &AccumulatedOffset,
-                                    Function *ReplacementFunc) {
+                                    Function *ReplacementFunc,
+                                    GlobalVariable *GV) {
   const DataLayout &DL = ReplacementFunc->getParent()->getDataLayout();
   SmallVector<Instruction *, 4> InstsToRemove;
   for (User *U : V->users()) {
     if (auto *Cast = dyn_cast<CastInst>(U)) {
-      replaceUsesOfBuiltinVar(Cast, AccumulatedOffset, ReplacementFunc);
+      replaceUsesOfBuiltinVar(Cast, AccumulatedOffset, ReplacementFunc, GV);
       InstsToRemove.push_back(Cast);
     } else if (auto *GEP = dyn_cast<GetElementPtrInst>(U)) {
       APInt NewOffset = AccumulatedOffset.sextOrTrunc(
           DL.getIndexSizeInBits(GEP->getPointerAddressSpace()));
       if (!GEP->accumulateConstantOffset(DL, NewOffset))
         llvm_unreachable("Illegal GEP of a SPIR-V builtin variable");
-      replaceUsesOfBuiltinVar(GEP, NewOffset, ReplacementFunc);
+      replaceUsesOfBuiltinVar(GEP, NewOffset, ReplacementFunc, GV);
       InstsToRemove.push_back(GEP);
     } else if (auto *Load = dyn_cast<LoadInst>(U)) {
       // Figure out which index the accumulated offset corresponds to. If we
@@ -2024,7 +1981,12 @@ static void replaceUsesOfBuiltinVar(Value *V, const APInt &AccumulatedOffset,
       } else {
         // The function has an index parameter.
         if (auto *VecTy = dyn_cast<FixedVectorType>(Load->getType())) {
-          if (!Index.isZero())
+          // Reconstruct the original global variable vector because
+          // the load type may not match.
+          // global <3 x i64>, load <6 x i32>
+          VecTy = cast<FixedVectorType>(GV->getValueType());
+          if (!Index.isZero() || DL.getTypeSizeInBits(VecTy) !=
+                                     DL.getTypeSizeInBits(Load->getType()))
             llvm_unreachable("Illegal use of a SPIR-V builtin variable");
           Replacement = UndefValue::get(VecTy);
           for (unsigned I = 0; I < VecTy->getNumElements(); I++) {
@@ -2034,6 +1996,19 @@ static void replaceUsesOfBuiltinVar(Value *V, const APInt &AccumulatedOffset,
                     Builder.CreateCall(ReplacementFunc, {Builder.getInt32(I)})),
                 Builder.getInt32(I));
           }
+          // Insert a bitcast from the reconstructed vector to the load vector
+          // type in case they are different.
+          // Input:
+          // %1 = load <6 x i32>, ptr addrspace(1) %0, align 32
+          // %2 = extractelement <6 x i32> %1, i32 0
+          // %3 = add i32 5, %2
+          // Modified:
+          // < reconstruct global vector elements 0 and 1 >
+          // %2 = insertelement <3 x i64> %0, i64 %1, i32 2
+          // %3 = bitcast <3 x i64> %2 to <6 x i32>
+          // %4 = extractelement <6 x i32> %3, i32 0
+          // %5 = add i32 5, %4
+          Replacement = Builder.CreateBitCast(Replacement, Load->getType());
         } else if (Load->getType() == ScalarTy) {
           Replacement = setAttrByCalledFunc(Builder.CreateCall(
               ReplacementFunc, {Builder.getInt32(Index.getZExtValue())}));
@@ -2087,7 +2062,7 @@ bool lowerBuiltinVariableToCall(GlobalVariable *GV,
     Func->setDoesNotAccessMemory();
   }
 
-  replaceUsesOfBuiltinVar(GV, APInt(64, 0), Func);
+  replaceUsesOfBuiltinVar(GV, APInt(64, 0), Func, GV);
   return true;
 }
 
@@ -2285,8 +2260,9 @@ bool postProcessBuiltinsWithArrayArguments(Module *M, bool IsCpp) {
 namespace {
 class SPIRVFriendlyIRMangleInfo : public BuiltinFuncMangleInfo {
 public:
-  SPIRVFriendlyIRMangleInfo(spv::Op OC, ArrayRef<Type *> ArgTys)
-      : OC(OC), ArgTys(ArgTys) {}
+  SPIRVFriendlyIRMangleInfo(spv::Op OC, ArrayRef<Type *> ArgTys,
+                            ArrayRef<SPIRVValue *> Ops)
+      : OC(OC), ArgTys(ArgTys), Ops(Ops) {}
 
   void init(StringRef UniqUnmangledName) override {
     UnmangledName = UniqUnmangledName.str();
@@ -2446,6 +2422,15 @@ public:
     case OpSUDotAccSatKHR:
       addUnsignedArg(1);
       break;
+    case OpImageWrite: {
+      size_t Idx = getImageOperandsIndex(OC);
+      if (Ops.size() > Idx) {
+        auto ImOp = static_cast<SPIRVConstant *>(Ops[Idx])->getZExtIntValue();
+        if (ImOp & ImageOperandsMask::ImageOperandsZeroExtendMask)
+          addUnsignedArg(2);
+      }
+      break;
+    }
     default:;
       // No special handling is needed
     }
@@ -2454,6 +2439,7 @@ public:
 private:
   spv::Op OC;
   ArrayRef<Type *> ArgTys;
+  ArrayRef<SPIRVValue *> Ops;
 };
 class OpenCLStdToSPIRVFriendlyIRMangleInfo : public BuiltinFuncMangleInfo {
 public:
@@ -2523,19 +2509,10 @@ std::string getSPIRVFriendlyIRFunctionName(OCLExtOpKind ExtOpId,
 }
 
 std::string getSPIRVFriendlyIRFunctionName(const std::string &UniqName,
-                                           spv::Op OC,
-                                           ArrayRef<Type *> ArgTys) {
-  SPIRVFriendlyIRMangleInfo MangleInfo(OC, ArgTys);
+                                           spv::Op OC, ArrayRef<Type *> ArgTys,
+                                           ArrayRef<SPIRVValue *> Ops) {
+  SPIRVFriendlyIRMangleInfo MangleInfo(OC, ArgTys, Ops);
   return mangleBuiltin(UniqName, ArgTys, &MangleInfo);
-}
-
-template <typename T>
-MetadataAsValue *map2MDString(LLVMContext &C, SPIRVValue *V) {
-  if (V->getOpCode() != OpConstant)
-    return nullptr;
-  uint64_t Const = static_cast<SPIRVConstant *>(V)->getZExtIntValue();
-  std::string Str = SPIRVMap<T, std::string>::map(static_cast<T>(Const));
-  return MetadataAsValue::get(C, MDString::get(C, Str));
 }
 
 } // namespace SPIRV
