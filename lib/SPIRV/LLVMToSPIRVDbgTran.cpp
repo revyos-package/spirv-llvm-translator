@@ -359,6 +359,9 @@ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgEntryImpl(const MDNode *MDN) {
         return transDbgLocalVariable(LV);
       if (const DIGlobalVariable *GV = dyn_cast<DIGlobalVariable>(DIEntry))
         return transDbgGlobalVariable(GV);
+      if (const DIDerivedType *MT = dyn_cast<DIDerivedType>(DIEntry))
+        if (M->getDwarfVersion() >= 5 && MT->isStaticMember())
+          return transDbgMemberType(MT);
       llvm_unreachable("Unxpected debug info type for variable");
     case dwarf::DW_TAG_formal_parameter:
       return transDbgLocalVariable(cast<DILocalVariable>(DIEntry));
@@ -804,9 +807,6 @@ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgSubrangeType(const DISubrange *ST) {
       case CountIdx:
         IntNode = ST->getCount().get<ConstantInt *>();
         break;
-      case StrideIdx:
-        IntNode = ST->getStride().get<ConstantInt *>();
-        break;
       }
       Ops[Idx] = IntNode ? SPIRVWriter->transValue(IntNode, nullptr)->getId()
                          : getDebugInfoNoneId();
@@ -1019,8 +1019,6 @@ LLVMToSPIRVDbgTran::transDbgMemberTypeOpenCL(const DIDerivedType *MT) {
       Ops.push_back(Val->getId());
     }
   }
-  if (isNonSemanticDebugInfo())
-    transformToConstant(Ops, {LineIdx, ColumnIdx, FlagsIdx});
   return BM->addDebugInfo(SPIRVDebug::TypeMember, getVoidTy(), Ops);
 }
 
@@ -1187,6 +1185,23 @@ LLVMToSPIRVDbgTran::transDbgGlobalVariable(const DIGlobalVariable *GV) {
   if (DIDerivedType *StaticMember = GV->getStaticDataMemberDeclaration())
     Ops.push_back(transDbgEntry(StaticMember)->getId());
 
+  // Check if Ops[VariableIdx] has no information
+  if (isNonSemanticDebugInfo() && Ops[VariableIdx] == getDebugInfoNoneId()) {
+    // Check if GV has an associated GVE with a non-empty DIExpression.
+    // The non-empty DIExpression gives the initial value of the GV.
+    for (const DIGlobalVariableExpression *GVE : DIF.global_variables()) {
+      if ( // GVE matches GV
+          GVE->getVariable() == GV &&
+          // DIExpression is non-empty
+          GVE->getExpression()->getNumElements()) {
+        // Repurpose VariableIdx operand to hold the initial value held in the
+        // GVE's DIExpression
+        Ops[VariableIdx] = transDbgExpression(GVE->getExpression())->getId();
+        break;
+      }
+    }
+  }
+
   if (isNonSemanticDebugInfo())
     transformToConstant(Ops, {LineIdx, ColumnIdx, FlagsIdx});
   return BM->addDebugInfo(SPIRVDebug::GlobalVariable, getVoidTy(), Ops);
@@ -1205,7 +1220,7 @@ SPIRVEntry *LLVMToSPIRVDbgTran::transDbgFunction(const DISubprogram *Func) {
   Ops[SourceIdx] = getSource(Func)->getId();
   Ops[LineIdx] = Func->getLine();
   Ops[ColumnIdx] = 0; // This version of DISubprogram has no column number
-  auto Scope = Func->getScope();
+  auto *Scope = Func->getScope();
   if (Scope && !isa<DIFile>(Scope)) {
     Ops[ParentIdx] = getScope(Scope)->getId();
   } else {

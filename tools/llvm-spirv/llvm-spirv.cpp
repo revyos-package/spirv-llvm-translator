@@ -154,12 +154,6 @@ static cl::opt<bool>
     SPIRVToolsDis("spirv-tools-dis", cl::init(false),
                   cl::desc("Emit textual assembly using SPIRV-Tools"));
 
-static cl::opt<bool>
-    EmitOpaquePointers("emit-opaque-pointers", cl::init(true),
-                       cl::desc("Emit opaque instead of typed LLVM pointers "
-                                "for the translation from SPIR-V."),
-                       cl::Hidden);
-
 using SPIRV::ExtensionID;
 
 #ifdef _SPIRV_SUPPORT_TEXT_FMT
@@ -201,6 +195,12 @@ static cl::opt<bool> SpecConstInfo(
     "spec-const-info",
     cl::desc("Display id of constants available for specializaion and their "
              "size in bytes"));
+
+static cl::opt<bool>
+    SPIRVPrintReport("spirv-print-report", cl::init(false),
+                     cl::desc("Display general information about the module "
+                              "(capabilities, extensions, version, memory model"
+                              " and addressing model)"));
 
 static cl::opt<SPIRV::FPContractMode> FPCMode(
     "spirv-fp-contract", cl::desc("Set FP Contraction mode:"),
@@ -803,7 +803,7 @@ int main(int Ac, char **Av) {
     return convertSPIRV();
 #endif
 
-  if (!IsReverse && !IsRegularization && !SpecConstInfo)
+  if (!IsReverse && !IsRegularization && !SpecConstInfo && !SPIRVPrintReport)
     return convertLLVMToSPIRV(Opts);
 
   if (IsReverse && IsRegularization) {
@@ -829,6 +829,40 @@ int main(int Ac, char **Av) {
       std::cout << "Spec const id = " << SpecConst.ID
                 << ", size in bytes = " << SpecConst.Size
                 << ", type = " << SpecConst.Type << "\n";
+  }
+
+  if (SPIRVPrintReport) {
+    std::ifstream IFS(InputFile, std::ios::binary);
+    int ErrCode = 0;
+    std::optional<SPIRV::SPIRVModuleReport> BinReport =
+        SPIRV::getSpirvReport(IFS, ErrCode);
+    if (!BinReport) {
+      std::cerr << "Invalid SPIR-V binary: \"" << SPIRV::getErrorMessage(ErrCode) << "\"\n";
+      return -1;
+    }
+
+    SPIRV::SPIRVModuleTextReport TextReport =
+        SPIRV::formatSpirvReport(BinReport.value());
+
+    std::cout << "SPIR-V module report:"
+              << "\n Version: " << TextReport.Version
+              << "\n Memory model: " << TextReport.MemoryModel
+              << "\n Addressing model: " << TextReport.AddrModel << "\n";
+
+    std::cout << " Number of capabilities: " << TextReport.Capabilities.size()
+              << "\n";
+    for (auto &Capability : TextReport.Capabilities)
+      std::cout << "  Capability: " << Capability << "\n";
+
+    std::cout << " Number of extensions: " << TextReport.Extensions.size()
+              << "\n";
+    for (auto &Extension : TextReport.Extensions)
+      std::cout << "  Extension: " << Extension << "\n";
+
+    std::cout << " Number of extended instruction sets: "
+              << TextReport.ExtendedInstructionSets.size() << "\n";
+    for (auto &ExtendedInstructionSet : TextReport.ExtendedInstructionSets)
+      std::cout << "  Extended Instruction Set: " << ExtendedInstructionSet << "\n";
   }
   return 0;
 }
