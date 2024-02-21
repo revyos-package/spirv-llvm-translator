@@ -5,6 +5,7 @@ spirv-llvm-translator-18 (18.~~+git20240215-1) UNRELEASED; urgency=medium
   * Rename binary packages: *17* => *18*.
   * Build with llvm 18.
   * Update visibility-hidden.patch.
+  * Update .symbols control file.
 
  -- Andreas Beckmann <anbe@debian.org>  Wed, 21 Feb 2024 22:06:41 +0100
 
