@@ -37,7 +37,7 @@ Description: reduce the amount of symbols exposed by the library
  namespace SPIRV {
  
  class SPIRVModule;
-@@ -227,4 +233,6 @@ FunctionPass *createSPIRVLowerBitCastToN
+@@ -260,4 +266,6 @@ FunctionPass *createSPIRVLowerBitCastToN
  
  } // namespace llvm
  
@@ -55,7 +55,7 @@ Description: reduce the amount of symbols exposed by the library
  namespace llvm {
  class IntrinsicInst;
  } // namespace llvm
-@@ -254,4 +256,6 @@ private:
+@@ -275,4 +277,6 @@ private:
  
  } // namespace SPIRV
  
@@ -74,7 +74,7 @@ Description: reduce the amount of symbols exposed by the library
  
 --- a/lib/SPIRV/libSPIRV/SPIRVModule.cpp
 +++ b/lib/SPIRV/libSPIRV/SPIRVModule.cpp
-@@ -2256,6 +2256,7 @@ bool isSpirvBinary(const std::string &Im
+@@ -2258,6 +2258,7 @@ bool isSpirvBinary(const std::string &Im
  
  #ifdef _SPIRV_SUPPORT_TEXT_FMT
  
@@ -82,7 +82,7 @@ Description: reduce the amount of symbols exposed by the library
  bool convertSpirv(std::istream &IS, std::ostream &OS, std::string &ErrMsg,
                    bool FromText, bool ToText) {
    auto SaveOpt = SPIRVUseTextFormat;
-@@ -2292,6 +2293,7 @@ bool isSpirvText(const std::string &Img)
+@@ -2294,6 +2295,7 @@ bool isSpirvText(const std::string &Img)
    return Magic == MagicNumber;
  }
  
@@ -90,3 +90,13 @@ Description: reduce the amount of symbols exposed by the library
  bool convertSpirv(std::string &Input, std::string &Out, std::string &ErrMsg,
                    bool ToText) {
    auto FromText = isSpirvText(Input);
+--- a/lib/SPIRV/libSPIRV/SPIRVError.cpp
++++ b/lib/SPIRV/libSPIRV/SPIRVError.cpp
+@@ -36,6 +36,7 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
++#include "LLVMSPIRVLib.h"
+ #include "SPIRVError.h"
+ #include <string>
+ 
