@@ -1,4 +1,4 @@
-spirv-llvm-translator-18 (18.~~+git20240215-1) UNRELEASED; urgency=medium
+spirv-llvm-translator-18 (18.~~+git20240215-1) experimental; urgency=medium
 
   * New upstream snapshot.
   * Fork source package as spirv-llvm-translator-18.
@@ -6,8 +6,9 @@ spirv-llvm-translator-18 (18.~~+git20240215-1) UNRELEASED; urgency=medium
   * Build with llvm 18.
   * Update visibility-hidden.patch.
   * Update .symbols control file.
+  * Upload to experimental.
 
- -- Andreas Beckmann <anbe@debian.org>  Wed, 21 Feb 2024 22:06:41 +0100
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 22 Feb 2024 01:16:58 +0100
 
 spirv-llvm-translator-17 (17.0.0-4) unstable; urgency=medium
 
