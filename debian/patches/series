@@ -170,4 +170,9 @@
 0170-Backport-to-14-Translate-atomicrmw-fadd-into-AtomicF.patch
 0171-Backport-to-14-Translate-atomicrmw-fsub-into-FNegate.patch
 0172-Backport-to-14-add-initial-f16-type-support-for-atom.patch
+0173-Backport-to-14-support-joint-matrix-prefetch-2359.patch
+0174-Backport-to-14-Fix-allowed-types-for-OpConstantNull-.patch
+0175-DebugInfo-Fix-SPIR-V-consumption-of-DebugInfoNone-fo.patch
+0176-NFC-Fix-DebugTypeVector-test-2347.patch
+0177-Back-port-of-some-patches-from-llvm16-version-of-Tra.patch
 visibility-hidden.patch

@@ -1,3 +1,9 @@
+spirv-llvm-translator-14 (14.0.0-11) UNRELEASED; urgency=medium
+
+  * Update from llvm_release_140 branch.
+
+ -- Andreas Beckmann <anbe@debian.org>  Mon, 04 Mar 2024 23:42:17 +0100
+
 spirv-llvm-translator-14 (14.0.0-10) unstable; urgency=medium
 
   * Add build-needed autopkgtest for spirv-headers compat check.
