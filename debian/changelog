@@ -1,6 +1,9 @@
 spirv-llvm-translator-14 (14.0.0-11) UNRELEASED; urgency=medium
 
   * Update from llvm_release_140 branch.
+  * Skip tests on big-endian architectures (> 60% are failing) due to
+    excessive disk space usage (>40 GB). The failures are ignored on !amd64
+    anyway.  (Closes: #1065395)
 
  -- Andreas Beckmann <anbe@debian.org>  Mon, 04 Mar 2024 23:42:17 +0100
 
