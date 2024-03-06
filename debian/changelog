@@ -1,6 +1,7 @@
 spirv-llvm-translator-14 (14.0.0-12) UNRELEASED; urgency=medium
 
   * Update from llvm_release_140 branch (v14.0.0-179-gd54b2cea).
+  * Disable the upstream-testsuite autopkgtest on s390x.  (Closes: #1065395)
 
  -- Andreas Beckmann <anbe@debian.org>  Wed, 06 Mar 2024 02:32:41 +0100
 
