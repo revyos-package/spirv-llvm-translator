@@ -175,4 +175,6 @@
 0175-DebugInfo-Fix-SPIR-V-consumption-of-DebugInfoNone-fo.patch
 0176-NFC-Fix-DebugTypeVector-test-2347.patch
 0177-Back-port-of-some-patches-from-llvm16-version-of-Tra.patch
+0178-Add-support-for-IAddCarry-SPIRV-instruction-2167.patch
+0179-Add-support-for-ISubBorrow-SPIRV-instruction-2168.patch
 visibility-hidden.patch

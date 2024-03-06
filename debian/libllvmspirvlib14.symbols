@@ -1,4 +1,4 @@
-# SymbolsHelper-Confirmed: 14.0.0-11~ amd64 arm64 i386 ppc64el
+# SymbolsHelper-Confirmed: 14.0.0-11~ amd64 arm64 i386 mips64el ppc64 ppc64el s390x sparc64
 libLLVMSPIRVLib.so.14 #PACKAGE# #MINVER#
 * Build-Depends-Package: libllvmspirvlib-14-dev
  _ZGVZNKSt8__detail11_AnyMatcherINSt7__cxx1112regex_traitsIcEELb0ELb0ELb0EEclEcE5__nul@Base 0

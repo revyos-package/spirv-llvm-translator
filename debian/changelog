@@ -1,6 +1,12 @@
+spirv-llvm-translator-14 (14.0.0-12) UNRELEASED; urgency=medium
+
+  * Update from llvm_release_140 branch (v14.0.0-179-gd54b2cea).
+
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 06 Mar 2024 02:32:41 +0100
+
 spirv-llvm-translator-14 (14.0.0-11) unstable; urgency=medium
 
-  * Update from llvm_release_140 branch.
+  * Update from llvm_release_140 branch (v14.0.0-177-g0141f3dd).
   * Skip tests on big-endian architectures (> 60% are failing) due to
     excessive disk space usage (>40 GB). The failures are ignored on !amd64
     anyway.  (Closes: #1065395)
@@ -11,7 +17,7 @@ spirv-llvm-translator-14 (14.0.0-11) unstable; urgency=medium
 spirv-llvm-translator-14 (14.0.0-10) unstable; urgency=medium
 
   * Add build-needed autopkgtest for spirv-headers compat check.
-  * Update from llvm_release_140 branch.
+  * Update from llvm_release_140 branch (v14.0.0-172-gc3dc6b81).
   * Bump spirv-headers dependency to 1.6.1+1.3.275.0.
   * Update .symbols control file.
 
