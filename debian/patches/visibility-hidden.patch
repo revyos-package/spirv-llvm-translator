@@ -90,13 +90,3 @@ Description: reduce the amount of symbols exposed by the library
  bool convertSpirv(std::string &Input, std::string &Out, std::string &ErrMsg,
                    bool ToText) {
    auto FromText = isSpirvText(Input);
---- a/lib/SPIRV/libSPIRV/SPIRVError.cpp
-+++ b/lib/SPIRV/libSPIRV/SPIRVError.cpp
-@@ -36,6 +36,7 @@
- //
- //===----------------------------------------------------------------------===//
- 
-+#include "LLVMSPIRVLib.h"
- #include "SPIRVError.h"
- #include <string>
- 

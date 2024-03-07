@@ -1,3 +1,9 @@
+spirv-llvm-translator-18 (18.1.0-1) UNRELEASED; urgency=medium
+
+  * New upstream release.  (Closes: #1066095)
+
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 07 Mar 2024 11:15:07 +0100
+
 spirv-llvm-translator-18 (18.~~+git20240215-1) experimental; urgency=medium
 
   * New upstream snapshot.
