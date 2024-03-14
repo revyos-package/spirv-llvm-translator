@@ -1,7 +1,7 @@
-From d54b2ceae84810a5de47c02e5dd7c106ce6da023 Mon Sep 17 00:00:00 2001
+From 6d7e3df4a361a70616a8e0e1809d6d91cada5999 Mon Sep 17 00:00:00 2001
 From: bwlodarcz <bertrand.wlodarczyk@intel.com>
 Date: Fri, 13 Oct 2023 12:33:06 +0200
-Subject: [PATCH 179/179] Add support for ISubBorrow SPIRV instruction (#2168)
+Subject: [PATCH 84/85] Add support for ISubBorrow SPIRV instruction (#2168)
 
 This commit implements bidirectional translation of the llvm.usub.with.overflow and the ISubBorrow intrinsic.
 Intrinsic llvm.usub.with.overflow returns struct which second element have a type of i1.
@@ -19,10 +19,10 @@ In result, current implementation is not compliant and should be considered temp
  create mode 100644 test/llvm-intrinsics/usub.with.overflow.ll
 
 diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
-index b644809b..530a62d5 100644
+index 74ed3040..0d6dbf28 100644
 --- a/lib/SPIRV/SPIRVReader.cpp
 +++ b/lib/SPIRV/SPIRVReader.cpp
-@@ -2469,13 +2469,21 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
+@@ -2471,13 +2471,21 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
      return mapValue(BV,
                      transRelational(static_cast<SPIRVInstruction *>(BV), BB));
    case OpIAddCarry: {
@@ -46,10 +46,10 @@ index b644809b..530a62d5 100644
    case OpGetKernelPreferredWorkGroupSizeMultiple:
      return mapValue(
 diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
-index 03735b56..18cdcb77 100644
+index 95e5bf82..ef122036 100644
 --- a/lib/SPIRV/SPIRVWriter.cpp
 +++ b/lib/SPIRV/SPIRVWriter.cpp
-@@ -3390,6 +3390,7 @@ bool LLVMToSPIRVBase::isKnownIntrinsic(Intrinsic::ID Id) {
+@@ -3364,6 +3364,7 @@ bool LLVMToSPIRVBase::isKnownIntrinsic(Intrinsic::ID Id) {
    case Intrinsic::trap:
    case Intrinsic::arithmetic_fence:
    case Intrinsic::uadd_with_overflow:
@@ -57,7 +57,7 @@ index 03735b56..18cdcb77 100644
      return true;
    default:
      // Unknown intrinsics' declarations should always be translated
-@@ -3807,6 +3808,11 @@ SPIRVValue *LLVMToSPIRVBase::transIntrinsicInst(IntrinsicInst *II,
+@@ -3782,6 +3783,11 @@ SPIRVValue *LLVMToSPIRVBase::transIntrinsicInst(IntrinsicInst *II,
                               transValue(II->getArgOperand(0), BB),
                               transValue(II->getArgOperand(1), BB), BB);
    }
@@ -82,10 +82,10 @@ index a7b2c794..9e7217aa 100644
  _SPIRV_OP(UMulExtended)
  _SPIRV_OP(DPdx)
 diff --git a/lib/SPIRV/libSPIRV/SPIRVInstruction.h b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
-index cffe65c8..dae86f70 100644
+index 9eaf1db3..bd183139 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVInstruction.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
-@@ -668,6 +668,7 @@ _SPIRV_OP(IAdd)
+@@ -664,6 +664,7 @@ _SPIRV_OP(IAdd)
  _SPIRV_OP(IAddCarry)
  _SPIRV_OP(FAdd)
  _SPIRV_OP(ISub)
@@ -94,7 +94,7 @@ index cffe65c8..dae86f70 100644
  _SPIRV_OP(IMul)
  _SPIRV_OP(FMul)
 diff --git a/lib/SPIRV/libSPIRV/SPIRVOpCode.h b/lib/SPIRV/libSPIRV/SPIRVOpCode.h
-index 57a85f8f..d5e4d283 100644
+index d95ed81e..173b2496 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVOpCode.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVOpCode.h
 @@ -71,7 +71,7 @@ inline bool isAtomicOpCode(Op OpCode) {

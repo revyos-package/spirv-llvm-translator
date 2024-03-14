@@ -1,7 +1,7 @@
-From 927efdc07bc18302559acdce1715c3f9507f3acf Mon Sep 17 00:00:00 2001
+From a6fe4a7b5ffef5b410976543b7f0cd4a5747bcd6 Mon Sep 17 00:00:00 2001
 From: Dmitry Sidorov <dmitry.sidorov@intel.com>
 Date: Mon, 12 Feb 2024 16:53:44 +0100
-Subject: [PATCH 176/177] [NFC] Fix DebugTypeVector test (#2347)
+Subject: [PATCH 82/85] [Backport to 15][NFC] Fix DebugTypeVector test (#2347)
 
 It should have tested DebugInfoNone base type
 

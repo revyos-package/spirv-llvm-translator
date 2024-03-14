@@ -3,13 +3,14 @@ spirv-llvm-translator-15 (15.0.0-7) UNRELEASED; urgency=medium
   * Skip upstream testsuite on big-endian architectures (> 60% of the tests
     are failing anyway but ignored) due to excessive disk space usage
     (> 40 GB).  (Closes: #1065395)
+  * Update from llvm_release_150 branch (v15.0.0-85-gda050541).
 
  -- Andreas Beckmann <anbe@debian.org>  Wed, 06 Mar 2024 13:32:42 +0100
 
 spirv-llvm-translator-15 (15.0.0-6) unstable; urgency=medium
 
   * Add build-needed autopkgtest for spirv-headers compat check.
-  * Update from llvm_release_150 branch.
+  * Update from llvm_release_150 branch (v15.0.0-79-gc1f08b41).
   * Bump spirv-headers dependency to 1.6.1+1.3.275.0.
 
  -- Andreas Beckmann <anbe@debian.org>  Thu, 08 Feb 2024 22:48:18 +0100
