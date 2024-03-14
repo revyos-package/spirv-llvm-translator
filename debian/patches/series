@@ -78,8 +78,8 @@
 0078-Backport-to-15-add-initial-f16-type-support-for-atom.patch
 0079-Backport-to-15-SPV-SPV-IR-Fix-image-builtin-mangling.patch
 0080-Backport-to-15-Fix-allowed-types-for-OpConstantNull-.patch
-0081-Backport-to-15-DebugInfo-Fix-SPIR-V-consumption-of-D.patch
-0082-Backport-to-15-NFC-Fix-DebugTypeVector-test-2347.patch
+#0081-Backport-to-15-DebugInfo-Fix-SPIR-V-consumption-of-D.patch
+#0082-Backport-to-15-NFC-Fix-DebugTypeVector-test-2347.patch
 0083-Add-support-for-IAddCarry-SPIRV-instruction-2167.patch
 0084-Add-support-for-ISubBorrow-SPIRV-instruction-2168.patch
 0085-Backport-to-15-Handle-OpVectorShuffle-with-differing.patch

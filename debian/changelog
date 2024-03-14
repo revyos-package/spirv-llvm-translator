@@ -4,6 +4,7 @@ spirv-llvm-translator-15 (15.0.0-7) UNRELEASED; urgency=medium
     are failing anyway but ignored) due to excessive disk space usage
     (> 40 GB).  (Closes: #1065395)
   * Update from llvm_release_150 branch (v15.0.0-85-gda050541).
+  * Disable two commits causing test failures.
 
  -- Andreas Beckmann <anbe@debian.org>  Wed, 06 Mar 2024 13:32:42 +0100
 
