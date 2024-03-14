@@ -1,4 +1,4 @@
-# SymbolsHelper-Confirmed: 15.0.0-4~gcc13 amd64 arm64 armel armhf i386 mips64el mipsel powerpc ppc64 ppc64el riscv64 s390x x32
+# SymbolsHelper-Confirmed: 15.0.0-4~gcc13 amd64 arm64 armel armhf i386 mips64el mipsel powerpc ppc64 ppc64el riscv64 s390x sparc64 x32
 libLLVMSPIRVLib.so.15 #PACKAGE# #MINVER#
 * Build-Depends-Package: libllvmspirvlib-15-dev
  _ZGVZNKSt8__detail11_AnyMatcherINSt7__cxx1112regex_traitsIcEELb0ELb0ELb0EEclEcE5__nul@Base 0
@@ -105,6 +105,7 @@ libLLVMSPIRVLib.so.15 #PACKAGE# #MINVER#
  (optional=templinst)_ZNSt6vectorISt4pairIjjESaIS1_EE12emplace_backIJN3spv15LoopControlMaskEiEEEvDpOT_@Base 12
  (optional=templinst|arch=armel armhf hurd-i386 i386 mipsel powerpc x32)_ZNSt6vectorISt4pairIjjESaIS1_EE12emplace_backIJN3spv15LoopControlMaskEjEEEvDpOT_@Base 12
  (optional=templinst|arch=!armel !armhf !hurd-i386 !i386 !mipsel !powerpc !x32)_ZNSt6vectorISt4pairIjjESaIS1_EE12emplace_backIJN3spv15LoopControlMaskEmEEEvDpOT_@Base 12
+#MISSING: 15# (optional=templinst|subst)_ZNSt6vectorISt4pairIjjESaIS1_EE12emplace_backIJRKN3spv15LoopControlMaskER{size_t}EEEvDpOT_@Base 14.0.0-11~
  (optional=templinst)_ZNSt6vectorISt4pairIjjESaIS1_EE12emplace_backIJRKN3spv15LoopControlMaskEjEEEvDpOT_@Base 13
  (optional=templinst)_ZNSt6vectorISt4pairIjjESaIS1_EE12emplace_backIJRKjRjEEEvDpOT_@Base 0
  (optional=templinst|arch=armel armhf hurd-i386 i386 mipsel powerpc)_ZNSt6vectorISt4pairIjjESaIS1_EE17_M_realloc_insertIJRjS5_EEEvN9__gnu_cxx17__normal_iteratorIPS1_S3_EEDpOT_@Base 0
