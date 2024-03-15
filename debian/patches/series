@@ -28,4 +28,10 @@
 0028-Backport-to-16-add-initial-f16-type-support-for-atom.patch
 0029-Preserve-DIExpression-in-DIGlobalVariableExpression-.patch
 0030-SPV-SPV-IR-Fix-image-builtin-mangling-of-unsigned-ty.patch
+0080-Backport-to-15-Fix-allowed-types-for-OpConstantNull-.patch
+#0081-Backport-to-15-DebugInfo-Fix-SPIR-V-consumption-of-D.patch
+#0082-Backport-to-15-NFC-Fix-DebugTypeVector-test-2347.patch
+0083-Add-support-for-IAddCarry-SPIRV-instruction-2167.patch
+0084-Add-support-for-ISubBorrow-SPIRV-instruction-2168.patch
+0085-Backport-to-15-Handle-OpVectorShuffle-with-differing.patch
 visibility-hidden.patch
