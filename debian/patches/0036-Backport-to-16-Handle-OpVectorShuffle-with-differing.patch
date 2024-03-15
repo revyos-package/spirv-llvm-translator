@@ -1,8 +1,8 @@
-From da0505416dc0d0bb5402de6b868a01e78b89cd84 Mon Sep 17 00:00:00 2001
+From 00602e40e84c1f9a6c753c70f4ba91a9c46e8f19 Mon Sep 17 00:00:00 2001
 From: Sven van Haastregt <sven.vanhaastregt@arm.com>
-Date: Wed, 6 Mar 2024 16:18:41 +0100
-Subject: [PATCH 85/85] [Backport to 15] Handle OpVectorShuffle with differing
- vector sizes (#2391) (#2412)
+Date: Wed, 6 Mar 2024 16:15:32 +0100
+Subject: [PATCH 36/37] [Backport to 16] Handle OpVectorShuffle with differing
+ vector sizes (#2391) (#2411)
 
 The SPIR-V to LLVM conversion would bail out when encountering an
 `OpVectorShuffle` whose vector operands differ in size.  SPIR-V
@@ -22,10 +22,10 @@ the vector operands when needed.
  create mode 100644 test/OpVectorShuffle.spvasm
 
 diff --git a/lib/SPIRV/SPIRVInternal.h b/lib/SPIRV/SPIRVInternal.h
-index 9adb620e..e0dd4b6d 100644
+index 9eaba7ac..9efe19bd 100644
 --- a/lib/SPIRV/SPIRVInternal.h
 +++ b/lib/SPIRV/SPIRVInternal.h
-@@ -59,6 +59,7 @@ using namespace llvm;
+@@ -60,6 +60,7 @@ using namespace llvm;
  
  namespace llvm {
  class IntrinsicInst;
@@ -33,7 +33,7 @@ index 9adb620e..e0dd4b6d 100644
  }
  
  namespace SPIRV {
-@@ -573,6 +574,10 @@ std::string mapLLVMTypeToOCLType(const Type *Ty, bool Signed,
+@@ -549,6 +550,10 @@ std::string mapLLVMTypeToOCLType(const Type *Ty, bool Signed,
                                   Type *PointerElementType = nullptr);
  SPIRVDecorate *mapPostfixToDecorate(StringRef Postfix, SPIRVEntry *Target);
  
@@ -45,10 +45,10 @@ index 9adb620e..e0dd4b6d 100644
  /// \param Decs Each string is a postfix without _ at the beginning.
  SPIRVValue *addDecorations(SPIRVValue *Target,
 diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
-index 0d6dbf28..939bdd30 100644
+index 5147b13b..bb50cfcd 100644
 --- a/lib/SPIRV/SPIRVReader.cpp
 +++ b/lib/SPIRV/SPIRVReader.cpp
-@@ -2305,10 +2305,37 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
+@@ -2227,10 +2227,37 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
      if (BB) {
        Builder.SetInsertPoint(BB);
      }
@@ -91,10 +91,10 @@ index 0d6dbf28..939bdd30 100644
  
    case OpBitReverse: {
 diff --git a/lib/SPIRV/SPIRVUtil.cpp b/lib/SPIRV/SPIRVUtil.cpp
-index 88b3684f..49b46812 100644
+index 197c0fad..151f7096 100644
 --- a/lib/SPIRV/SPIRVUtil.cpp
 +++ b/lib/SPIRV/SPIRVUtil.cpp
-@@ -90,6 +90,24 @@ void removeFnAttr(CallInst *Call, Attribute::AttrKind Attr) {
+@@ -94,6 +94,24 @@ void removeFnAttr(CallInst *Call, Attribute::AttrKind Attr) {
    Call->removeFnAttr(Attr);
  }
  
@@ -120,10 +120,10 @@ index 88b3684f..49b46812 100644
    std::error_code EC;
    ToolOutputFile Out(OutputFile.c_str(), EC, sys::fs::OF_None);
 diff --git a/lib/SPIRV/libSPIRV/SPIRVInstruction.h b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
-index bd183139..fff2a5c7 100644
+index f5aced4b..7304982c 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVInstruction.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
-@@ -2201,15 +2201,11 @@ public:
+@@ -2183,15 +2183,11 @@ public:
  protected:
    void validate() const override {
      SPIRVInstruction::validate();

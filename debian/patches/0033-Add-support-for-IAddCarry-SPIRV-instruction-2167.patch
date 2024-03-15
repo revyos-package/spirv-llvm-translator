@@ -1,7 +1,7 @@
-From 2a2b81c34f97167c1d5251cc0f25a747ea3e13ff Mon Sep 17 00:00:00 2001
+From eb23080f8b5ba4553860b6add965e122e201e367 Mon Sep 17 00:00:00 2001
 From: bwlodarcz <bertrand.wlodarczyk@intel.com>
 Date: Thu, 12 Oct 2023 17:13:50 +0200
-Subject: [PATCH 83/85] Add support for IAddCarry SPIRV instruction (#2167)
+Subject: [PATCH 33/37] Add support for IAddCarry SPIRV instruction (#2167)
 
 This commit implements bidirectional translation of the llvm.uadd.with.overflow and the IAddCarry intrinsic.
 Intrinsic llvm.uadd.with.overflow returns struct which second element have a type of i1.
@@ -19,10 +19,10 @@ In result, current implementation is not compliant and should be considered temp
  create mode 100644 test/llvm-intrinsics/uadd.with.overflow.ll
 
 diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
-index b8424503..74ed3040 100644
+index 29d72531..e2f3f783 100644
 --- a/lib/SPIRV/SPIRVReader.cpp
 +++ b/lib/SPIRV/SPIRVReader.cpp
-@@ -2470,6 +2470,14 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
+@@ -2391,6 +2391,14 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
    case OpSignBitSet:
      return mapValue(BV,
                      transRelational(static_cast<SPIRVInstruction *>(BV), BB));
@@ -38,10 +38,10 @@ index b8424503..74ed3040 100644
    case OpGetKernelPreferredWorkGroupSizeMultiple:
      return mapValue(
 diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
-index cc4034de..95e5bf82 100644
+index e8b67d5e..f02da3da 100644
 --- a/lib/SPIRV/SPIRVWriter.cpp
 +++ b/lib/SPIRV/SPIRVWriter.cpp
-@@ -3363,6 +3363,7 @@ bool LLVMToSPIRVBase::isKnownIntrinsic(Intrinsic::ID Id) {
+@@ -3492,6 +3492,7 @@ bool LLVMToSPIRVBase::isKnownIntrinsic(Intrinsic::ID Id) {
    case Intrinsic::dbg_label:
    case Intrinsic::trap:
    case Intrinsic::arithmetic_fence:
@@ -49,9 +49,9 @@ index cc4034de..95e5bf82 100644
      return true;
    default:
      // Unknown intrinsics' declarations should always be translated
-@@ -3776,6 +3777,11 @@ SPIRVValue *LLVMToSPIRVBase::transIntrinsicInst(IntrinsicInst *II,
-     SPIRVValue *Zero = transValue(Constant::getNullValue(II->getType()), BB);
-     return BM->addSelectInst(Cmp, Sub, Zero, BB);
+@@ -3912,6 +3913,11 @@ SPIRVValue *LLVMToSPIRVBase::transIntrinsicInst(IntrinsicInst *II,
+     return BM->addExtInst(Ty, BM->getExtInstSetId(SPIRVEIS_OpenCL), ExtOp,
+                           std::move(Operands), BB);
    }
 +  case Intrinsic::uadd_with_overflow: {
 +    return BM->addBinaryInst(OpIAddCarry, transType(II->getType()),
@@ -62,10 +62,10 @@ index cc4034de..95e5bf82 100644
      // Generally there is no direct mapping of memset to SPIR-V.  But it turns
      // out that memset is emitted by Clang for initialization in default
 diff --git a/lib/SPIRV/libSPIRV/SPIRVEntry.h b/lib/SPIRV/libSPIRV/SPIRVEntry.h
-index 0e0bd3ce..a7b2c794 100644
+index 6d106787..6e6f6720 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVEntry.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVEntry.h
-@@ -1006,7 +1006,6 @@ _SPIRV_OP(ImageDrefGather)
+@@ -1004,7 +1004,6 @@ _SPIRV_OP(ImageDrefGather)
  _SPIRV_OP(QuantizeToF16)
  _SPIRV_OP(ArrayLength)
  _SPIRV_OP(OuterProduct)
@@ -74,10 +74,10 @@ index 0e0bd3ce..a7b2c794 100644
  _SPIRV_OP(SMulExtended)
  _SPIRV_OP(UMulExtended)
 diff --git a/lib/SPIRV/libSPIRV/SPIRVInstruction.h b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
-index 5d369db3..9eaf1db3 100644
+index e5aac6ce..0539d260 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVInstruction.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
-@@ -661,6 +661,7 @@ class SPIRVBinaryInst
+@@ -662,6 +662,7 @@ class SPIRVBinaryInst
  
  #define _SPIRV_OP(x) typedef SPIRVBinaryInst<Op##x> SPIRV##x;
  _SPIRV_OP(IAdd)

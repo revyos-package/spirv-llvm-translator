@@ -3,7 +3,7 @@ Description: reduce the amount of symbols exposed by the library
 
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -131,6 +131,9 @@ if (NOT SPIRV_TOOLS_FOUND)
+@@ -142,6 +142,9 @@ if (NOT SPIRV_TOOLS_FOUND)
  endif()
  
  

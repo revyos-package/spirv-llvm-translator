@@ -28,10 +28,11 @@
 0028-Backport-to-16-add-initial-f16-type-support-for-atom.patch
 0029-Preserve-DIExpression-in-DIGlobalVariableExpression-.patch
 0030-SPV-SPV-IR-Fix-image-builtin-mangling-of-unsigned-ty.patch
-0080-Backport-to-15-Fix-allowed-types-for-OpConstantNull-.patch
-#0081-Backport-to-15-DebugInfo-Fix-SPIR-V-consumption-of-D.patch
-#0082-Backport-to-15-NFC-Fix-DebugTypeVector-test-2347.patch
-0083-Add-support-for-IAddCarry-SPIRV-instruction-2167.patch
-0084-Add-support-for-ISubBorrow-SPIRV-instruction-2168.patch
-0085-Backport-to-15-Handle-OpVectorShuffle-with-differing.patch
+0031-Backport-to-16-Fix-allowed-types-for-OpConstantNull-.patch
+0032-Backport-to-16-cmake-Fix-using-spirv-tools-package-o.patch
+0033-Add-support-for-IAddCarry-SPIRV-instruction-2167.patch
+0034-Add-support-for-ISubBorrow-SPIRV-instruction-2168.patch
+0035-Backport-to-16-Support-SPV_INTEL_maximum_registers-e.patch
+0036-Backport-to-16-Handle-OpVectorShuffle-with-differing.patch
+0037-LLVM-16-Remove-dependency-on-SPIRV-Headers-for-SPV_I.patch
 visibility-hidden.patch

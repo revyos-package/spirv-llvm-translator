@@ -1,7 +1,7 @@
-From 24b43911b359f477937140b809ef73c621b00c47 Mon Sep 17 00:00:00 2001
+From 47bafe48a1b1799308d3984d67f6a61f62cfe354 Mon Sep 17 00:00:00 2001
 From: Sven van Haastregt <sven.vanhaastregt@arm.com>
 Date: Thu, 15 Feb 2024 14:00:43 +0100
-Subject: [PATCH 80/85] [Backport to 15] Fix allowed types for OpConstantNull
+Subject: [PATCH 31/37] [Backport to 16] Fix allowed types for OpConstantNull
  (#2361)
 
 The SPIR-V Specification allows `OpConstantNull` types to be scalar or
@@ -16,7 +16,7 @@ add a SPIR-V -> LLVM IR test.
  create mode 100644 test/OpConstantNull.spvasm
 
 diff --git a/lib/SPIRV/libSPIRV/SPIRVValue.h b/lib/SPIRV/libSPIRV/SPIRVValue.h
-index 42fb4dd7..37d9467c 100644
+index 9b5ef66d..fb80bd51 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVValue.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVValue.h
 @@ -269,7 +269,8 @@ public:
