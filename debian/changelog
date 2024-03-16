@@ -1,11 +1,11 @@
-spirv-llvm-translator-17 (17.0.0-5) UNRELEASED; urgency=medium
+spirv-llvm-translator-17 (17.0.0-5) unstable; urgency=medium
 
   * Skip upstream testsuite on big-endian architectures (> 60% of the tests
     are failing anyway but ignored) due to excessive disk space usage
     (> 40 GB).  (Closes: #1065395)
   * Update from llvm_release_170 branch (v17.0.0-12-ga126a792).
 
- -- Andreas Beckmann <anbe@debian.org>  Sat, 16 Mar 2024 02:48:19 +0100
+ -- Andreas Beckmann <anbe@debian.org>  Sat, 16 Mar 2024 05:07:59 +0100
 
 spirv-llvm-translator-17 (17.0.0-4) unstable; urgency=medium
 
