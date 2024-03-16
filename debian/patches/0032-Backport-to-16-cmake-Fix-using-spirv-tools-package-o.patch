@@ -1,0 +1,63 @@
+From 101de014d032b5e9eb2aafc982bf43d5a3dd4f7b Mon Sep 17 00:00:00 2001
+From: Sven van Haastregt <sven.vanhaastregt@arm.com>
+Date: Wed, 21 Feb 2024 15:10:42 +0100
+Subject: [PATCH 32/37] [Backport to 16] cmake: Fix using spirv-tools package
+ on Ubuntu 22.04 (#2370)
+
+When using the `spirv-tools` system package on Ubuntu 20.04 the
+`SPIRV-Tools-shared` CMake target, which represents
+`/usr/lib/x86_64-linux-gnu/libSPIRV-Tools.so`, is imported and used for
+linking and include directories. However, on Ubuntu 22.04 it does not
+exist which results in the following error:
+
+```
+CMake Error at /builds/SPIRV-LLVM-Translator/CMakeLists.txt:124 (get_target_property):
+  get_target_property() called with non-existent target "SPIRV-Tools-shared".
+```
+
+Instead, on Ubuntu 22.04 the `SPIRV-Tools-static` CMake target is
+imported, which represents `/usr/lib/x86_64-linux-gnu/libSPIRV-Tools.a`,
+which suggests the project or package maintainers changed the default
+library type being compiled.
+
+This patch updates the `CMakeLists.txt` to check if either of these
+targets exists, preferring the shared library, before attempting to get
+properties from the target or use it as a link library. If neither
+target exists it is treated as a fatal error.
+
+(cherry picked from commit beea2491397d74aa25db12c318ca28bc8032518d)
+
+Co-authored-by: Kenneth Benzie (Benie) <k.benzie@codeplay.com>
+---
+ CMakeLists.txt | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index bb183f0e..375a0ce1 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -120,8 +120,19 @@ if (NOT SPIRV_TOOLS_FOUND)
+   find_package(SPIRV-Tools-tools)
+   if (SPIRV-Tools_FOUND AND SPIRV-Tools-tools_FOUND)
+     set(SPIRV_TOOLS_FOUND TRUE)
+-    set(SPIRV_TOOLS_LDFLAGS SPIRV-Tools-shared)
+-    get_target_property(SPIRV_TOOLS_INCLUDE_DIRS SPIRV-Tools-shared INTERFACE_INCLUDE_DIRECTORIES)
++    # check for the existance of library targets in the found packages
++    if(TARGET SPIRV-Tools-shared)
++      # use the shared libary target if present
++      set(SPIRV-Tools-library SPIRV-Tools-shared)
++    elseif(TARGET SPIRV-Tools-static)
++      # otherwise fallback to the static library target
++      set(SPIRV-Tools-library SPIRV-Tools-static)
++    else()
++      message(FATAL_ERROR "Found SPIRV-Tools package but neither "
++              "SPIRV-Tools-shared or SPIRV-Tools-static targets exist.")
++    endif()
++    set(SPIRV_TOOLS_LDFLAGS ${SPIRV-Tools-library})
++    get_target_property(SPIRV_TOOLS_INCLUDE_DIRS ${SPIRV-Tools-library} INTERFACE_INCLUDE_DIRECTORIES)
+   endif()
+ endif()
+ 
+-- 
+2.20.1
+

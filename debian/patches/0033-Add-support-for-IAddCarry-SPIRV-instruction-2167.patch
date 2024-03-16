@@ -1,0 +1,166 @@
+From eb23080f8b5ba4553860b6add965e122e201e367 Mon Sep 17 00:00:00 2001
+From: bwlodarcz <bertrand.wlodarczyk@intel.com>
+Date: Thu, 12 Oct 2023 17:13:50 +0200
+Subject: [PATCH 33/37] Add support for IAddCarry SPIRV instruction (#2167)
+
+This commit implements bidirectional translation of the llvm.uadd.with.overflow and the IAddCarry intrinsic.
+Intrinsic llvm.uadd.with.overflow returns struct which second element have a type of i1.
+The llvm type i1 is, in llvm-spirv, directly translated to BoolType.
+SPIRV specification requires that the composite which returns from IAddCarry needs to have both elements of the same type.
+In result, current implementation is not compliant and should be considered temporary.
+---
+ lib/SPIRV/SPIRVReader.cpp                  |  8 +++
+ lib/SPIRV/SPIRVWriter.cpp                  |  6 +++
+ lib/SPIRV/libSPIRV/SPIRVEntry.h            |  1 -
+ lib/SPIRV/libSPIRV/SPIRVInstruction.h      |  1 +
+ lib/SPIRV/libSPIRV/SPIRVOpCode.h           |  2 +-
+ test/llvm-intrinsics/uadd.with.overflow.ll | 57 ++++++++++++++++++++++
+ 6 files changed, 73 insertions(+), 2 deletions(-)
+ create mode 100644 test/llvm-intrinsics/uadd.with.overflow.ll
+
+diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
+index 29d72531..e2f3f783 100644
+--- a/lib/SPIRV/SPIRVReader.cpp
++++ b/lib/SPIRV/SPIRVReader.cpp
+@@ -2391,6 +2391,14 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
+   case OpSignBitSet:
+     return mapValue(BV,
+                     transRelational(static_cast<SPIRVInstruction *>(BV), BB));
++  case OpIAddCarry: {
++    IRBuilder Builder(BB);
++    auto *BC = static_cast<SPIRVBinary *>(BV);
++    return mapValue(BV, Builder.CreateBinaryIntrinsic(
++                            Intrinsic::uadd_with_overflow,
++                            transValue(BC->getOperand(0), F, BB),
++                            transValue(BC->getOperand(1), F, BB)));
++  }
+   case OpGetKernelWorkGroupSize:
+   case OpGetKernelPreferredWorkGroupSizeMultiple:
+     return mapValue(
+diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
+index e8b67d5e..f02da3da 100644
+--- a/lib/SPIRV/SPIRVWriter.cpp
++++ b/lib/SPIRV/SPIRVWriter.cpp
+@@ -3492,6 +3492,7 @@ bool LLVMToSPIRVBase::isKnownIntrinsic(Intrinsic::ID Id) {
+   case Intrinsic::dbg_label:
+   case Intrinsic::trap:
+   case Intrinsic::arithmetic_fence:
++  case Intrinsic::uadd_with_overflow:
+     return true;
+   default:
+     // Unknown intrinsics' declarations should always be translated
+@@ -3912,6 +3913,11 @@ SPIRVValue *LLVMToSPIRVBase::transIntrinsicInst(IntrinsicInst *II,
+     return BM->addExtInst(Ty, BM->getExtInstSetId(SPIRVEIS_OpenCL), ExtOp,
+                           std::move(Operands), BB);
+   }
++  case Intrinsic::uadd_with_overflow: {
++    return BM->addBinaryInst(OpIAddCarry, transType(II->getType()),
++                             transValue(II->getArgOperand(0), BB),
++                             transValue(II->getArgOperand(1), BB), BB);
++  }
+   case Intrinsic::memset: {
+     // Generally there is no direct mapping of memset to SPIR-V.  But it turns
+     // out that memset is emitted by Clang for initialization in default
+diff --git a/lib/SPIRV/libSPIRV/SPIRVEntry.h b/lib/SPIRV/libSPIRV/SPIRVEntry.h
+index 6d106787..6e6f6720 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVEntry.h
++++ b/lib/SPIRV/libSPIRV/SPIRVEntry.h
+@@ -1004,7 +1004,6 @@ _SPIRV_OP(ImageDrefGather)
+ _SPIRV_OP(QuantizeToF16)
+ _SPIRV_OP(ArrayLength)
+ _SPIRV_OP(OuterProduct)
+-_SPIRV_OP(IAddCarry)
+ _SPIRV_OP(ISubBorrow)
+ _SPIRV_OP(SMulExtended)
+ _SPIRV_OP(UMulExtended)
+diff --git a/lib/SPIRV/libSPIRV/SPIRVInstruction.h b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
+index e5aac6ce..0539d260 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVInstruction.h
++++ b/lib/SPIRV/libSPIRV/SPIRVInstruction.h
+@@ -662,6 +662,7 @@ class SPIRVBinaryInst
+ 
+ #define _SPIRV_OP(x) typedef SPIRVBinaryInst<Op##x> SPIRV##x;
+ _SPIRV_OP(IAdd)
++_SPIRV_OP(IAddCarry)
+ _SPIRV_OP(FAdd)
+ _SPIRV_OP(ISub)
+ _SPIRV_OP(FSub)
+diff --git a/lib/SPIRV/libSPIRV/SPIRVOpCode.h b/lib/SPIRV/libSPIRV/SPIRVOpCode.h
+index da1f4b1a..d95ed81e 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVOpCode.h
++++ b/lib/SPIRV/libSPIRV/SPIRVOpCode.h
+@@ -71,7 +71,7 @@ inline bool isAtomicOpCode(Op OpCode) {
+ }
+ inline bool isBinaryOpCode(Op OpCode) {
+   return ((unsigned)OpCode >= OpIAdd && (unsigned)OpCode <= OpFMod) ||
+-         OpCode == OpDot;
++         OpCode == OpDot || OpCode == OpIAddCarry;
+ }
+ 
+ inline bool isShiftOpCode(Op OpCode) {
+diff --git a/test/llvm-intrinsics/uadd.with.overflow.ll b/test/llvm-intrinsics/uadd.with.overflow.ll
+new file mode 100644
+index 00000000..265e1f86
+--- /dev/null
++++ b/test/llvm-intrinsics/uadd.with.overflow.ll
+@@ -0,0 +1,57 @@
++; RUN: llvm-as %s -o %t.bc
++; RUN: llvm-spirv %t.bc -spirv-text -o - | FileCheck --check-prefix CHECK-SPIRV %s
++; RUN: llvm-spirv %t.bc -o %t.spv
++; Current implementation doesn't comply with specification and should be fixed in future.
++; TODO: spirv-val %t.spv
++; RUN: llvm-spirv -r %t.spv -o %t.rev.bc
++; RUN: llvm-dis %t.rev.bc -o - | FileCheck --check-prefix CHECK-LLVM %s
++
++target triple = "spir64-unknown-unknown"
++
++; CHECK-SPIRV: TypeInt [[#I16TYPE:]] 16
++; CHECK-SPIRV: TypeInt [[#I32TYPE:]] 32
++; CHECK-SPIRV: TypeInt [[#I64TYPE:]] 64
++; CHECK-SPIRV: TypeBool [[#BTYPE:]]
++; CHECK-SPIRV: TypeStruct [[#S0TYPE:]] [[#I16TYPE]] [[#BTYPE]]
++; CHECK-SPIRV: TypeStruct [[#S1TYPE:]] [[#I32TYPE]] [[#BTYPE]]
++; CHECK-SPIRV: TypeStruct [[#S2TYPE:]] [[#I64TYPE]] [[#BTYPE]]
++; CHECK-SPIRV: TypeVector [[#V4XI32TYPE:]] [[#I32TYPE]] 4
++; CHECK-SPIRV: TypeVector [[#V4XBTYPE:]] [[#BTYPE]] 4
++; CHECK-SPIRV: TypeStruct [[#S3TYPE:]] [[#V4XI32TYPE]] [[#V4XBTYPE]]
++; CHECK-SPIRV: IAddCarry [[#S0TYPE]]
++; CHECK-SPIRV: IAddCarry [[#S1TYPE]]
++; CHECK-SPIRV: IAddCarry [[#S2TYPE]]
++; CHECK-SPIRV: IAddCarry [[#S3TYPE]]
++; CHECK-LLVM: call { i16, i1 } @llvm.uadd.with.overflow.i16(i16 %a, i16 %b)
++; CHECK-LLVM: call { i32, i1 } @llvm.uadd.with.overflow.i32(i32 %a, i32 %b)
++; CHECK-LLVM: call { i64, i1 } @llvm.uadd.with.overflow.i64(i64 %a, i64 %b)
++; CHECK-LLVM: call { <4 x i32>, <4 x i1> } @llvm.uadd.with.overflow.v4i32(<4 x i32> %a, <4 x i32> %b)
++
++define spir_func void @test_uadd_with_overflow_i16(i16 %a, i16 %b) {
++entry:
++  %res = call {i16, i1} @llvm.uadd.with.overflow.i16(i16 %a, i16 %b)
++  ret void
++}
++
++define spir_func void @test_uadd_with_overflow_i32(i32 %a, i32 %b) {
++entry:
++  %res = call {i32, i1} @llvm.uadd.with.overflow.i32(i32 %a, i32 %b)
++  ret void
++}
++
++define spir_func void @test_uadd_with_overflow_i64(i64 %a, i64 %b) {
++entry:
++  %res = call {i64, i1} @llvm.uadd.with.overflow.i64(i64 %a, i64 %b)
++  ret void
++}
++
++define spir_func void @test_uadd_with_overflow_v4i32(<4 x i32> %a, <4 x i32> %b) {
++entry:
++ %res = call {<4 x i32>, <4 x i1>} @llvm.uadd.with.overflow.v4i32(<4 x i32> %a, <4 x i32> %b) 
++ ret void
++}
++
++declare {i16, i1} @llvm.uadd.with.overflow.i16(i16 %a, i16 %b)
++declare {i32, i1} @llvm.uadd.with.overflow.i32(i32 %a, i32 %b)
++declare {i64, i1} @llvm.uadd.with.overflow.i64(i64 %a, i64 %b)
++declare {<4 x i32>, <4 x i1>} @llvm.uadd.with.overflow.v4i32(<4 x i32> %a, <4 x i32> %b)
+-- 
+2.20.1
+
