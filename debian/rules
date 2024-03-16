@@ -21,9 +21,12 @@ override_dh_auto_configure:
 execute_after_dh_auto_install:
 	mv debian/tmp/usr/bin/llvm-spirv debian/tmp/usr/bin/llvm-spirv-$(LLVM_VERSION)
 
+# skip tests on big-endian architectures, uses excessive amount (> 40GB) of disk space
 ignore_test_failures	 = $(if $(filter $(DEB_HOST_ARCH),amd64),,-)
 override_dh_auto_test:
+ifeq ($(DEB_HOST_ARCH_ENDIAN),little)
 	$(ignore_test_failures)env LD_LIBRARY_PATH=$(LD_LIBRARY_PATH):$(CURDIR)/build/lib/SPIRV dh_auto_test
+endif
 
 
 update-symbols:
