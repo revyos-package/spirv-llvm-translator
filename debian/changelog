@@ -1,4 +1,4 @@
-spirv-llvm-translator-18 (18.1.0-1) UNRELEASED; urgency=medium
+spirv-llvm-translator-18 (18.1.0-1) unstable; urgency=medium
 
   * New upstream release.  (Closes: #1066095)
   * Rename libllvmspirvlib18 to libllvmspirvlib18.1 after soname bump.
@@ -6,8 +6,9 @@ spirv-llvm-translator-18 (18.1.0-1) UNRELEASED; urgency=medium
     are failing anyway but ignored) due to excessive disk space usage
     (> 40 GB).  (Closes: #1065395)
   * Update from llvm_release_180 branch (v18.1.0-1-g16b29007).
+  * Upload to unstable.
 
- -- Andreas Beckmann <anbe@debian.org>  Thu, 07 Mar 2024 11:15:07 +0100
+ -- Andreas Beckmann <anbe@debian.org>  Sat, 16 Mar 2024 22:07:06 +0100
 
 spirv-llvm-translator-18 (18.~~+git20240215-1) experimental; urgency=medium
 
