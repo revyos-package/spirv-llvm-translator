@@ -1,5 +1,5 @@
-# SymbolsHelper-Confirmed: 18 amd64 arm64 armhf i386 ppc64el
-libLLVMSPIRVLib.so.18 #PACKAGE# #MINVER#
+# SymbolsHelper-Confirmed: 18 amd64 arm64 armhf i386 loong64 mips64el ppc64 ppc64el s390x sparc64
+libLLVMSPIRVLib.so.18.1 #PACKAGE# #MINVER#
 * Build-Depends-Package: libllvmspirvlib-18-dev
  _ZGVZNKSt8__detail11_AnyMatcherINSt7__cxx1112regex_traitsIcEELb0ELb0ELb0EEclEcE5__nul@Base 0
  _ZGVZNKSt8__detail11_AnyMatcherINSt7__cxx1112regex_traitsIcEELb0ELb0ELb1EEclEcE5__nul@Base 0
