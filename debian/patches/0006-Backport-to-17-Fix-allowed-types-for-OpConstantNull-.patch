@@ -1,7 +1,7 @@
-From 47bafe48a1b1799308d3984d67f6a61f62cfe354 Mon Sep 17 00:00:00 2001
+From 7088351420a8f0c3e5f9be678fd1d16ae826e37f Mon Sep 17 00:00:00 2001
 From: Sven van Haastregt <sven.vanhaastregt@arm.com>
 Date: Thu, 15 Feb 2024 14:00:43 +0100
-Subject: [PATCH 31/37] [Backport to 16] Fix allowed types for OpConstantNull
+Subject: [PATCH 06/12] [Backport to 17] Fix allowed types for OpConstantNull
  (#2361)
 
 The SPIR-V Specification allows `OpConstantNull` types to be scalar or

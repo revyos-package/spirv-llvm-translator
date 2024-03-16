@@ -1,19 +1,11 @@
-From 3c8ed21b0c3aab2301a419bb2ac310eeef64dc77 Mon Sep 17 00:00:00 2001
+From 2952731c9b32cbccbfa7bafa8d37679606632a43 Mon Sep 17 00:00:00 2001
 From: Vlad Korovin <vladislav.korovin@intel.com>
-Date: Wed, 6 Mar 2024 12:16:53 +0100
-Subject: [PATCH 35/37] [Backport to 16] Support SPV_INTEL_maximum_registers
- extension (#2344) (#2390)
+Date: Wed, 6 Mar 2024 12:18:00 +0100
+Subject: [PATCH 10/12] [Backport to 17] Support SPV_INTEL_maximum_registers
+ extension (#2344) (#2393)
 
 Spec:
 KhronosGroup/SPIRV-Registry#235
-
-* Add infrastructure for translating ExecutionModeId (#2297)
-
-This functionality was added in SPIR-V 1.2 and allows using an <id> to
-set the execution modes SubgroupsPerWorkgroupId, LocalSizeId, and
-LocalSizeHintI, and others.
-
----------
 
 Co-authored-by: Viktoria Maximova <viktoria.maksimova@intel.com>
 ---
@@ -25,29 +17,29 @@ Co-authored-by: Viktoria Maximova <viktoria.maksimova@intel.com>
  lib/SPIRV/libSPIRV/SPIRVEntry.h               | 88 ++++++++++++++-----
  lib/SPIRV/libSPIRV/SPIRVEnum.h                |  6 ++
  lib/SPIRV/libSPIRV/SPIRVIsValidEnum.h         |  3 +
- lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h         |  9 +-
+ lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h         |  8 ++
  lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h          |  1 +
  lib/SPIRV/libSPIRV/SPIRVStream.cpp            |  1 +
  lib/SPIRV/libSPIRV/SPIRVStream.h              |  1 +
  spirv-headers-tag.conf                        |  2 +-
  .../registerallocmode_maxreg_extension.ll     | 85 ++++++++++++++++++
- 14 files changed, 275 insertions(+), 43 deletions(-)
+ 14 files changed, 275 insertions(+), 42 deletions(-)
  create mode 100644 test/extensions/INTEL/SPV_INTEL_maximum_registers/registerallocmode_maxreg_extension.ll
 
 diff --git a/include/LLVMSPIRVExtensions.inc b/include/LLVMSPIRVExtensions.inc
-index 566662d2..76b31cf5 100644
+index a0f42dcd..992f8805 100644
 --- a/include/LLVMSPIRVExtensions.inc
 +++ b/include/LLVMSPIRVExtensions.inc
-@@ -64,3 +64,4 @@ EXT(SPV_INTEL_tensor_float32_rounding)
- EXT(SPV_EXT_relaxed_printf_string_address_space)
+@@ -66,3 +66,4 @@ EXT(SPV_EXT_relaxed_printf_string_address_space)
  EXT(SPV_INTEL_fpga_argument_interfaces)
+ EXT(SPV_INTEL_fpga_latency_control)
  EXT(SPV_INTEL_cache_controls)
 +EXT(SPV_INTEL_maximum_registers)
 diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
-index cb2ce621..5147b13b 100644
+index 00f290d3..c5217483 100644
 --- a/lib/SPIRV/SPIRVReader.cpp
 +++ b/lib/SPIRV/SPIRVReader.cpp
-@@ -4063,6 +4063,48 @@ bool SPIRVToLLVM::transMetadata() {
+@@ -4187,6 +4187,48 @@ bool SPIRVToLLVM::transMetadata() {
        F->setMetadata(kSPIR2MD::IntelFPGAIPInterface,
                       MDNode::get(*Context, InterfaceMDVec));
      }
@@ -97,10 +89,10 @@ index cb2ce621..5147b13b 100644
    NamedMDNode *MemoryModelMD =
        M->getOrInsertNamedMetadata(kSPIRVMD::MemoryModel);
 diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
-index 4397c86b..ceaa718a 100644
+index df9cf9af..acc910bf 100644
 --- a/lib/SPIRV/SPIRVWriter.cpp
 +++ b/lib/SPIRV/SPIRVWriter.cpp
-@@ -901,7 +901,10 @@ SPIRVFunction *LLVMToSPIRVBase::transFunctionDecl(Function *F) {
+@@ -889,7 +889,10 @@ SPIRVFunction *LLVMToSPIRVBase::transFunctionDecl(Function *F) {
  
    transFPGAFunctionMetadata(BF, F);
  
@@ -112,7 +104,7 @@ index 4397c86b..ceaa718a 100644
  
    transAuxDataInst(BF, F);
  
-@@ -1035,6 +1038,38 @@ void LLVMToSPIRVBase::transFPGAFunctionMetadata(SPIRVFunction *BF,
+@@ -1023,6 +1026,38 @@ void LLVMToSPIRVBase::transFPGAFunctionMetadata(SPIRVFunction *BF,
      transMetadataDecorations(FDecoMD, BF);
  }
  
@@ -151,7 +143,7 @@ index 4397c86b..ceaa718a 100644
  void LLVMToSPIRVBase::transFunctionMetadataAsUserSemanticDecoration(
      SPIRVFunction *BF, Function *F) {
    if (auto *RegisterAllocModeMD = F->getMetadata("RegisterAllocMode")) {
-@@ -4996,19 +5031,20 @@ bool LLVMToSPIRVBase::transExecutionMode() {
+@@ -5198,19 +5233,20 @@ bool LLVMToSPIRVBase::transExecutionMode() {
        auto AddSingleArgExecutionMode = [&](ExecutionMode EMode) {
          uint32_t Arg = ~0u;
          N.get(Arg);
@@ -177,7 +169,7 @@ index 4397c86b..ceaa718a 100644
          } else {
            getErrorLog().checkError(false, SPIRVEC_Requires1_1,
                                     "Initializer/Finalizer Execution Mode");
-@@ -5020,7 +5056,7 @@ bool LLVMToSPIRVBase::transExecutionMode() {
+@@ -5222,7 +5258,7 @@ bool LLVMToSPIRVBase::transExecutionMode() {
          unsigned X = 0, Y = 0, Z = 0;
          N.get(X).get(Y).get(Z);
          BF->addExecutionMode(BM->add(new SPIRVExecutionMode(
@@ -186,7 +178,7 @@ index 4397c86b..ceaa718a 100644
        } break;
        case spv::ExecutionModeMaxWorkgroupSizeINTEL: {
          if (BM->isAllowedToUseExtension(
-@@ -5028,7 +5064,8 @@ bool LLVMToSPIRVBase::transExecutionMode() {
+@@ -5230,7 +5266,8 @@ bool LLVMToSPIRVBase::transExecutionMode() {
            unsigned X = 0, Y = 0, Z = 0;
            N.get(X).get(Y).get(Z);
            BF->addExecutionMode(BM->add(new SPIRVExecutionMode(
@@ -196,7 +188,7 @@ index 4397c86b..ceaa718a 100644
            BM->addExtension(ExtensionID::SPV_INTEL_kernel_attributes);
            BM->addCapability(CapabilityKernelAttributesINTEL);
          }
-@@ -5037,8 +5074,8 @@ bool LLVMToSPIRVBase::transExecutionMode() {
+@@ -5239,8 +5276,8 @@ bool LLVMToSPIRVBase::transExecutionMode() {
          if (!BM->isAllowedToUseExtension(
                  ExtensionID::SPV_INTEL_kernel_attributes))
            break;
@@ -207,7 +199,7 @@ index 4397c86b..ceaa718a 100644
          BM->addExtension(ExtensionID::SPV_INTEL_kernel_attributes);
          BM->addCapability(CapabilityKernelAttributesINTEL);
        } break;
-@@ -5068,8 +5105,9 @@ bool LLVMToSPIRVBase::transExecutionMode() {
+@@ -5283,8 +5320,9 @@ bool LLVMToSPIRVBase::transExecutionMode() {
            break;
          unsigned NBarrierCnt = 0;
          N.get(NBarrierCnt);
@@ -219,7 +211,7 @@ index 4397c86b..ceaa718a 100644
          BM->addExtension(ExtensionID::SPV_INTEL_vector_compute);
          BM->addCapability(CapabilityVectorComputeINTEL);
        } break;
-@@ -5099,8 +5137,8 @@ bool LLVMToSPIRVBase::transExecutionMode() {
+@@ -5314,8 +5352,8 @@ bool LLVMToSPIRVBase::transExecutionMode() {
        } break;
        case spv::internal::ExecutionModeFastCompositeKernelINTEL: {
          if (BM->isAllowedToUseExtension(ExtensionID::SPV_INTEL_fast_composite))
@@ -230,7 +222,7 @@ index 4397c86b..ceaa718a 100644
        } break;
        default:
          llvm_unreachable("invalid execution mode");
-@@ -5145,8 +5183,8 @@ void LLVMToSPIRVBase::transFPContract() {
+@@ -5360,8 +5398,8 @@ void LLVMToSPIRVBase::transFPContract() {
      }
  
      if (DisableContraction) {
@@ -242,22 +234,22 @@ index 4397c86b..ceaa718a 100644
    }
  }
 diff --git a/lib/SPIRV/SPIRVWriter.h b/lib/SPIRV/SPIRVWriter.h
-index 9dfdb5b9..331c30e8 100644
+index f71e36ce..66837aad 100644
 --- a/lib/SPIRV/SPIRVWriter.h
 +++ b/lib/SPIRV/SPIRVWriter.h
-@@ -123,6 +123,7 @@ public:
+@@ -121,6 +121,7 @@ public:
+   SPIRVFunction *transFunctionDecl(Function *F);
    void transVectorComputeMetadata(Function *F);
    void transFPGAFunctionMetadata(SPIRVFunction *BF, Function *F);
-   void transAuxDataInst(SPIRVFunction *BF, Function *F);
 +  void transFunctionMetadataAsExecutionMode(SPIRVFunction *BF, Function *F);
    void transFunctionMetadataAsUserSemanticDecoration(SPIRVFunction *BF,
                                                       Function *F);
-   bool transGlobalVariables();
+   void transAuxDataInst(SPIRVFunction *BF, Function *F);
 diff --git a/lib/SPIRV/libSPIRV/SPIRVEntry.cpp b/lib/SPIRV/libSPIRV/SPIRVEntry.cpp
-index 54475a9d..bb6c3fb1 100644
+index 0ed8267e..65478f25 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVEntry.cpp
 +++ b/lib/SPIRV/libSPIRV/SPIRVEntry.cpp
-@@ -568,7 +568,7 @@ SPIRVEntryPoint::SPIRVEntryPoint(SPIRVModule *TheModule,
+@@ -612,7 +612,7 @@ SPIRVEntryPoint::SPIRVEntryPoint(SPIRVModule *TheModule,
                                   SPIRVExecutionModelKind TheExecModel,
                                   SPIRVId TheId, const std::string &TheName,
                                   std::vector<SPIRVId> Variables)
@@ -266,9 +258,9 @@ index 54475a9d..bb6c3fb1 100644
                        getSizeInWords(TheName) + Variables.size() + 3),
        ExecModel(TheExecModel), Name(TheName), Variables(Variables) {}
  
-@@ -615,6 +615,9 @@ void SPIRVExecutionMode::decode(std::istream &I) {
-   case ExecutionModeNumSIMDWorkitemsINTEL:
+@@ -660,6 +660,9 @@ void SPIRVExecutionMode::decode(std::istream &I) {
    case ExecutionModeSchedulerTargetFmaxMhzINTEL:
+   case ExecutionModeRegisterMapInterfaceINTEL:
    case ExecutionModeStreamingInterfaceINTEL:
 +  case ExecutionModeMaximumRegistersINTEL:
 +  case ExecutionModeMaximumRegistersIdINTEL:
@@ -276,7 +268,7 @@ index 54475a9d..bb6c3fb1 100644
      WordLiterals.resize(1);
      break;
    default:
-@@ -636,7 +639,8 @@ SPIRVForward *SPIRVAnnotationGeneric::getOrCreateTarget() const {
+@@ -681,7 +684,8 @@ SPIRVForward *SPIRVAnnotationGeneric::getOrCreateTarget() const {
  }
  
  SPIRVName::SPIRVName(const SPIRVEntry *TheTarget, const std::string &TheStr)
@@ -287,10 +279,10 @@ index 54475a9d..bb6c3fb1 100644
  void SPIRVName::encode(spv_ostream &O) const { getEncoder(O) << Target << Str; }
  
 diff --git a/lib/SPIRV/libSPIRV/SPIRVEntry.h b/lib/SPIRV/libSPIRV/SPIRVEntry.h
-index 5680e59f..5925583b 100644
+index 5131a2a1..7c0afc90 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVEntry.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVEntry.h
-@@ -516,23 +516,24 @@ protected:
+@@ -521,23 +521,24 @@ protected:
    SPIRVId Target;
  };
  
@@ -321,7 +313,7 @@ index 5680e59f..5925583b 100644
  
    _SPIRV_DCL_ENCDEC
  protected:
-@@ -543,12 +544,12 @@ private:
+@@ -548,12 +549,12 @@ private:
    std::vector<SPIRVId> Variables;
  };
  
@@ -336,7 +328,7 @@ index 5680e59f..5925583b 100644
  
  protected:
    _SPIRV_DCL_ENCDEC
-@@ -557,18 +558,18 @@ protected:
+@@ -562,18 +563,18 @@ protected:
    std::string Str;
  };
  
@@ -358,7 +350,7 @@ index 5680e59f..5925583b 100644
  
  protected:
    _SPIRV_DCL_ENCDEC
-@@ -644,31 +645,33 @@ protected:
+@@ -649,31 +650,33 @@ protected:
    SPIRVWord Column;
  };
  
@@ -403,7 +395,7 @@ index 5680e59f..5925583b 100644
    SPIRVExecutionModeKind getExecutionMode() const { return ExecMode; }
    const std::vector<SPIRVWord> &getLiterals() const { return WordLiterals; }
    SPIRVCapVec getRequiredCapability() const override {
-@@ -688,12 +691,45 @@ public:
+@@ -693,12 +696,45 @@ public:
      }
    }
  
@@ -449,7 +441,7 @@ index 5680e59f..5925583b 100644
  class SPIRVComponentExecutionModes {
    typedef std::multimap<SPIRVExecutionModeKind, SPIRVExecutionMode *>
        SPIRVExecutionModeMap;
-@@ -727,6 +763,11 @@ public:
+@@ -732,6 +768,11 @@ public:
        return IsDenorm(EMK) || IsRoundingMode(EMK) || IsFPMode(EMK) ||
               IsOtherFP(EMK);
      };
@@ -461,7 +453,7 @@ index 5680e59f..5925583b 100644
      auto IsCompatible = [&](SPIRVExecutionMode *EM0, SPIRVExecutionMode *EM1) {
        if (EM0->getTargetId() != EM1->getTargetId())
          return true;
-@@ -740,7 +781,8 @@ public:
+@@ -745,7 +786,8 @@ public:
          return true;
        return !(IsDenorm(EMK0) && IsDenorm(EMK1)) &&
               !(IsRoundingMode(EMK0) && IsRoundingMode(EMK1)) &&
@@ -472,10 +464,10 @@ index 5680e59f..5925583b 100644
      for (auto I = ExecModes.begin(); I != ExecModes.end(); ++I) {
        assert(IsCompatible(ExecMode, (*I).second) &&
 diff --git a/lib/SPIRV/libSPIRV/SPIRVEnum.h b/lib/SPIRV/libSPIRV/SPIRVEnum.h
-index 0adf90f0..7c67b1d2 100644
+index df8853b7..a0d9d6fb 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVEnum.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVEnum.h
-@@ -273,6 +273,12 @@ template <> inline void SPIRVMap<SPIRVExecutionModeKind, SPIRVCapVec>::init() {
+@@ -285,6 +285,12 @@ template <> inline void SPIRVMap<SPIRVExecutionModeKind, SPIRVCapVec>::init() {
                 {CapabilityFPGAKernelAttributesINTEL});
    ADD_VEC_INIT(ExecutionModeNamedBarrierCountINTEL,
                 {CapabilityVectorComputeINTEL});
@@ -489,12 +481,12 @@ index 0adf90f0..7c67b1d2 100644
  
  template <> inline void SPIRVMap<SPIRVMemoryModelKind, SPIRVCapVec>::init() {
 diff --git a/lib/SPIRV/libSPIRV/SPIRVIsValidEnum.h b/lib/SPIRV/libSPIRV/SPIRVIsValidEnum.h
-index 093141d1..24baa99f 100644
+index 080b8bcd..9930349d 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVIsValidEnum.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVIsValidEnum.h
-@@ -72,6 +72,9 @@ inline bool isValid(spv::ExecutionModel V) {
-   case ExecutionModelMissKHR:
+@@ -73,6 +73,9 @@ inline bool isValid(spv::ExecutionModel V) {
    case ExecutionModelCallableKHR:
+   case ExecutionModeRegisterMapInterfaceINTEL:
    case ExecutionModeStreamingInterfaceINTEL:
 +  case ExecutionModeMaximumRegistersINTEL:
 +  case ExecutionModeMaximumRegistersIdINTEL:
@@ -503,19 +495,18 @@ index 093141d1..24baa99f 100644
    default:
      return false;
 diff --git a/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h b/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
-index 5e4c38d5..5ce9703f 100644
+index a2a0ddb0..67225ee3 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
-@@ -618,7 +618,7 @@ template <> inline void SPIRVMap<Capability, std::string>::init() {
-   add(CapabilityRuntimeAlignedAttributeINTEL, "RuntimeAlignedAttributeINTEL");
+@@ -623,6 +623,7 @@ template <> inline void SPIRVMap<Capability, std::string>::init() {
    add(CapabilityMax, "Max");
    add(CapabilityFPGAArgumentInterfacesINTEL, "FPGAArgumentInterfacesINTEL");
--
+   add(CapabilityFPGALatencyControlINTEL, "FPGALatencyControlINTEL");
 +  add(CapabilityRegisterLimitsINTEL, "RegisterLimitsINTEL");
    // From spirv_internal.hpp
    add(internal::CapabilityFastCompositeINTEL, "FastCompositeINTEL");
    add(internal::CapabilityOptNoneINTEL, "OptNoneINTEL");
-@@ -637,6 +637,13 @@ template <> inline void SPIRVMap<Capability, std::string>::init() {
+@@ -651,6 +652,13 @@ template <> inline void SPIRVMap<Capability, std::string>::init() {
  }
  SPIRV_DEF_NAMEMAP(Capability, SPIRVCapabilityNameMap)
  
@@ -530,7 +521,7 @@ index 5e4c38d5..5ce9703f 100644
  
  #endif // SPIRV_LIBSPIRV_SPIRVNAMEMAPENUM_H
 diff --git a/lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h b/lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h
-index a6961fcb..de24c1f6 100644
+index 9b8872fe..0d81003e 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h
 @@ -295,6 +295,7 @@ _SPIRV_OP(TypePipeStorage, 322)
@@ -542,10 +533,10 @@ index a6961fcb..de24c1f6 100644
  _SPIRV_OP(GroupNonUniformElect, 333)
  _SPIRV_OP(GroupNonUniformAll, 334)
 diff --git a/lib/SPIRV/libSPIRV/SPIRVStream.cpp b/lib/SPIRV/libSPIRV/SPIRVStream.cpp
-index 39de03f2..b15749ad 100644
+index 65ca5cbb..3ab9c94e 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVStream.cpp
 +++ b/lib/SPIRV/libSPIRV/SPIRVStream.cpp
-@@ -144,6 +144,7 @@ SPIRV_DEF_ENCDEC(Decoration)
+@@ -145,6 +145,7 @@ SPIRV_DEF_ENCDEC(Decoration)
  SPIRV_DEF_ENCDEC(OCLExtOpKind)
  SPIRV_DEF_ENCDEC(SPIRVDebugExtOpKind)
  SPIRV_DEF_ENCDEC(NonSemanticAuxDataOpKind)
@@ -554,10 +545,10 @@ index 39de03f2..b15749ad 100644
  
  // Read a string with padded 0's at the end so that they form a stream of
 diff --git a/lib/SPIRV/libSPIRV/SPIRVStream.h b/lib/SPIRV/libSPIRV/SPIRVStream.h
-index 9f2a5c81..a39bc314 100644
+index bac08d6e..7ddf6458 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVStream.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVStream.h
-@@ -228,6 +228,7 @@ SPIRV_DEC_ENCDEC(Decoration)
+@@ -229,6 +229,7 @@ SPIRV_DEC_ENCDEC(Decoration)
  SPIRV_DEC_ENCDEC(OCLExtOpKind)
  SPIRV_DEC_ENCDEC(SPIRVDebugExtOpKind)
  SPIRV_DEC_ENCDEC(NonSemanticAuxDataOpKind)
