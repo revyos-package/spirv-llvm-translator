@@ -1,0 +1,627 @@
+From ccae9f2a413c96a8ae0c07f3e6715d9ea03b7576 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Mi=C5=82osz?= <milosz.skobejko@intel.com>
+Date: Thu, 21 Mar 2024 13:28:56 +0000
+Subject: [PATCH 183/183] [Backport to 14] fpbuiltin-max-error support (#2421)
+
+Changes were cherry-picked from the following commit: c6fe12b
+
+This changes add SPIR-V translator support for the SPIR-V extension documented here: KhronosGroup/SPIRV-Registry#193. This extension adds one decoration to represent maximum error for FP operations and adds the related Capability. SPIRV Headers support for representing this in SPIR-V: KhronosGroup/SPIRV-Headers#363
+
+intel/llvm#8134 added a new call-site attribute associated with FP builtin intrinsics. This attribute is named 'fpbuiltin-max-error'. Following example shows how this extension is supported in the translator. The input LLVM IR uses new LLVM builtin calls to represent FP operations. An attribute named 'fpbuiltin-max-error' is used to represent the max-error allowed in the FP operation. Example Input LLVM: %t6 = call float @llvm.fpbuiltin.sin.f32(float %f1) #2 attributes #2 = { "fpbuiltin-max-error"="2.5" }
+
+This is translated into a SPIR-V instruction (for add/sub/mul/div/rem) and OpenCl extended instruction for other instructions. A decoration to represent the max-error is attached to the SPIR-V instruction.
+
+SPIR-V code:
+4 Decorate 97 FPMaxErrorDecorationINTEL 1075838976 6 ExtInst 2 97 1 sin 88
+
+No new support is added to support translating this SPIR_V back to LLVM. Existing support is used. The decoration is translated back into named metadata associated with the LLVM instruction. This can be readily consumed by backends.
+
+Based on input from @andykaylor, we emit attributes when the FP operation is translated back to a call to a builtin function and emit metadata otherwise.
+
+Translated LLVM code for basic math functions (add/sub/mul/div/rem): %t6 = fmul float %f1, %f2, !fpbuiltin-max-error !7 !7 = !{!"2.500000"}
+
+Translated LLVM code for other math functions:
+%t6 = call spir_func float @_Z3sinf(float %f1) #3
+attributes #3 = { "fpbuiltin-max-error"="4.000000" }
+---
+ include/LLVMSPIRVExtensions.inc               |   1 +
+ lib/SPIRV/SPIRVReader.cpp                     |  41 +++
+ lib/SPIRV/SPIRVUtil.cpp                       |   7 +
+ lib/SPIRV/SPIRVWriter.cpp                     | 153 +++++++++++
+ lib/SPIRV/SPIRVWriter.h                       |  10 +
+ lib/SPIRV/libSPIRV/SPIRVDecorate.h            |   2 +
+ lib/SPIRV/libSPIRV/SPIRVEnum.h                |   2 +
+ lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h         |   3 +
+ .../SPV_INTEL_fp_max_error/IntelFPMaxError.ll | 245 ++++++++++++++++++
+ 9 files changed, 464 insertions(+)
+ create mode 100644 test/extensions/INTEL/SPV_INTEL_fp_max_error/IntelFPMaxError.ll
+
+diff --git a/include/LLVMSPIRVExtensions.inc b/include/LLVMSPIRVExtensions.inc
+index 952b9735..6c8d4ede 100644
+--- a/include/LLVMSPIRVExtensions.inc
++++ b/include/LLVMSPIRVExtensions.inc
+@@ -63,5 +63,6 @@ EXT(SPV_INTEL_masked_gather_scatter)
+ EXT(SPV_INTEL_tensor_float32_conversion) // TODO: to remove old extension
+ EXT(SPV_INTEL_tensor_float32_rounding)
+ EXT(SPV_EXT_relaxed_printf_string_address_space)
++EXT(SPV_INTEL_fp_max_error)
+ EXT(SPV_INTEL_cache_controls)
+ EXT(SPV_INTEL_maximum_registers)
+diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
+index cdfecbb0..58738089 100644
+--- a/lib/SPIRV/SPIRVReader.cpp
++++ b/lib/SPIRV/SPIRVReader.cpp
+@@ -3854,7 +3854,48 @@ void SPIRVToLLVM::transDecorationsToMetadata(SPIRVValue *BV, Value *V) {
+     SetDecorationsMetadata(I);
+ }
+ 
++namespace {
++
++static float convertSPIRVWordToFloat(SPIRVWord Spir) {
++  union {
++    float F;
++    SPIRVWord Spir;
++  } FPMaxError;
++  FPMaxError.Spir = Spir;
++  return FPMaxError.F;
++}
++
++static bool transFPMaxErrorDecoration(SPIRVValue *BV, Value *V,
++                                      LLVMContext *Context) {
++  SPIRVWord ID;
++  if (Instruction *I = dyn_cast<Instruction>(V))
++    if (BV->hasDecorate(DecorationFPMaxErrorDecorationINTEL, 0, &ID)) {
++      auto Literals =
++          BV->getDecorationLiterals(DecorationFPMaxErrorDecorationINTEL);
++      assert(Literals.size() == 1 &&
++             "FP Max Error decoration shall have 1 operand");
++      auto F = convertSPIRVWordToFloat(Literals[0]);
++      if (CallInst *CI = dyn_cast<CallInst>(I)) {
++        // Add attribute
++        auto A = llvm::Attribute::get(*Context, "fpbuiltin-max-error",
++                                      std::to_string(F));
++        CI->addFnAttr(A);
++      } else {
++        // Add metadata
++        MDNode *N =
++            MDNode::get(*Context, MDString::get(*Context, std::to_string(F)));
++        I->setMetadata("fpbuiltin-max-error", N);
++      }
++      return true;
++    }
++  return false;
++}
++} // namespace
++
+ bool SPIRVToLLVM::transDecoration(SPIRVValue *BV, Value *V) {
++  if (transFPMaxErrorDecoration(BV, V, Context))
++    return true;
++
+   if (!transAlign(BV, V))
+     return false;
+ 
+diff --git a/lib/SPIRV/SPIRVUtil.cpp b/lib/SPIRV/SPIRVUtil.cpp
+index 82dc88d2..be2330e2 100644
+--- a/lib/SPIRV/SPIRVUtil.cpp
++++ b/lib/SPIRV/SPIRVUtil.cpp
+@@ -784,6 +784,13 @@ CallInst *mutateCallInst(
+   auto NewCI = addCallInst(M, NewName, CI->getType(), Args, Attrs, CI, Mangle,
+                            InstName, TakeFuncName);
+   NewCI->setDebugLoc(CI->getDebugLoc());
++  NewCI->copyMetadata(*CI);
++  NewCI->setAttributes(CI->getAttributes());
++  NewCI->setTailCall(CI->isTailCall());
++  if (CI->hasFnAttr("fpbuiltin-max-error")) {
++    auto Attr = CI->getFnAttr("fpbuiltin-max-error");
++    NewCI->addFnAttr(Attr);
++  }
+   LLVM_DEBUG(dbgs() << " => " << *NewCI << '\n');
+   CI->replaceAllUsesWith(NewCI);
+   CI->eraseFromParent();
+diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
+index dcd74af4..8f3d2088 100644
+--- a/lib/SPIRV/SPIRVWriter.cpp
++++ b/lib/SPIRV/SPIRVWriter.cpp
+@@ -105,6 +105,19 @@ using namespace llvm;
+ using namespace SPIRV;
+ using namespace OCLUtil;
+ 
++namespace {
++
++static SPIRVWord convertFloatToSPIRVWord(float F) {
++  union {
++    float F;
++    SPIRVWord Spir;
++  } FPMaxError;
++  FPMaxError.F = F;
++  return FPMaxError.Spir;
++}
++
++} // namespace
++
+ namespace SPIRV {
+ 
+ static void foreachKernelArgMD(
+@@ -3433,6 +3446,26 @@ bool LLVMToSPIRVBase::isKnownIntrinsic(Intrinsic::ID Id) {
+   }
+ }
+ 
++// Add decoration if needed
++SPIRVInstruction *addFPBuiltinDecoration(SPIRVModule *BM, IntrinsicInst *II,
++                                         SPIRVInstruction *I) {
++  const bool AllowFPMaxError =
++      BM->isAllowedToUseExtension(ExtensionID::SPV_INTEL_fp_max_error);
++  assert(II->getCalledFunction()->getName().startswith("llvm.fpbuiltin"));
++  // Add a new decoration for llvm.builtin intrinsics, if needed
++  if (AllowFPMaxError)
++    if (II->getAttributes().hasFnAttr("fpbuiltin-max-error")) {
++      double F = 0.0;
++      II->getAttributes()
++          .getFnAttr("fpbuiltin-max-error")
++          .getValueAsString()
++          .getAsDouble(F);
++      I->addDecorate(DecorationFPMaxErrorDecorationINTEL,
++                     convertFloatToSPIRVWord(F));
++    }
++  return I;
++}
++
+ // Performs mapping of LLVM IR rounding mode to SPIR-V rounding mode
+ // Value *V is metadata <rounding mode> argument of
+ // llvm.experimental.constrained.* intrinsics
+@@ -4137,6 +4170,8 @@ SPIRVValue *LLVMToSPIRVBase::transIntrinsicInst(IntrinsicInst *II,
+   }
+ 
+   default:
++    if (auto *BVar = transFPBuiltinIntrinsicInst(II, BB))
++      return BVar;
+     if (BM->isUnknownIntrinsicAllowed(II))
+       return BM->addCallInst(
+           transFunctionDecl(II->getCalledFunction()),
+@@ -4152,6 +4187,124 @@ SPIRVValue *LLVMToSPIRVBase::transIntrinsicInst(IntrinsicInst *II,
+   return nullptr;
+ }
+ 
++LLVMToSPIRVBase::FPBuiltinType
++LLVMToSPIRVBase::getFPBuiltinType(IntrinsicInst *II, StringRef &OpName) {
++  StringRef Name = II->getCalledFunction()->getName();
++  if (!Name.startswith("llvm.fpbuiltin"))
++    return FPBuiltinType::UNKNOWN;
++  Name.consume_front("llvm.fpbuiltin.");
++  OpName = Name.split('.').first;
++  FPBuiltinType Type =
++      StringSwitch<FPBuiltinType>(OpName)
++          .Cases("fadd", "fsub", "fmul", "fdiv", "frem",
++                 FPBuiltinType::REGULAR_MATH)
++          .Cases("sin", "cos", "tan", FPBuiltinType::EXT_1OPS)
++          .Cases("sinh", "cosh", "tanh", FPBuiltinType::EXT_1OPS)
++          .Cases("asin", "acos", "atan", FPBuiltinType::EXT_1OPS)
++          .Cases("asinh", "acosh", "atanh", FPBuiltinType::EXT_1OPS)
++          .Cases("exp", "exp2", "exp10", "expm1", FPBuiltinType::EXT_1OPS)
++          .Cases("log", "log2", "log10", "log1p", FPBuiltinType::EXT_1OPS)
++          .Cases("sqrt", "rsqrt", "erf", "erfc", FPBuiltinType::EXT_1OPS)
++          .Cases("atan2", "pow", "hypot", "ldexp", FPBuiltinType::EXT_2OPS)
++          .Case("sincos", FPBuiltinType::EXT_3OPS)
++          .Default(FPBuiltinType::UNKNOWN);
++  return Type;
++}
++
++SPIRVValue *LLVMToSPIRVBase::transFPBuiltinIntrinsicInst(IntrinsicInst *II,
++                                                         SPIRVBasicBlock *BB) {
++  StringRef OpName;
++  auto FPBuiltinTypeVal = getFPBuiltinType(II, OpName);
++  if (FPBuiltinTypeVal == FPBuiltinType::UNKNOWN)
++    return nullptr;
++  switch (FPBuiltinTypeVal) {
++  case FPBuiltinType::REGULAR_MATH: {
++    auto BinOp = StringSwitch<Op>(OpName)
++                     .Case("fadd", OpFAdd)
++                     .Case("fsub", OpFSub)
++                     .Case("fmul", OpFMul)
++                     .Case("fdiv", OpFDiv)
++                     .Case("frem", OpFRem)
++                     .Default(OpUndef);
++    auto *BI = BM->addBinaryInst(BinOp, transType(II->getType()),
++                                 transValue(II->getArgOperand(0), BB),
++                                 transValue(II->getArgOperand(1), BB), BB);
++    return addFPBuiltinDecoration(BM, II, BI);
++  }
++  case FPBuiltinType::EXT_1OPS: {
++    if (!checkTypeForSPIRVExtendedInstLowering(II, BM))
++      break;
++    SPIRVType *STy = transType(II->getType());
++    std::vector<SPIRVValue *> Ops(1, transValue(II->getArgOperand(0), BB));
++    auto ExtOp = StringSwitch<SPIRVWord>(OpName)
++                     .Case("sin", OpenCLLIB::Sin)
++                     .Case("cos", OpenCLLIB::Cos)
++                     .Case("tan", OpenCLLIB::Tan)
++                     .Case("sinh", OpenCLLIB::Sinh)
++                     .Case("cosh", OpenCLLIB::Cosh)
++                     .Case("tanh", OpenCLLIB::Tanh)
++                     .Case("asin", OpenCLLIB::Asin)
++                     .Case("acos", OpenCLLIB::Acos)
++                     .Case("atan", OpenCLLIB::Atan)
++                     .Case("asinh", OpenCLLIB::Asinh)
++                     .Case("acosh", OpenCLLIB::Acosh)
++                     .Case("atanh", OpenCLLIB::Atanh)
++                     .Case("exp", OpenCLLIB::Exp)
++                     .Case("exp2", OpenCLLIB::Exp2)
++                     .Case("exp10", OpenCLLIB::Exp10)
++                     .Case("expm1", OpenCLLIB::Expm1)
++                     .Case("log", OpenCLLIB::Log)
++                     .Case("log2", OpenCLLIB::Log2)
++                     .Case("log10", OpenCLLIB::Log10)
++                     .Case("log1p", OpenCLLIB::Log1p)
++                     .Case("sqrt", OpenCLLIB::Sqrt)
++                     .Case("rsqrt", OpenCLLIB::Rsqrt)
++                     .Case("erf", OpenCLLIB::Erf)
++                     .Case("erfc", OpenCLLIB::Erfc)
++                     .Default(SPIRVWORD_MAX);
++    assert(ExtOp != SPIRVWORD_MAX);
++    auto *BI = BM->addExtInst(STy, BM->getExtInstSetId(SPIRVEIS_OpenCL), ExtOp,
++                              Ops, BB);
++    return addFPBuiltinDecoration(BM, II, BI);
++  }
++  case FPBuiltinType::EXT_2OPS: {
++    if (!checkTypeForSPIRVExtendedInstLowering(II, BM))
++      break;
++    SPIRVType *STy = transType(II->getType());
++    std::vector<SPIRVValue *> Ops{transValue(II->getArgOperand(0), BB),
++                                  transValue(II->getArgOperand(1), BB)};
++    auto ExtOp = StringSwitch<SPIRVWord>(OpName)
++                     .Case("atan2", OpenCLLIB::Atan2)
++                     .Case("hypot", OpenCLLIB::Hypot)
++                     .Case("pow", OpenCLLIB::Pow)
++                     .Case("ldexp", OpenCLLIB::Ldexp)
++                     .Default(SPIRVWORD_MAX);
++    assert(ExtOp != SPIRVWORD_MAX);
++    auto *BI = BM->addExtInst(STy, BM->getExtInstSetId(SPIRVEIS_OpenCL), ExtOp,
++                              Ops, BB);
++    return addFPBuiltinDecoration(BM, II, BI);
++  }
++  case FPBuiltinType::EXT_3OPS: {
++    if (!checkTypeForSPIRVExtendedInstLowering(II, BM))
++      break;
++    SPIRVType *STy = transType(II->getType());
++    std::vector<SPIRVValue *> Ops{transValue(II->getArgOperand(0), BB),
++                                  transValue(II->getArgOperand(1), BB),
++                                  transValue(II->getArgOperand(2), BB)};
++    auto ExtOp = StringSwitch<SPIRVWord>(OpName)
++                     .Case("sincos", OpenCLLIB::Sincos)
++                     .Default(SPIRVWORD_MAX);
++    assert(ExtOp != SPIRVWORD_MAX);
++    auto *BI = BM->addExtInst(STy, BM->getExtInstSetId(SPIRVEIS_OpenCL), ExtOp,
++                              Ops, BB);
++    return addFPBuiltinDecoration(BM, II, BI);
++  }
++  default:
++    return nullptr;
++  }
++  return nullptr;
++}
++
+ SPIRVValue *LLVMToSPIRVBase::transFenceInst(FenceInst *FI,
+                                             SPIRVBasicBlock *BB) {
+   SPIRVWord MemorySemantics;
+diff --git a/lib/SPIRV/SPIRVWriter.h b/lib/SPIRV/SPIRVWriter.h
+index 3d8c7d50..2b0529e5 100644
+--- a/lib/SPIRV/SPIRVWriter.h
++++ b/lib/SPIRV/SPIRVWriter.h
+@@ -108,6 +108,16 @@ public:
+   bool transWorkItemBuiltinCallsToVariables();
+   bool isKnownIntrinsic(Intrinsic::ID Id);
+   SPIRVValue *transIntrinsicInst(IntrinsicInst *Intrinsic, SPIRVBasicBlock *BB);
++  enum class FPBuiltinType {
++    REGULAR_MATH,
++    EXT_1OPS,
++    EXT_2OPS,
++    EXT_3OPS,
++    UNKNOWN
++  };
++  FPBuiltinType getFPBuiltinType(IntrinsicInst *II, StringRef &);
++  SPIRVValue *transFPBuiltinIntrinsicInst(IntrinsicInst *II,
++                                          SPIRVBasicBlock *BB);
+   SPIRVValue *transFenceInst(FenceInst *FI, SPIRVBasicBlock *BB);
+   SPIRVValue *transCallInst(CallInst *Call, SPIRVBasicBlock *BB);
+   SPIRVValue *transDirectCallInst(CallInst *Call, SPIRVBasicBlock *BB);
+diff --git a/lib/SPIRV/libSPIRV/SPIRVDecorate.h b/lib/SPIRV/libSPIRV/SPIRVDecorate.h
+index 2e4458e5..b02f9b23 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVDecorate.h
++++ b/lib/SPIRV/libSPIRV/SPIRVDecorate.h
+@@ -178,6 +178,8 @@ public:
+     case internal::DecorationInitModeINTEL:
+     case internal::DecorationImplementInCSRINTEL:
+       return ExtensionID::SPV_INTEL_global_variable_decorations;
++    case DecorationFPMaxErrorDecorationINTEL:
++      return ExtensionID::SPV_INTEL_fp_max_error;
+     case internal::DecorationCacheControlLoadINTEL:
+     case internal::DecorationCacheControlStoreINTEL:
+       return ExtensionID::SPV_INTEL_cache_controls;
+diff --git a/lib/SPIRV/libSPIRV/SPIRVEnum.h b/lib/SPIRV/libSPIRV/SPIRVEnum.h
+index a4e47479..8f8e2c97 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVEnum.h
++++ b/lib/SPIRV/libSPIRV/SPIRVEnum.h
+@@ -476,6 +476,8 @@ template <> inline void SPIRVMap<Decoration, SPIRVCapVec>::init() {
+                {internal::CapabilityCacheControlsINTEL});
+   ADD_VEC_INIT(internal::DecorationCacheControlStoreINTEL,
+                {internal::CapabilityCacheControlsINTEL});
++  ADD_VEC_INIT(DecorationFPMaxErrorDecorationINTEL,
++               {CapabilityFPMaxErrorINTEL});
+ }
+ 
+ template <> inline void SPIRVMap<BuiltIn, SPIRVCapVec>::init() {
+diff --git a/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h b/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
+index a06a12af..6b2dc058 100644
+--- a/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
++++ b/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
+@@ -179,6 +179,7 @@ template <> inline void SPIRVMap<Decoration, std::string>::init() {
+   add(DecorationMediaBlockIOINTEL, "MediaBlockIOINTEL");
+   add(DecorationAliasScopeINTEL, "AliasScopeINTEL");
+   add(DecorationNoAliasINTEL, "NoAliasINTEL");
++  add(DecorationFPMaxErrorDecorationINTEL, "FPMaxErrorDecorationINTEL");
+ 
+   // From spirv_internal.hpp
+   add(internal::DecorationCallableFunctionINTEL, "CallableFunctionINTEL");
+@@ -601,6 +602,8 @@ template <> inline void SPIRVMap<Capability, std::string>::init() {
+   add(CapabilityDebugInfoModuleINTEL, "DebugInfoModuleINTEL");
+   add(CapabilitySplitBarrierINTEL, "SplitBarrierINTEL");
+   add(CapabilityGroupUniformArithmeticKHR, "GroupUniformArithmeticKHR");
++  add(CapabilityFPMaxErrorINTEL, "FPMaxErrorINTEL");
++
+   // From spirv_internal.hpp
+   add(internal::CapabilityFPGADSPControlINTEL, "FPGADSPControlINTEL");
+   add(internal::CapabilityFastCompositeINTEL, "FastCompositeINTEL");
+diff --git a/test/extensions/INTEL/SPV_INTEL_fp_max_error/IntelFPMaxError.ll b/test/extensions/INTEL/SPV_INTEL_fp_max_error/IntelFPMaxError.ll
+new file mode 100644
+index 00000000..79a0f012
+--- /dev/null
++++ b/test/extensions/INTEL/SPV_INTEL_fp_max_error/IntelFPMaxError.ll
+@@ -0,0 +1,245 @@
++; RUN: llvm-as %s -o %t.bc
++; RUN: llvm-spirv %t.bc --spirv-ext=+SPV_INTEL_fp_max_error --spirv-allow-unknown-intrinsics=llvm.fpbuiltin -o %t.spv
++; RUN: llvm-spirv %t.spv -to-text -o %t.spt
++; RUN: FileCheck < %t.spt %s --check-prefix=CHECK-SPIRV
++
++; RUN: llvm-spirv -r %t.spv -o %t.rev.bc
++; RUN: llvm-dis < %t.rev.bc | FileCheck %s --check-prefix=CHECK-LLVM
++
++; CHECK-SPIRV: Capability FPMaxErrorINTEL
++; CHECK-SPIRV: Extension "SPV_INTEL_fp_max_error"
++; CHECK-SPIRV: ExtInstImport [[#OCLEXTID:]] "OpenCL.std"
++
++; CHECK-SPIRV: Name [[#T1:]] "t1"
++; CHECK-SPIRV: Name [[#T2:]] "t2"
++; CHECK-SPIRV: Name [[#T3:]] "t3"
++; CHECK-SPIRV: Name [[#T4:]] "t4"
++; CHECK-SPIRV: Name [[#T5:]] "t5"
++; CHECK-SPIRV: Name [[#T6:]] "t6"
++; CHECK-SPIRV: Name [[#T7:]] "t7"
++; CHECK-SPIRV: Name [[#T8:]] "t8"
++; CHECK-SPIRV: Name [[#T9:]] "t9"
++; CHECK-SPIRV: Name [[#T10:]] "t10"
++; CHECK-SPIRV: Name [[#T11:]] "t11"
++; CHECK-SPIRV: Name [[#T12:]] "t12"
++; CHECK-SPIRV: Name [[#T13:]] "t13"
++; CHECK-SPIRV: Name [[#T14:]] "t14"
++; CHECK-SPIRV: Name [[#T15:]] "t15"
++; CHECK-SPIRV: Name [[#T16:]] "t16"
++; CHECK-SPIRV: Name [[#T17:]] "t17"
++; CHECK-SPIRV: Name [[#T18:]] "t18"
++; CHECK-SPIRV: Name [[#T19:]] "t19"
++; CHECK-SPIRV: Name [[#T20:]] "t20"
++; CHECK-SPIRV: Name [[#T21:]] "t21"
++; CHECK-SPIRV: Name [[#T22:]] "t22"
++; CHECK-SPIRV: Name [[#T23:]] "t23"
++; CHECK-SPIRV: Name [[#T24:]] "t24"
++; CHECK-SPIRV: Name [[#T25:]] "t25"
++; CHECK-SPIRV: Name [[#T26:]] "t26"
++; CHECK-SPIRV: Name [[#T27:]] "t27"
++; CHECK-SPIRV: Name [[#T28:]] "t28"
++; CHECK-SPIRV: Name [[#T29:]] "t29"
++; CHECK-SPIRV: Name [[#T30:]] "t30"
++; CHECK-SPIRV: Name [[#T31:]] "t31"
++; CHECK-SPIRV: Name [[#T32:]] "t32"
++; CHECK-SPIRV: Name [[#T33:]] "t33"
++
++; CHECK-SPIRV: Decorate [[#T3]] FPMaxErrorDecorationINTEL 1056964608
++; CHECK-SPIRV: Decorate [[#T4]] FPMaxErrorDecorationINTEL 1065353216
++; CHECK-SPIRV: Decorate [[#T5]] FPMaxErrorDecorationINTEL 1065353216
++; CHECK-SPIRV: Decorate [[#T6]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T7]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T8]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T9]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T10]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T11]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T12]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T13]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T14]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T15]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T16]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T17]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T18]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T19]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T20]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T21]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T22]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T23]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T24]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T25]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T26]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T27]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T28]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T29]] FPMaxErrorDecorationINTEL 1075838976
++; CHECK-SPIRV: Decorate [[#T30]] FPMaxErrorDecorationINTEL 1082130432
++; CHECK-SPIRV: Decorate [[#T31]] FPMaxErrorDecorationINTEL 1082130432
++; CHECK-SPIRV: Decorate [[#T32]] FPMaxErrorDecorationINTEL 1082130432
++; CHECK-SPIRV: Decorate [[#T33]] FPMaxErrorDecorationINTEL 1166016512
++
++; CHECK-SPIRV: 3 TypeFloat [[#FTYPE:]] 32
++
++; CHECK-SPIRV: FAdd [[#FTYPE]] [[#T1]]
++; CHECK-SPIRV: FSub [[#FTYPE]] [[#T2]]
++; CHECK-SPIRV: FMul [[#FTYPE]] [[#T3]]
++; CHECK-SPIRV: FDiv [[#FTYPE]] [[#T4]]
++; CHECK-SPIRV: FRem [[#FTYPE]] [[#T5]]
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T6]] [[#OCLEXTID]] sin
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T7]] [[#OCLEXTID]] cos
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T8]] [[#OCLEXTID]] tan
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T9]] [[#OCLEXTID]] sinh
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T10]] [[#OCLEXTID]] cosh
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T11]] [[#OCLEXTID]] tanh
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T12]] [[#OCLEXTID]] asin
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T13]] [[#OCLEXTID]] acos
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T14]] [[#OCLEXTID]] atan
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T15]] [[#OCLEXTID]] asinh
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T16]] [[#OCLEXTID]] acosh
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T17]] [[#OCLEXTID]] atanh
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T18]] [[#OCLEXTID]] exp
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T19]] [[#OCLEXTID]] exp2
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T20]] [[#OCLEXTID]] exp10
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T21]] [[#OCLEXTID]] expm1
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T22]] [[#OCLEXTID]] log
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T23]] [[#OCLEXTID]] log2
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T24]] [[#OCLEXTID]] log10
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T25]] [[#OCLEXTID]] log1p
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T26]] [[#OCLEXTID]] sqrt
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T27]] [[#OCLEXTID]] rsqrt
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T28]] [[#OCLEXTID]] erf
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T29]] [[#OCLEXTID]] erfc
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T30]] [[#OCLEXTID]] atan2
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T31]] [[#OCLEXTID]] ldexp
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T32]] [[#OCLEXTID]] pow
++; CHECK-SPIRV: ExtInst [[#FTYPE]] [[#T33]] [[#OCLEXTID]] hypot
++
++target datalayout = "e-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024-n8:16:32:64"
++target triple = "spir64-unknown-unknown"
++
++define void @test_fp_max_error_decoration(float %f1, float %f2, float %f3, i32 %f4) {
++entry:
++; CHECK-LLVM-NOT: fadd float %f1, %f2, !fpbuiltin-max-error
++; CHECK-LLVM-NOT: fsub float %f1, %f2, !fpbuiltin-max-error
++; CHECK-LLVM: fmul float %f1, %f2, !fpbuiltin-max-error ![[#ME1:]]
++; CHECK-LLVM: fdiv float %f1, %f2, !fpbuiltin-max-error ![[#ME2:]]
++; CHECK-LLVM: frem float %f1, %f2, !fpbuiltin-max-error ![[#ME2]]
++  %t1 = call float @llvm.fpbuiltin.fadd.f32(float %f1, float %f2)
++  %t2 = call float @llvm.fpbuiltin.fsub.f32(float %f1, float %f2)
++  %t3 = call float @llvm.fpbuiltin.fmul.f32(float %f1, float %f2) #0
++  %t4 = call float @llvm.fpbuiltin.fdiv.f32(float %f1, float %f2) #1
++  %t5 = call float @llvm.fpbuiltin.frem.f32(float %f1, float %f2) #1
++
++; CHECK-LLVM: call spir_func float @_Z3sinf(float %f1) #[[#AT3:]]
++; CHECK-LLVM: call spir_func float @_Z3cosf(float %f1) #[[#AT3]]
++; CHECK-LLVM: call spir_func float @_Z3tanf(float %f1) #[[#AT3]]
++  %t6 = call float @llvm.fpbuiltin.sin.f32(float %f1) #2
++  %t7 = call float @llvm.fpbuiltin.cos.f32(float %f1) #2
++  %t8 = call float @llvm.fpbuiltin.tan.f32(float %f1) #2
++
++; CHECK-LLVM: call spir_func float @_Z4sinhf(float %f1) #[[#AT3]]
++; CHECK-LLVM: call spir_func float @_Z4coshf(float %f1) #[[#AT3]]
++; CHECK-LLVM: call spir_func float @_Z4tanhf(float %f1) #[[#AT3]]
++  %t9 = call float @llvm.fpbuiltin.sinh.f32(float %f1) #2
++  %t10 = call float @llvm.fpbuiltin.cosh.f32(float %f1) #2
++  %t11 = call float @llvm.fpbuiltin.tanh.f32(float %f1) #2
++
++; CHECK-LLVM: call spir_func float @_Z4asinf(float %f1) #[[#AT3]]
++; CHECK-LLVM: call spir_func float @_Z4acosf(float %f1) #[[#AT3]]
++; CHECK-LLVM: call spir_func float @_Z4atanf(float %f1) #[[#AT3]]
++  %t12 = call float @llvm.fpbuiltin.asin.f32(float %f1) #2
++  %t13 = call float @llvm.fpbuiltin.acos.f32(float %f1) #2
++  %t14 = call float @llvm.fpbuiltin.atan.f32(float %f1) #2
++
++; CHECK-LLVM:15 = call spir_func float @_Z5asinhf(float %f1) #[[#AT3]]
++; CHECK-LLVM:16 = call spir_func float @_Z5acoshf(float %f1) #[[#AT3]]
++; CHECK-LLVM:17 = call spir_func float @_Z5atanhf(float %f1) #[[#AT3]]
++  %t15 = call float @llvm.fpbuiltin.asinh.f32(float %f1) #2
++  %t16 = call float @llvm.fpbuiltin.acosh.f32(float %f1) #2
++  %t17 = call float @llvm.fpbuiltin.atanh.f32(float %f1) #2
++
++; CHECK-LLVM:18 = call spir_func float @_Z3expf(float %f1) #[[#AT3]]
++; CHECK-LLVM:19 = call spir_func float @_Z4exp2f(float %f1) #[[#AT3]]
++; CHECK-LLVM:20 = call spir_func float @_Z5exp10f(float %f1) #[[#AT3]]
++; CHECK-LLVM:21 = call spir_func float @_Z5expm1f(float %f1) #[[#AT3]]
++  %t18 = call float @llvm.fpbuiltin.exp.f32(float %f1) #2
++  %t19 = call float @llvm.fpbuiltin.exp2.f32(float %f1) #2
++  %t20 = call float @llvm.fpbuiltin.exp10.f32(float %f1) #2
++  %t21 = call float @llvm.fpbuiltin.expm1.f32(float %f1) #2
++
++; CHECK-LLVM: call spir_func float @_Z3logf(float %f1) #[[#AT3]]
++; CHECK-LLVM: call spir_func float @_Z4log2f(float %f1) #[[#AT3]]
++; CHECK-LLVM: call spir_func float @_Z5log10f(float %f1) #[[#AT3]]
++; CHECK-LLVM: call spir_func float @_Z5log1pf(float %f1) #[[#AT3]]
++  %t22 = call float @llvm.fpbuiltin.log.f32(float %f1) #2
++  %t23 = call float @llvm.fpbuiltin.log2.f32(float %f1) #2
++  %t24 = call float @llvm.fpbuiltin.log10.f32(float %f1) #2
++  %t25 = call float @llvm.fpbuiltin.log1p.f32(float %f1) #2
++
++; CHECK-LLVM: call spir_func float @_Z4sqrtf(float %f1) #[[#AT3]]
++; CHECK-LLVM: call spir_func float @_Z5rsqrtf(float %f1) #[[#AT3]]
++; CHECK-LLVM: call spir_func float @_Z3erff(float %f1) #[[#AT3]]
++; CHECK-LLVM: call spir_func float @_Z4erfcf(float %f1) #[[#AT3]]
++  %t26 = call float @llvm.fpbuiltin.sqrt.f32(float %f1) #2
++  %t27 = call float @llvm.fpbuiltin.rsqrt.f32(float %f1) #2
++  %t28 = call float @llvm.fpbuiltin.erf.f32(float %f1) #2
++  %t29 = call float @llvm.fpbuiltin.erfc.f32(float %f1) #2
++
++; CHECK-LLVM: call spir_func float @_Z5atan2ff(float %f1, float %f2) #[[#AT4:]]
++; CHECK-LLVM: call spir_func float @_Z5ldexpfi(float %f1, i32 %f4) #[[#AT4]]
++; CHECK-LLVM: call spir_func float @_Z3powff(float %f1, float %f2) #[[#AT4]]
++  %t30 = call float @llvm.fpbuiltin.atan2.f32(float %f1, float %f2) #3
++  %t31 = call float @llvm.fpbuiltin.ldexp.f32.i32(float %f1, i32 %f4) #3
++  %t32 = call float @llvm.fpbuiltin.pow.f32(float %f1, float %f2) #3
++  
++  ; CHECK-LLVM: call spir_func float @_Z5hypotff(float %f1, float %f2) #[[#AT5:]]
++  %t33 = call float @llvm.fpbuiltin.hypot.f32(float %f1, float %f2) #4
++
++  ret void
++}
++
++declare float @llvm.fpbuiltin.fadd.f32(float, float)
++declare float @llvm.fpbuiltin.fsub.f32(float, float)
++declare float @llvm.fpbuiltin.fmul.f32(float, float)
++declare float @llvm.fpbuiltin.fdiv.f32(float, float)
++declare float @llvm.fpbuiltin.frem.f32(float, float)
++
++declare float @llvm.fpbuiltin.sin.f32(float)
++declare float @llvm.fpbuiltin.cos.f32(float)
++declare float @llvm.fpbuiltin.tan.f32(float)
++declare float @llvm.fpbuiltin.sinh.f32(float)
++declare float @llvm.fpbuiltin.cosh.f32(float)
++declare float @llvm.fpbuiltin.tanh.f32(float)
++declare float @llvm.fpbuiltin.asin.f32(float)
++declare float @llvm.fpbuiltin.acos.f32(float)
++declare float @llvm.fpbuiltin.atan.f32(float)
++declare float @llvm.fpbuiltin.asinh.f32(float)
++declare float @llvm.fpbuiltin.acosh.f32(float)
++declare float @llvm.fpbuiltin.atanh.f32(float)
++declare float @llvm.fpbuiltin.exp.f32(float)
++declare float @llvm.fpbuiltin.exp2.f32(float)
++declare float @llvm.fpbuiltin.exp10.f32(float)
++declare float @llvm.fpbuiltin.expm1.f32(float)
++declare float @llvm.fpbuiltin.log.f32(float)
++declare float @llvm.fpbuiltin.log2.f32(float)
++declare float @llvm.fpbuiltin.log10.f32(float)
++declare float @llvm.fpbuiltin.log1p.f32(float)
++declare float @llvm.fpbuiltin.sqrt.f32(float)
++declare float @llvm.fpbuiltin.rsqrt.f32(float)
++declare float @llvm.fpbuiltin.erf.f32(float)
++declare float @llvm.fpbuiltin.erfc.f32(float)
++
++declare float @llvm.fpbuiltin.atan2.f32(float, float)
++declare float @llvm.fpbuiltin.hypot.f32(float, float)
++declare float @llvm.fpbuiltin.pow.f32(float, float)
++declare float @llvm.fpbuiltin.ldexp.f32.i32(float, i32)
++
++; CHECK-LLVM: attributes #[[#AT3]] = {{{.*}} "fpbuiltin-max-error"="2.5{{0+}}" {{.*}}}
++; CHECK-LLVM: attributes #[[#AT4]] = {{{.*}} "fpbuiltin-max-error"="4.0{{0+}}" {{.*}}}
++; CHECK-LLVM: attributes #[[#AT5]] = {{{.*}} "fpbuiltin-max-error"="4096.0{{0+}}" {{.*}}}
++; CHECK-LLVM: ![[#ME1]] = !{!"0.500000"}
++; CHECK-LLVM: ![[#ME2]] = !{!"1.000000"}
++
++attributes #0 = { "fpbuiltin-max-error"="0.5" }
++attributes #1 = { "fpbuiltin-max-error"="1.0" }
++attributes #2 = { "fpbuiltin-max-error"="2.5" }
++attributes #3 = { "fpbuiltin-max-error"="4.0" }
++attributes #4 = { "fpbuiltin-max-error"="4096.0" }
+-- 
+2.20.1
+

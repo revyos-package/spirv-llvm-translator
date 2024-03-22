@@ -56,6 +56,13 @@ spirv-llvm-translator-15 (15.0.0-1) unstable; urgency=medium
 
  -- Andreas Beckmann <anbe@debian.org>  Mon, 03 Oct 2022 02:09:37 +0200
 
+spirv-llvm-translator-14 (14.0.0-13) UNRELEASED; urgency=medium
+
+  * Update from llvm_release_140 branch (v14.0.0-183-gccae9f2a).
+  * Update .symbols control file.
+
+ -- Andreas Beckmann <anbe@debian.org>  Fri, 22 Mar 2024 14:00:19 +0100
+
 spirv-llvm-translator-14 (14.0.0-12) unstable; urgency=medium
 
   * Update from llvm_release_140 branch (v14.0.0-179-gd54b2cea).
