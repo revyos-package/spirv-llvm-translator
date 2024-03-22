@@ -1,7 +1,7 @@
-From 78c690de655af00a71486a6b29a358078b51f01b Mon Sep 17 00:00:00 2001
+From 7f033c0e1ae58f0a6c302895be27de9cc8198afb Mon Sep 17 00:00:00 2001
 From: Igor Gorban <igor.gorban@intel.com>
-Date: Thu, 21 Mar 2024 13:14:46 +0100
-Subject: [PATCH 182/183] Add IAddCarry and ISubBorrow builtins (#2392) (#2452)
+Date: Thu, 21 Mar 2024 15:11:19 +0100
+Subject: [PATCH 89/89] Add IAddCarry and ISubBorrow builtins (#2392) (#2453)
 
 The fix adds support for IR builtin calls
 __spirv_IAddCarry and __spirv_ISubBorrow.
@@ -11,21 +11,21 @@ SPIRVUtil changes are needed to support situations where builtin don't have corr
 Co-authored-by: bwlodarcz <bertrand.wlodarczyk@intel.com>
 ---
  lib/SPIRV/SPIRVReader.cpp                  |  12 +-
- lib/SPIRV/SPIRVUtil.cpp                    |  27 +++-
- lib/SPIRV/SPIRVWriter.cpp                  |  18 +++
- test/iaddcarry_builtin.ll                  | 163 +++++++++++++++++++++
- test/isubborrow_builtin.ll                 | 162 ++++++++++++++++++++
+ lib/SPIRV/SPIRVUtil.cpp                    |  31 +++-
+ lib/SPIRV/SPIRVWriter.cpp                  |  16 ++
+ test/iaddcarry_builtin.ll                  | 162 +++++++++++++++++++++
+ test/isubborrow_builtin.ll                 | 162 +++++++++++++++++++++
  test/llvm-intrinsics/uadd.with.overflow.ll |   6 -
  test/llvm-intrinsics/usub.with.overflow.ll |   7 -
- 7 files changed, 366 insertions(+), 29 deletions(-)
+ 7 files changed, 365 insertions(+), 31 deletions(-)
  create mode 100644 test/iaddcarry_builtin.ll
  create mode 100644 test/isubborrow_builtin.ll
 
 diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
-index cd44c021..cdfecbb0 100644
+index e3ef3af3..393345ad 100644
 --- a/lib/SPIRV/SPIRVReader.cpp
 +++ b/lib/SPIRV/SPIRVReader.cpp
-@@ -2496,20 +2496,12 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
+@@ -2498,20 +2498,12 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
      return mapValue(BV,
                      transRelational(static_cast<SPIRVInstruction *>(BV), BB));
    case OpIAddCarry: {
@@ -49,17 +49,27 @@ index cd44c021..cdfecbb0 100644
    case OpGetKernelWorkGroupSize:
    case OpGetKernelPreferredWorkGroupSizeMultiple:
 diff --git a/lib/SPIRV/SPIRVUtil.cpp b/lib/SPIRV/SPIRVUtil.cpp
-index 61a7a129..82dc88d2 100644
+index 770d7114..99d9622b 100644
 --- a/lib/SPIRV/SPIRVUtil.cpp
 +++ b/lib/SPIRV/SPIRVUtil.cpp
-@@ -2052,11 +2052,23 @@ bool postProcessBuiltinReturningStruct(Function *F) {
+@@ -256,7 +256,7 @@ PointerType *getSPIRVOpaquePtrType(Module *M, Op OC) {
+ }
+ 
+ void getFunctionTypeParameterTypes(llvm::FunctionType *FT,
+-                                   std::vector<Type *> &ArgTys) {
++                                   SmallVector<Type *> &ArgTys) {
+   for (auto I = FT->param_begin(), E = FT->param_end(); I != E; ++I) {
+     ArgTys.push_back(*I);
+   }
+@@ -2105,11 +2105,23 @@ bool postProcessBuiltinReturningStruct(Function *F) {
    SmallVector<Instruction *, 32> InstToRemove;
    for (auto *U : F->users()) {
      if (auto *CI = dyn_cast<CallInst>(U)) {
 -      auto *ST = cast<StoreInst>(*(CI->user_begin()));
+-      std::vector<Type *> ArgTys;
 +      IRBuilder<> Builder(CI->getParent());
 +      Builder.SetInsertPoint(CI);
-+      SmallVector<User *, 5> Users(CI->users());
++      SmallVector<User *> Users(CI->users());
 +      Value *A = nullptr;
 +      for (auto *U : Users) {
 +        if (auto *SI = dyn_cast<StoreInst>(U)) {
@@ -71,25 +81,26 @@ index 61a7a129..82dc88d2 100644
 +      if (!A) {
 +        A = Builder.CreateAlloca(F->getReturnType());
 +      }
-       std::vector<Type *> ArgTys;
++      SmallVector<Type *> ArgTys;
        getFunctionTypeParameterTypes(F->getFunctionType(), ArgTys);
 -      ArgTys.insert(ArgTys.begin(),
 -                    PointerType::get(F->getReturnType(), SPIRAS_Private));
 +      ArgTys.insert(ArgTys.begin(), A->getType());
        auto *NewF =
            getOrCreateFunction(M, Type::getVoidTy(*Context), ArgTys, Name);
-       NewF->addParamAttr(0, Attribute::get(*Context,
-@@ -2064,10 +2076,13 @@ bool postProcessBuiltinReturningStruct(Function *F) {
-                                            F->getReturnType()));
+       auto SretAttr = Attribute::get(*Context, Attribute::AttrKind::StructRet,
+@@ -2117,11 +2129,14 @@ bool postProcessBuiltinReturningStruct(Function *F) {
+       NewF->addParamAttr(0, SretAttr);
        NewF->setCallingConv(F->getCallingConv());
        auto Args = getArguments(CI);
 -      Args.insert(Args.begin(), ST->getPointerOperand());
 -      auto *NewCI = CallInst::Create(NewF, Args, CI->getName(), CI);
 +      Args.insert(Args.begin(), A);
 +      CallInst *NewCI = Builder.CreateCall(NewF, Args, CI->getName());
+       NewCI->addParamAttr(0, SretAttr);
        NewCI->setCallingConv(CI->getCallingConv());
 -      InstToRemove.push_back(ST);
-+      SmallVector<User *, 5> CIUsers(CI->users());
++      SmallVector<User *> CIUsers(CI->users());
 +      for (auto *CIUser : CIUsers) {
 +        CIUser->replaceUsesOfWith(CI, A);
 +      }
@@ -97,17 +108,16 @@ index 61a7a129..82dc88d2 100644
      }
    }
 diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
-index cb6bcc69..dcd74af4 100644
+index 9c094f05..cbe70323 100644
 --- a/lib/SPIRV/SPIRVWriter.cpp
 +++ b/lib/SPIRV/SPIRVWriter.cpp
-@@ -5384,6 +5384,24 @@ LLVMToSPIRVBase::transBuiltinToInstWithoutDecoration(Op OC, CallInst *CI,
+@@ -5501,6 +5501,22 @@ LLVMToSPIRVBase::transBuiltinToInstWithoutDecoration(Op OC, CallInst *CI,
      return BM->addCompositeConstructInst(transType(CI->getType()), Operands,
                                           BB);
    }
 +  case OpIAddCarry: {
 +    Function *F = CI->getCalledFunction();
-+    auto *RetTy = F->arg_begin()->getType()->getPointerElementType();
-+    StructType *St = cast<StructType>(RetTy);
++    StructType *St = cast<StructType>(F->getParamStructRetType(0));
 +    SPIRVValue *V = BM->addBinaryInst(OpIAddCarry, transType(St),
 +                                      transValue(CI->getArgOperand(1), BB),
 +                                      transValue(CI->getArgOperand(2), BB), BB);
@@ -115,8 +125,7 @@ index cb6bcc69..dcd74af4 100644
 +  }
 +  case OpISubBorrow: {
 +    Function *F = CI->getCalledFunction();
-+    auto *RetTy = F->arg_begin()->getType()->getPointerElementType();
-+    StructType *St = cast<StructType>(RetTy);
++    StructType *St = cast<StructType>(F->getParamStructRetType(0));
 +    SPIRVValue *V = BM->addBinaryInst(OpISubBorrow, transType(St),
 +                                      transValue(CI->getArgOperand(1), BB),
 +                                      transValue(CI->getArgOperand(2), BB), BB);
@@ -127,10 +136,10 @@ index cb6bcc69..dcd74af4 100644
        return BM->addUnaryInst(OC, transType(CI->getType()),
 diff --git a/test/iaddcarry_builtin.ll b/test/iaddcarry_builtin.ll
 new file mode 100644
-index 00000000..d9a3b1d3
+index 00000000..d85e32c0
 --- /dev/null
 +++ b/test/iaddcarry_builtin.ll
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,162 @@
 +; REQUIRES: spirv-dis
 +; RUN: llvm-as %s -o %t.bc
 +; RUN: llvm-spirv %t.bc -o %t.spv
@@ -177,10 +186,9 @@ index 00000000..d9a3b1d3
 +define spir_func void @test_builtin_iaddcarrycc(i8 %a, i8 %b) {
 +  entry:
 +  %0 = alloca %i8struct
-+  call void @_Z17__spirv_IAddCarrycc(%i8struct* %0, i8 %a, i8 %b)
++  call void @_Z17__spirv_IAddCarrycc(ptr sret (%i8struct) %0, i8 %a, i8 %b)
 +  ret void
 +}
-+
 +; CHECK-SPIRV:           [[a:%[a-z0-9_]+]] = OpFunctionParameter [[uchar]]
 +; CHECK-SPIRV:           [[b:%[a-z0-9_]+]] = OpFunctionParameter [[uchar]]
 +; CHECK-SPIRV:       [[entry:%[a-z0-9_]+]] = OpLabel
@@ -196,7 +204,7 @@ index 00000000..d9a3b1d3
 +define spir_func void @test_builtin_iaddcarryss(i16 %a, i16 %b) {
 +  entry:
 +  %0 = alloca %i16struct
-+  call void @_Z17__spirv_IAddCarryss(%i16struct* %0, i16 %a, i16 %b)
++  call void @_Z17__spirv_IAddCarryss(ptr sret (%i16struct) %0, i16 %a, i16 %b)
 +  ret void
 +}
 +; CHECK-SPIRV:         [[a_0:%[a-z0-9_]+]] = OpFunctionParameter [[ushort]]
@@ -214,7 +222,7 @@ index 00000000..d9a3b1d3
 +define spir_func void @test_builtin_iaddcarryii(i32 %a, i32 %b) {
 +  entry:
 +  %0 = alloca %i32struct
-+  call void @_Z17__spirv_IAddCarryii(%i32struct* %0, i32 %a, i32 %b)
++  call void @_Z17__spirv_IAddCarryii(ptr sret (%i32struct) %0, i32 %a, i32 %b)
 +  ret void
 +}
 +; CHECK-SPIRV:         [[a_1:%[a-z0-9_]+]] = OpFunctionParameter [[uint]]
@@ -232,7 +240,7 @@ index 00000000..d9a3b1d3
 +define spir_func void @test_builtin_iaddcarryll(i64 %a, i64 %b) {
 +  entry:
 +  %0 = alloca %i64struct
-+  call void @_Z17__spirv_IAddCarryll(%i64struct* %0, i64 %a, i64 %b)
++  call void @_Z17__spirv_IAddCarryll(ptr sret (%i64struct) %0, i64 %a, i64 %b)
 +  ret void
 +}
 +; CHECK-SPIRV:         [[a_2:%[a-z0-9_]+]] = OpFunctionParameter [[ulong]]
@@ -250,7 +258,7 @@ index 00000000..d9a3b1d3
 +define spir_func void @test_builtin_iaddcarryDv4_xS_(<4 x i32> %a, <4 x i32> %b) {
 +  entry:
 +  %0 = alloca %vecstruct
-+  call void @_Z17__spirv_IAddCarryDv4_iS_(%vecstruct* %0, <4 x i32> %a, <4 x i32> %b)
++  call void @_Z17__spirv_IAddCarryDv4_iS_(ptr sret (%vecstruct) %0, <4 x i32> %a, <4 x i32> %b)
 +  ret void
 +}
 +; CHECK-SPIRV:         [[a_3:%[a-z0-9_]+]] = OpFunctionParameter [[v4uint]]
@@ -271,8 +279,8 @@ index 00000000..d9a3b1d3
 +define spir_func void @test_builtin_iaddcarry_anon(i32 %a, i32 %b) {
 +  entry:
 +  %0 = alloca %struct.anon
-+  %1 = addrspacecast %struct.anon* %0 to %struct.anon addrspace(4)*
-+  call spir_func void @_Z17__spirv_IAddCarryIiiE4anonIT_T0_ES1_S2_(%struct.anon addrspace(4)* %1, i32 %a, i32 %b)
++  %1 = addrspacecast ptr %0 to ptr addrspace(4)
++  call spir_func void @_Z17__spirv_IAddCarryIiiE4anonIT_T0_ES1_S2_(ptr addrspace(4) sret(%struct.anon) align 4 %1, i32 %a, i32 %b)
 +  ret void
 +}
 +; CHECK-SPIRV:        [[a_4:%[a-z0-9_]+]] = OpFunctionParameter [[uint]]
@@ -288,15 +296,15 @@ index 00000000..d9a3b1d3
 +; CHECK-LLVM:  call spir_func void @_Z17__spirv_IAddCarryii.1([[struct_anon]] addrspace(4)* sret([[struct_anon]]) %1, i32 %a, i32 %b)
 +; CHECK-LLVM:  ret void
 +
-+declare void @_Z17__spirv_IAddCarryIiiE4anonIT_T0_ES1_S2_(%struct.anon addrspace(4)*, i32, i32)
-+declare void @_Z17__spirv_IAddCarrycc(%i8struct*, i8, i8)
-+declare void @_Z17__spirv_IAddCarryss(%i16struct*, i16, i16)
-+declare void @_Z17__spirv_IAddCarryii(%i32struct*, i32, i32)
-+declare void @_Z17__spirv_IAddCarryll(%i64struct*, i64, i64)
-+declare void @_Z17__spirv_IAddCarryDv4_iS_(%vecstruct*, <4 x i32>, <4 x i32>)
++declare void @_Z17__spirv_IAddCarryIiiE4anonIT_T0_ES1_S2_(ptr addrspace(4) sret(%struct.anon) align 4, i32, i32)
++declare void @_Z17__spirv_IAddCarrycc(ptr sret(%i8struct), i8, i8)
++declare void @_Z17__spirv_IAddCarryss(ptr sret(%i16struct), i16, i16)
++declare void @_Z17__spirv_IAddCarryii(ptr sret(%i32struct), i32, i32)
++declare void @_Z17__spirv_IAddCarryll(ptr sret(%i64struct), i64, i64)
++declare void @_Z17__spirv_IAddCarryDv4_iS_(ptr sret (%vecstruct), <4 x i32>, <4 x i32>)
 diff --git a/test/isubborrow_builtin.ll b/test/isubborrow_builtin.ll
 new file mode 100644
-index 00000000..f8cd48c9
+index 00000000..91b2f3fc
 --- /dev/null
 +++ b/test/isubborrow_builtin.ll
 @@ -0,0 +1,162 @@
@@ -347,7 +355,7 @@ index 00000000..f8cd48c9
 +define spir_func void @test_builtin_isubborrowcc(i8 %a, i8 %b) {
 +  entry:
 +  %0 = alloca %i8struct
-+  call void @_Z18__spirv_ISubBorrowcc(%i8struct* %0, i8 %a, i8 %b)
++  call void @_Z18__spirv_ISubBorrowcc(ptr sret (%i8struct) %0, i8 %a, i8 %b)
 +  ret void
 +}
 +; CHECK-SPIRV:           [[a:%[a-z0-9_]+]] = OpFunctionParameter [[uchar]]
@@ -365,7 +373,7 @@ index 00000000..f8cd48c9
 +define spir_func void @test_builtin_isubborrowss(i16 %a, i16 %b) {
 +  entry:
 +  %0 = alloca %i16struct
-+  call void @_Z18__spirv_ISubBorrowss(%i16struct* %0, i16 %a, i16 %b)
++  call void @_Z18__spirv_ISubBorrowss(ptr sret (%i16struct) %0, i16 %a, i16 %b)
 +  ret void
 +}
 +; CHECK-SPIRV:         [[a_0:%[a-z0-9_]+]] = OpFunctionParameter [[ushort]]
@@ -383,7 +391,7 @@ index 00000000..f8cd48c9
 +define spir_func void @test_builtin_isubborrowii(i32 %a, i32 %b) {
 +  entry:
 +  %0 = alloca %i32struct
-+  call void @_Z18__spirv_ISubBorrowii(%i32struct* %0, i32 %a, i32 %b)
++  call void @_Z18__spirv_ISubBorrowii(ptr sret (%i32struct) %0, i32 %a, i32 %b)
 +  ret void
 +}
 +; CHECK-SPIRV:         [[a_1:%[a-z0-9_]+]] = OpFunctionParameter [[uint]]
@@ -401,7 +409,7 @@ index 00000000..f8cd48c9
 +define spir_func void @test_builtin_isubborrowll(i64 %a, i64 %b) {
 +  entry:
 +  %0 = alloca %i64struct
-+  call void @_Z18__spirv_ISubBorrowll(%i64struct* %0, i64 %a, i64 %b)
++  call void @_Z18__spirv_ISubBorrowll(ptr sret (%i64struct) %0, i64 %a, i64 %b)
 +  ret void
 +}
 +; CHECK-SPIRV:         [[a_2:%[a-z0-9_]+]] = OpFunctionParameter [[ulong]]
@@ -419,7 +427,7 @@ index 00000000..f8cd48c9
 +define spir_func void @test_builtin_isubborrowDv4_xS_(<4 x i32> %a, <4 x i32> %b) {
 +  entry:
 +  %0 = alloca %vecstruct
-+  call void @_Z18__spirv_ISubBorrowDv4_iS_(%vecstruct* %0, <4 x i32> %a, <4 x i32> %b)
++  call void @_Z18__spirv_ISubBorrowDv4_iS_(ptr sret (%vecstruct) %0, <4 x i32> %a, <4 x i32> %b)
 +  ret void
 +}
 +; CHECK-SPIRV:         [[a_3:%[a-z0-9_]+]] = OpFunctionParameter [[v4uint]]
@@ -439,8 +447,8 @@ index 00000000..f8cd48c9
 +define spir_func void @test_builtin_isubborrow_anon(i32 %a, i32 %b) {
 +  entry:
 +  %0 = alloca %struct.anon
-+  %1 = addrspacecast %struct.anon* %0 to %struct.anon addrspace(4)*
-+  call spir_func void @_Z18__spirv_ISubBorrowIiiE4anonIT_T0_ES1_S2_(%struct.anon addrspace(4)* %1, i32 %a, i32 %b)
++  %1 = addrspacecast ptr %0 to ptr addrspace(4)
++  call spir_func void @_Z18__spirv_ISubBorrowIiiE4anonIT_T0_ES1_S2_(ptr addrspace(4) sret(%struct.anon) align 4 %1, i32 %a, i32 %b)
 +  ret void
 +}
 +; CHECK-SPIRV:        [[a_4:%[a-z0-9_]+]] = OpFunctionParameter [[uint]]
@@ -456,12 +464,12 @@ index 00000000..f8cd48c9
 +; CHECK-LLVM:  call spir_func void @_Z18__spirv_ISubBorrowii.1([[struct_anon]] addrspace(4)* sret([[struct_anon]]) %1, i32 %a, i32 %b)
 +; CHECK-LLVM:  ret void
 +
-+declare void @_Z18__spirv_ISubBorrowIiiE4anonIT_T0_ES1_S2_(%struct.anon addrspace(4)* align 4, i32, i32)
-+declare void @_Z18__spirv_ISubBorrowcc(%i8struct*, i8, i8)
-+declare void @_Z18__spirv_ISubBorrowss(%i16struct*, i16, i16)
-+declare void @_Z18__spirv_ISubBorrowii(%i32struct*, i32, i32)
-+declare void @_Z18__spirv_ISubBorrowll(%i64struct*, i64, i64)
-+declare void @_Z18__spirv_ISubBorrowDv4_iS_(%vecstruct*, <4 x i32>, <4 x i32>)
++declare void @_Z18__spirv_ISubBorrowIiiE4anonIT_T0_ES1_S2_(ptr addrspace(4) sret(%struct.anon) align 4, i32, i32)
++declare void @_Z18__spirv_ISubBorrowcc(ptr sret(%i8struct), i8, i8)
++declare void @_Z18__spirv_ISubBorrowss(ptr sret(%i16struct), i16, i16)
++declare void @_Z18__spirv_ISubBorrowii(ptr sret(%i32struct), i32, i32)
++declare void @_Z18__spirv_ISubBorrowll(ptr sret(%i64struct), i64, i64)
++declare void @_Z18__spirv_ISubBorrowDv4_iS_(ptr sret (%vecstruct), <4 x i32>, <4 x i32>)
 diff --git a/test/llvm-intrinsics/uadd.with.overflow.ll b/test/llvm-intrinsics/uadd.with.overflow.ll
 index 265e1f86..7d560b55 100644
 --- a/test/llvm-intrinsics/uadd.with.overflow.ll

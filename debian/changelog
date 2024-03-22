@@ -1,3 +1,9 @@
+spirv-llvm-translator-15 (15.0.0-8) UNRELEASED; urgency=medium
+
+  * Update from llvm_release_150 branch (v15.0.0-89-g7f033c0e).
+
+ -- Andreas Beckmann <anbe@debian.org>  Fri, 22 Mar 2024 14:25:01 +0100
+
 spirv-llvm-translator-15 (15.0.0-7) unstable; urgency=medium
 
   * Skip upstream testsuite on big-endian architectures (> 60% of the tests

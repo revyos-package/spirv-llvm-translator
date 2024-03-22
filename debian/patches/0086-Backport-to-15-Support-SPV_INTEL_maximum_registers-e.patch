@@ -1,13 +1,11 @@
-From f6fb55cd7b539ee6a70e3909c963f968cc40c1cd Mon Sep 17 00:00:00 2001
+From a59ddf8614542c7b6af8131b7641264882f0aab7 Mon Sep 17 00:00:00 2001
 From: Vlad Korovin <vladislav.korovin@intel.com>
-Date: Mon, 18 Mar 2024 16:49:57 +0100
-Subject: [PATCH 181/183] [Backport to 14] Support SPV_INTEL_maximum_registers
- extension (#2398)
+Date: Mon, 18 Mar 2024 16:49:18 +0100
+Subject: [PATCH 86/89] [Backport to 15] Support SPV_INTEL_maximum_registers
+ extension (#2394)
 
+* [Backport to 15] Support SPV_INTEL_maximum_registers extension (#2344)
 * Add infrastructure for translating ExecutionModeId (#2297)
-* [Backport to 14] Support SPV_INTEL_maximum_registers extension (#2344)
-
-Co-authored-by: Viktoria Maximova <viktoria.maksimova@intel.com>
 ---
  include/LLVMSPIRVExtensions.inc               |  1 +
  lib/SPIRV/SPIRVReader.cpp                     | 44 ++++++++++
@@ -15,7 +13,7 @@ Co-authored-by: Viktoria Maximova <viktoria.maksimova@intel.com>
  lib/SPIRV/SPIRVWriter.h                       |  2 +-
  lib/SPIRV/libSPIRV/SPIRVEntry.cpp             |  8 +-
  lib/SPIRV/libSPIRV/SPIRVEntry.h               | 88 ++++++++++++++-----
- lib/SPIRV/libSPIRV/SPIRVEnum.h                |  6 ++
+ lib/SPIRV/libSPIRV/SPIRVEnum.h                |  8 +-
  lib/SPIRV/libSPIRV/SPIRVIsValidEnum.h         |  3 +
  lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h         | 10 ++-
  lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h          |  1 +
@@ -23,23 +21,23 @@ Co-authored-by: Viktoria Maximova <viktoria.maksimova@intel.com>
  lib/SPIRV/libSPIRV/SPIRVStream.h              |  1 +
  lib/SPIRV/libSPIRV/spirv_internal.hpp         | 20 ++++-
  .../registerallocmode_maxreg_extension.ll     | 85 ++++++++++++++++++
- 14 files changed, 294 insertions(+), 44 deletions(-)
+ 14 files changed, 295 insertions(+), 45 deletions(-)
  create mode 100644 test/extensions/INTEL/SPV_INTEL_maximum_registers/registerallocmode_maxreg_extension.ll
 
 diff --git a/include/LLVMSPIRVExtensions.inc b/include/LLVMSPIRVExtensions.inc
-index d8e9f2a1..952b9735 100644
+index d3138c06..0eb24fc6 100644
 --- a/include/LLVMSPIRVExtensions.inc
 +++ b/include/LLVMSPIRVExtensions.inc
-@@ -64,3 +64,4 @@ EXT(SPV_INTEL_tensor_float32_conversion) // TODO: to remove old extension
+@@ -63,3 +63,4 @@ EXT(SPV_INTEL_tensor_float32_conversion) // TODO: to remove old extension
  EXT(SPV_INTEL_tensor_float32_rounding)
  EXT(SPV_EXT_relaxed_printf_string_address_space)
  EXT(SPV_INTEL_cache_controls)
 +EXT(SPV_INTEL_maximum_registers)
 diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
-index b40909d2..cd44c021 100644
+index 939bdd30..c02d9509 100644
 --- a/lib/SPIRV/SPIRVReader.cpp
 +++ b/lib/SPIRV/SPIRVReader.cpp
-@@ -4184,6 +4184,50 @@ bool SPIRVToLLVM::transMetadata() {
+@@ -4126,6 +4126,50 @@ bool SPIRVToLLVM::transMetadata() {
        F->setMetadata(kSPIR2MD::IntelFPGAIPInterface,
                       MDNode::get(*Context, InterfaceMDVec));
      }
@@ -91,10 +89,10 @@ index b40909d2..cd44c021 100644
    NamedMDNode *MemoryModelMD =
        M->getOrInsertNamedMetadata(kSPIRVMD::MemoryModel);
 diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
-index 18cdcb77..cb6bcc69 100644
+index ef122036..fb9f7f0a 100644
 --- a/lib/SPIRV/SPIRVWriter.cpp
 +++ b/lib/SPIRV/SPIRVWriter.cpp
-@@ -897,6 +897,9 @@ SPIRVFunction *LLVMToSPIRVBase::transFunctionDecl(Function *F) {
+@@ -902,6 +902,9 @@ SPIRVFunction *LLVMToSPIRVBase::transFunctionDecl(Function *F) {
  
    transFPGAFunctionMetadata(BF, F);
  
@@ -104,8 +102,8 @@ index 18cdcb77..cb6bcc69 100644
    transAuxDataInst(BF, F);
  
    SPIRVDBG(dbgs() << "[transFunction] " << *F << " => ";
-@@ -1029,6 +1032,38 @@ void LLVMToSPIRVBase::transFPGAFunctionMetadata(SPIRVFunction *BF,
-     transMetadataDecorations(FDecoMD, BF);
+@@ -1028,6 +1031,38 @@ void LLVMToSPIRVBase::transFPGAFunctionMetadata(SPIRVFunction *BF,
+   }
  }
  
 +void LLVMToSPIRVBase::transFunctionMetadataAsExecutionMode(SPIRVFunction *BF,
@@ -143,7 +141,7 @@ index 18cdcb77..cb6bcc69 100644
  void LLVMToSPIRVBase::transAuxDataInst(SPIRVFunction *BF, Function *F) {
    auto *BM = BF->getModule();
    if (!BM->preserveAuxData())
-@@ -4766,19 +4801,20 @@ bool LLVMToSPIRVBase::transExecutionMode() {
+@@ -4744,19 +4779,20 @@ bool LLVMToSPIRVBase::transExecutionMode() {
        auto AddSingleArgExecutionMode = [&](ExecutionMode EMode) {
          uint32_t Arg = 0;
          N.get(Arg);
@@ -169,8 +167,8 @@ index 18cdcb77..cb6bcc69 100644
          } else {
            getErrorLog().checkError(false, SPIRVEC_Requires1_1,
                                     "Initializer/Finalizer Execution Mode");
-@@ -4790,7 +4826,7 @@ bool LLVMToSPIRVBase::transExecutionMode() {
-         unsigned X, Y, Z;
+@@ -4768,7 +4804,7 @@ bool LLVMToSPIRVBase::transExecutionMode() {
+         unsigned X = 0, Y = 0, Z = 0;
          N.get(X).get(Y).get(Z);
          BF->addExecutionMode(BM->add(new SPIRVExecutionMode(
 -            BF, static_cast<ExecutionMode>(EMode), X, Y, Z)));
@@ -178,8 +176,8 @@ index 18cdcb77..cb6bcc69 100644
        } break;
        case spv::ExecutionModeMaxWorkgroupSizeINTEL: {
          if (BM->isAllowedToUseExtension(
-@@ -4798,7 +4834,8 @@ bool LLVMToSPIRVBase::transExecutionMode() {
-           unsigned X, Y, Z;
+@@ -4776,7 +4812,8 @@ bool LLVMToSPIRVBase::transExecutionMode() {
+           unsigned X = 0, Y = 0, Z = 0;
            N.get(X).get(Y).get(Z);
            BF->addExecutionMode(BM->add(new SPIRVExecutionMode(
 -              BF, static_cast<ExecutionMode>(EMode), X, Y, Z)));
@@ -188,7 +186,7 @@ index 18cdcb77..cb6bcc69 100644
            BM->addExtension(ExtensionID::SPV_INTEL_kernel_attributes);
            BM->addCapability(CapabilityKernelAttributesINTEL);
          }
-@@ -4807,8 +4844,8 @@ bool LLVMToSPIRVBase::transExecutionMode() {
+@@ -4785,8 +4822,8 @@ bool LLVMToSPIRVBase::transExecutionMode() {
          if (!BM->isAllowedToUseExtension(
                  ExtensionID::SPV_INTEL_kernel_attributes))
            break;
@@ -199,7 +197,7 @@ index 18cdcb77..cb6bcc69 100644
          BM->addExtension(ExtensionID::SPV_INTEL_kernel_attributes);
          BM->addCapability(CapabilityKernelAttributesINTEL);
        } break;
-@@ -4851,8 +4888,9 @@ bool LLVMToSPIRVBase::transExecutionMode() {
+@@ -4816,8 +4853,9 @@ bool LLVMToSPIRVBase::transExecutionMode() {
            break;
          unsigned NBarrierCnt = 0;
          N.get(NBarrierCnt);
@@ -211,7 +209,7 @@ index 18cdcb77..cb6bcc69 100644
          BM->addExtension(ExtensionID::SPV_INTEL_vector_compute);
          BM->addCapability(CapabilityVectorComputeINTEL);
        } break;
-@@ -4883,8 +4921,8 @@ bool LLVMToSPIRVBase::transExecutionMode() {
+@@ -4847,8 +4885,8 @@ bool LLVMToSPIRVBase::transExecutionMode() {
        } break;
        case spv::internal::ExecutionModeFastCompositeKernelINTEL: {
          if (BM->isAllowedToUseExtension(ExtensionID::SPV_INTEL_fast_composite))
@@ -222,7 +220,7 @@ index 18cdcb77..cb6bcc69 100644
        } break;
        default:
          llvm_unreachable("invalid execution mode");
-@@ -4929,8 +4967,8 @@ void LLVMToSPIRVBase::transFPContract() {
+@@ -4893,8 +4931,8 @@ void LLVMToSPIRVBase::transFPContract() {
      }
  
      if (DisableContraction) {
@@ -234,7 +232,7 @@ index 18cdcb77..cb6bcc69 100644
    }
  }
 diff --git a/lib/SPIRV/SPIRVWriter.h b/lib/SPIRV/SPIRVWriter.h
-index e84e8b4f..3d8c7d50 100644
+index b0982c04..40f80b59 100644
 --- a/lib/SPIRV/SPIRVWriter.h
 +++ b/lib/SPIRV/SPIRVWriter.h
 @@ -122,7 +122,7 @@ public:
@@ -247,10 +245,10 @@ index e84e8b4f..3d8c7d50 100644
  
    Op transBoolOpCode(SPIRVValue *Opn, Op OC);
 diff --git a/lib/SPIRV/libSPIRV/SPIRVEntry.cpp b/lib/SPIRV/libSPIRV/SPIRVEntry.cpp
-index a949d40b..fda53d88 100644
+index 5ee1081b..8b495cd7 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVEntry.cpp
 +++ b/lib/SPIRV/libSPIRV/SPIRVEntry.cpp
-@@ -580,7 +580,7 @@ SPIRVEntryPoint::SPIRVEntryPoint(SPIRVModule *TheModule,
+@@ -581,7 +581,7 @@ SPIRVEntryPoint::SPIRVEntryPoint(SPIRVModule *TheModule,
                                   SPIRVExecutionModelKind TheExecModel,
                                   SPIRVId TheId, const std::string &TheName,
                                   std::vector<SPIRVId> Variables)
@@ -260,8 +258,8 @@ index a949d40b..fda53d88 100644
        ExecModel(TheExecModel), Name(TheName), Variables(Variables) {}
  
 @@ -628,6 +628,9 @@ void SPIRVExecutionMode::decode(std::istream &I) {
+   case ExecutionModeNumSIMDWorkitemsINTEL:
    case ExecutionModeSchedulerTargetFmaxMhzINTEL:
-   case ExecutionModeRegisterMapInterfaceINTEL:
    case internal::ExecutionModeStreamingInterfaceINTEL:
 +  case internal::ExecutionModeMaximumRegistersINTEL:
 +  case internal::ExecutionModeMaximumRegistersIdINTEL:
@@ -465,10 +463,19 @@ index 9e7217aa..45eb1ef2 100644
      for (auto I = ExecModes.begin(); I != ExecModes.end(); ++I) {
        assert(IsCompatible(ExecMode, (*I).second) &&
 diff --git a/lib/SPIRV/libSPIRV/SPIRVEnum.h b/lib/SPIRV/libSPIRV/SPIRVEnum.h
-index 0761e166..a4e47479 100644
+index 43dcdc6e..2c07cdf4 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVEnum.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVEnum.h
-@@ -279,6 +279,12 @@ template <> inline void SPIRVMap<SPIRVExecutionModeKind, SPIRVCapVec>::init() {
+@@ -149,7 +149,7 @@ template <typename K> SPIRVCapVec getCapability(K Key) {
+ #define ADD_VEC_INIT(Cap, ...)                                                 \
+   {                                                                            \
+     SPIRVCapabilityKind C[] = __VA_ARGS__;                                     \
+-    SPIRVCapVec V(C, C + sizeof(C) / sizeof(C[0]));                            \
++    const SPIRVCapVec V(C, C + sizeof(C) / sizeof(C[0]));                      \
+     add(Cap, V);                                                               \
+   }
+ 
+@@ -275,6 +275,12 @@ template <> inline void SPIRVMap<SPIRVExecutionModeKind, SPIRVCapVec>::init() {
                 {CapabilityFPGAKernelAttributesINTEL});
    ADD_VEC_INIT(ExecutionModeNamedBarrierCountINTEL,
                 {CapabilityVectorComputeINTEL});
@@ -482,12 +489,12 @@ index 0761e166..a4e47479 100644
  
  template <> inline void SPIRVMap<SPIRVMemoryModelKind, SPIRVCapVec>::init() {
 diff --git a/lib/SPIRV/libSPIRV/SPIRVIsValidEnum.h b/lib/SPIRV/libSPIRV/SPIRVIsValidEnum.h
-index 2cb3452e..528568db 100644
+index a10e6244..c88e4517 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVIsValidEnum.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVIsValidEnum.h
-@@ -73,6 +73,9 @@ inline bool isValid(spv::ExecutionModel V) {
+@@ -72,6 +72,9 @@ inline bool isValid(spv::ExecutionModel V) {
+   case ExecutionModelMissKHR:
    case ExecutionModelCallableKHR:
-   case ExecutionModeRegisterMapInterfaceINTEL:
    case internal::ExecutionModeStreamingInterfaceINTEL:
 +  case internal::ExecutionModeMaximumRegistersINTEL:
 +  case internal::ExecutionModeMaximumRegistersIdINTEL:
@@ -496,10 +503,10 @@ index 2cb3452e..528568db 100644
    default:
      return false;
 diff --git a/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h b/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
-index 94b9a268..a06a12af 100644
+index f64779be..7b329e49 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
-@@ -601,7 +601,6 @@ template <> inline void SPIRVMap<Capability, std::string>::init() {
+@@ -599,7 +599,6 @@ template <> inline void SPIRVMap<Capability, std::string>::init() {
    add(CapabilityDebugInfoModuleINTEL, "DebugInfoModuleINTEL");
    add(CapabilitySplitBarrierINTEL, "SplitBarrierINTEL");
    add(CapabilityGroupUniformArithmeticKHR, "GroupUniformArithmeticKHR");
@@ -507,10 +514,10 @@ index 94b9a268..a06a12af 100644
    // From spirv_internal.hpp
    add(internal::CapabilityFPGADSPControlINTEL, "FPGADSPControlINTEL");
    add(internal::CapabilityFastCompositeINTEL, "FastCompositeINTEL");
-@@ -627,9 +626,18 @@ template <> inline void SPIRVMap<Capability, std::string>::init() {
+@@ -623,9 +622,18 @@ template <> inline void SPIRVMap<Capability, std::string>::init() {
+   add(internal::CapabilityCacheControlsINTEL, "CacheControlsINTEL");
+   add(internal::CapabilityJointMatrixWIInstructionsINTEL,
        "JointMatrixWIInstructionsINTEL");
-   add(internal::CapabilityCooperativeMatrixPrefetchINTEL,
-       "CooperativeMatrixPrefetchINTEL");
 +  add(internal::CapabilityRegisterLimitsINTEL, "RegisterLimitsINTEL");
  }
  SPIRV_DEF_NAMEMAP(Capability, SPIRVCapabilityNameMap)
@@ -527,7 +534,7 @@ index 94b9a268..a06a12af 100644
  
  #endif // SPIRV_LIBSPIRV_SPIRVNAMEMAPENUM_H
 diff --git a/lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h b/lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h
-index 9b8872fe..0d81003e 100644
+index a6961fcb..de24c1f6 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVOpCodeEnum.h
 @@ -295,6 +295,7 @@ _SPIRV_OP(TypePipeStorage, 322)
@@ -563,10 +570,10 @@ index cd3e06e7..6dc80798 100644
  
  const SPIRVEncoder &operator<<(const SPIRVEncoder &O, const std::string &Str);
 diff --git a/lib/SPIRV/libSPIRV/spirv_internal.hpp b/lib/SPIRV/libSPIRV/spirv_internal.hpp
-index 63fd50c5..be9c0612 100644
+index 0a90b592..935af2cb 100644
 --- a/lib/SPIRV/libSPIRV/spirv_internal.hpp
 +++ b/lib/SPIRV/libSPIRV/spirv_internal.hpp
-@@ -113,14 +113,18 @@ enum InternalCapability {
+@@ -111,14 +111,18 @@ enum InternalCapability {
    ICapabilityTensorFloat32RoundingINTEL = 6425,
    ICapabilityMaskedGatherScatterINTEL = 6427,
    ICapabilityJointMatrixWIInstructionsINTEL = 6435,
@@ -586,8 +593,8 @@ index 63fd50c5..be9c0612 100644
 +  IExecModeNamedMaximumRegistersINTEL = 6463
  };
  
- enum InternalLoopControlMask {
-@@ -160,6 +164,10 @@ enum class StoreCacheControlINTEL {
+ enum InternalLoopControlMask { ILoopControlLoopCountINTELMask = 0x1000000 };
+@@ -155,6 +159,10 @@ enum class StoreCacheControlINTEL {
    Streaming = 3
  };
  
@@ -598,7 +605,7 @@ index 63fd50c5..be9c0612 100644
  #define _SPIRV_OP(x, y) constexpr x x##y = static_cast<x>(I##x##y);
  _SPIRV_OP(Capability, JointMatrixINTEL)
  _SPIRV_OP(Capability, JointMatrixWIInstructionsINTEL)
-@@ -282,6 +290,8 @@ constexpr Capability CapabilityBfloat16ConversionINTEL =
+@@ -274,6 +282,8 @@ constexpr Capability CapabilityBfloat16ConversionINTEL =
      static_cast<Capability>(ICapBfloat16ConversionINTEL);
  constexpr Capability CapabilityGlobalVariableDecorationsINTEL =
      static_cast<Capability>(ICapGlobalVariableDecorationsINTEL);
@@ -607,10 +614,10 @@ index 63fd50c5..be9c0612 100644
  
  constexpr FunctionControlMask FunctionControlOptNoneINTELMask =
      static_cast<FunctionControlMask>(IFunctionControlOptNoneINTELMask);
-@@ -298,6 +308,12 @@ constexpr LoopControlMask LoopControlLoopCountINTELMask =
+@@ -288,6 +298,12 @@ constexpr ExecutionMode ExecutionModeStreamingInterfaceINTEL =
+ 
+ constexpr LoopControlMask LoopControlLoopCountINTELMask =
      static_cast<LoopControlMask>(ILoopControlLoopCountINTELMask);
- static const LoopControlMask LoopControlMaxReinvocationDelayINTELMask =
-     static_cast<LoopControlMask>(ILoopControlMaxReinvocationDelayINTELMask);
 +constexpr ExecutionMode ExecutionModeMaximumRegistersINTEL =
 +    static_cast<ExecutionMode>(IExecModeMaximumRegistersINTEL);
 +constexpr ExecutionMode ExecutionModeMaximumRegistersIdINTEL =
@@ -622,7 +629,7 @@ index 63fd50c5..be9c0612 100644
  } // namespace spv
 diff --git a/test/extensions/INTEL/SPV_INTEL_maximum_registers/registerallocmode_maxreg_extension.ll b/test/extensions/INTEL/SPV_INTEL_maximum_registers/registerallocmode_maxreg_extension.ll
 new file mode 100644
-index 00000000..471e2574
+index 00000000..62c4f86f
 --- /dev/null
 +++ b/test/extensions/INTEL/SPV_INTEL_maximum_registers/registerallocmode_maxreg_extension.ll
 @@ -0,0 +1,85 @@
@@ -703,7 +710,7 @@ index 00000000..471e2574
 +!4 = !{i32 1, !"wchar_size", i32 4}
 +!5 = !{i32 7, !"openmp", i32 50}
 +!6 = !{i32 7, !"openmp-device", i32 50}
-+!7 = !{i32 1, !"PIC Level", i32 2}
++!7 = !{i32 8, !"PIC Level", i32 2}
 +!8 = !{i32 7, !"frame-pointer", i32 2}
 +!9 = !{i32 2, i32 2}
 +!10 = !{i32 2}

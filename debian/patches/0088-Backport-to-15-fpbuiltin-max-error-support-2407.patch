@@ -1,13 +1,15 @@
-From ccae9f2a413c96a8ae0c07f3e6715d9ea03b7576 Mon Sep 17 00:00:00 2001
+From 28988d038a5391d2348079829af58d856339117a Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Mi=C5=82osz?= <milosz.skobejko@intel.com>
-Date: Thu, 21 Mar 2024 13:28:56 +0000
-Subject: [PATCH 183/183] [Backport to 14] fpbuiltin-max-error support (#2421)
+Date: Thu, 21 Mar 2024 13:29:29 +0000
+Subject: [PATCH 88/89] [Backport to 15] fpbuiltin-max-error support (#2407)
 
 Changes were cherry-picked from the following commit: c6fe12b
+Also cherry picked fixes from:
 
 This changes add SPIR-V translator support for the SPIR-V extension documented here: KhronosGroup/SPIRV-Registry#193. This extension adds one decoration to represent maximum error for FP operations and adds the related Capability. SPIRV Headers support for representing this in SPIR-V: KhronosGroup/SPIRV-Headers#363
 
-intel/llvm#8134 added a new call-site attribute associated with FP builtin intrinsics. This attribute is named 'fpbuiltin-max-error'. Following example shows how this extension is supported in the translator. The input LLVM IR uses new LLVM builtin calls to represent FP operations. An attribute named 'fpbuiltin-max-error' is used to represent the max-error allowed in the FP operation. Example Input LLVM: %t6 = call float @llvm.fpbuiltin.sin.f32(float %f1) #2 attributes #2 = { "fpbuiltin-max-error"="2.5" }
+intel/llvm#8134 added a new call-site attribute associated with FP builtin intrinsics. This attribute is named 'fpbuiltin-max-error'. Following example shows how this extension is supported in the translator. The input LLVM IR uses new LLVM builtin calls to represent FP operations. An attribute named 'fpbuiltin-max-error' is used to represent the max-error allowed in the FP operation. Example Input LLVM:
+%t6 = call float @llvm.fpbuiltin.sin.f32(float %f1) #2 attributes #2 = { "fpbuiltin-max-error"="2.5" }
 
 This is translated into a SPIR-V instruction (for add/sub/mul/div/rem) and OpenCl extended instruction for other instructions. A decoration to represent the max-error is attached to the SPIR-V instruction.
 
@@ -31,16 +33,16 @@ attributes #3 = { "fpbuiltin-max-error"="4.000000" }
  lib/SPIRV/SPIRVWriter.h                       |  10 +
  lib/SPIRV/libSPIRV/SPIRVDecorate.h            |   2 +
  lib/SPIRV/libSPIRV/SPIRVEnum.h                |   2 +
- lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h         |   3 +
+ lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h         |   2 +
  .../SPV_INTEL_fp_max_error/IntelFPMaxError.ll | 245 ++++++++++++++++++
- 9 files changed, 464 insertions(+)
+ 9 files changed, 463 insertions(+)
  create mode 100644 test/extensions/INTEL/SPV_INTEL_fp_max_error/IntelFPMaxError.ll
 
 diff --git a/include/LLVMSPIRVExtensions.inc b/include/LLVMSPIRVExtensions.inc
-index 952b9735..6c8d4ede 100644
+index 0eb24fc6..5f7b86a3 100644
 --- a/include/LLVMSPIRVExtensions.inc
 +++ b/include/LLVMSPIRVExtensions.inc
-@@ -63,5 +63,6 @@ EXT(SPV_INTEL_masked_gather_scatter)
+@@ -62,5 +62,6 @@ EXT(SPV_INTEL_masked_gather_scatter)
  EXT(SPV_INTEL_tensor_float32_conversion) // TODO: to remove old extension
  EXT(SPV_INTEL_tensor_float32_rounding)
  EXT(SPV_EXT_relaxed_printf_string_address_space)
@@ -48,10 +50,10 @@ index 952b9735..6c8d4ede 100644
  EXT(SPV_INTEL_cache_controls)
  EXT(SPV_INTEL_maximum_registers)
 diff --git a/lib/SPIRV/SPIRVReader.cpp b/lib/SPIRV/SPIRVReader.cpp
-index cdfecbb0..58738089 100644
+index c02d9509..e3ef3af3 100644
 --- a/lib/SPIRV/SPIRVReader.cpp
 +++ b/lib/SPIRV/SPIRVReader.cpp
-@@ -3854,7 +3854,48 @@ void SPIRVToLLVM::transDecorationsToMetadata(SPIRVValue *BV, Value *V) {
+@@ -3868,7 +3868,48 @@ void SPIRVToLLVM::transDecorationsToMetadata(SPIRVValue *BV, Value *V) {
      SetDecorationsMetadata(I);
  }
  
@@ -101,10 +103,10 @@ index cdfecbb0..58738089 100644
      return false;
  
 diff --git a/lib/SPIRV/SPIRVUtil.cpp b/lib/SPIRV/SPIRVUtil.cpp
-index 82dc88d2..be2330e2 100644
+index 49b46812..770d7114 100644
 --- a/lib/SPIRV/SPIRVUtil.cpp
 +++ b/lib/SPIRV/SPIRVUtil.cpp
-@@ -784,6 +784,13 @@ CallInst *mutateCallInst(
+@@ -810,6 +810,13 @@ CallInst *mutateCallInst(
    auto NewCI = addCallInst(M, NewName, CI->getType(), Args, Attrs, CI, Mangle,
                             InstName, TakeFuncName);
    NewCI->setDebugLoc(CI->getDebugLoc());
@@ -119,7 +121,7 @@ index 82dc88d2..be2330e2 100644
    CI->replaceAllUsesWith(NewCI);
    CI->eraseFromParent();
 diff --git a/lib/SPIRV/SPIRVWriter.cpp b/lib/SPIRV/SPIRVWriter.cpp
-index dcd74af4..8f3d2088 100644
+index fb9f7f0a..9c094f05 100644
 --- a/lib/SPIRV/SPIRVWriter.cpp
 +++ b/lib/SPIRV/SPIRVWriter.cpp
 @@ -105,6 +105,19 @@ using namespace llvm;
@@ -142,7 +144,7 @@ index dcd74af4..8f3d2088 100644
  namespace SPIRV {
  
  static void foreachKernelArgMD(
-@@ -3433,6 +3446,26 @@ bool LLVMToSPIRVBase::isKnownIntrinsic(Intrinsic::ID Id) {
+@@ -3407,6 +3420,26 @@ bool LLVMToSPIRVBase::isKnownIntrinsic(Intrinsic::ID Id) {
    }
  }
  
@@ -169,7 +171,7 @@ index dcd74af4..8f3d2088 100644
  // Performs mapping of LLVM IR rounding mode to SPIR-V rounding mode
  // Value *V is metadata <rounding mode> argument of
  // llvm.experimental.constrained.* intrinsics
-@@ -4137,6 +4170,8 @@ SPIRVValue *LLVMToSPIRVBase::transIntrinsicInst(IntrinsicInst *II,
+@@ -4111,6 +4144,8 @@ SPIRVValue *LLVMToSPIRVBase::transIntrinsicInst(IntrinsicInst *II,
    }
  
    default:
@@ -178,7 +180,7 @@ index dcd74af4..8f3d2088 100644
      if (BM->isUnknownIntrinsicAllowed(II))
        return BM->addCallInst(
            transFunctionDecl(II->getCalledFunction()),
-@@ -4152,6 +4187,124 @@ SPIRVValue *LLVMToSPIRVBase::transIntrinsicInst(IntrinsicInst *II,
+@@ -4126,6 +4161,124 @@ SPIRVValue *LLVMToSPIRVBase::transIntrinsicInst(IntrinsicInst *II,
    return nullptr;
  }
  
@@ -304,7 +306,7 @@ index dcd74af4..8f3d2088 100644
                                              SPIRVBasicBlock *BB) {
    SPIRVWord MemorySemantics;
 diff --git a/lib/SPIRV/SPIRVWriter.h b/lib/SPIRV/SPIRVWriter.h
-index 3d8c7d50..2b0529e5 100644
+index 40f80b59..a70bfb14 100644
 --- a/lib/SPIRV/SPIRVWriter.h
 +++ b/lib/SPIRV/SPIRVWriter.h
 @@ -108,6 +108,16 @@ public:
@@ -338,10 +340,10 @@ index 2e4458e5..b02f9b23 100644
      case internal::DecorationCacheControlStoreINTEL:
        return ExtensionID::SPV_INTEL_cache_controls;
 diff --git a/lib/SPIRV/libSPIRV/SPIRVEnum.h b/lib/SPIRV/libSPIRV/SPIRVEnum.h
-index a4e47479..8f8e2c97 100644
+index 2c07cdf4..f45f6d4e 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVEnum.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVEnum.h
-@@ -476,6 +476,8 @@ template <> inline void SPIRVMap<Decoration, SPIRVCapVec>::init() {
+@@ -472,6 +472,8 @@ template <> inline void SPIRVMap<Decoration, SPIRVCapVec>::init() {
                 {internal::CapabilityCacheControlsINTEL});
    ADD_VEC_INIT(internal::DecorationCacheControlStoreINTEL,
                 {internal::CapabilityCacheControlsINTEL});
@@ -351,7 +353,7 @@ index a4e47479..8f8e2c97 100644
  
  template <> inline void SPIRVMap<BuiltIn, SPIRVCapVec>::init() {
 diff --git a/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h b/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
-index a06a12af..6b2dc058 100644
+index 7b329e49..e549aa3f 100644
 --- a/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
 +++ b/lib/SPIRV/libSPIRV/SPIRVNameMapEnum.h
 @@ -179,6 +179,7 @@ template <> inline void SPIRVMap<Decoration, std::string>::init() {
@@ -362,12 +364,11 @@ index a06a12af..6b2dc058 100644
  
    // From spirv_internal.hpp
    add(internal::DecorationCallableFunctionINTEL, "CallableFunctionINTEL");
-@@ -601,6 +602,8 @@ template <> inline void SPIRVMap<Capability, std::string>::init() {
+@@ -599,6 +600,7 @@ template <> inline void SPIRVMap<Capability, std::string>::init() {
    add(CapabilityDebugInfoModuleINTEL, "DebugInfoModuleINTEL");
    add(CapabilitySplitBarrierINTEL, "SplitBarrierINTEL");
    add(CapabilityGroupUniformArithmeticKHR, "GroupUniformArithmeticKHR");
 +  add(CapabilityFPMaxErrorINTEL, "FPMaxErrorINTEL");
-+
    // From spirv_internal.hpp
    add(internal::CapabilityFPGADSPControlINTEL, "FPGADSPControlINTEL");
    add(internal::CapabilityFastCompositeINTEL, "FastCompositeINTEL");
