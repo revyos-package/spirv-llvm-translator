@@ -178,4 +178,7 @@
 0178-Add-support-for-IAddCarry-SPIRV-instruction-2167.patch
 0179-Add-support-for-ISubBorrow-SPIRV-instruction-2168.patch
 0180-Backport-to-14-Handle-OpVectorShuffle-with-differing.patch
+0181-Backport-to-14-Support-SPV_INTEL_maximum_registers-e.patch
+0182-Add-IAddCarry-and-ISubBorrow-builtins-2392-2452.patch
+0183-Backport-to-14-fpbuiltin-max-error-support-2421.patch
 visibility-hidden.patch
