@@ -38,19 +38,16 @@
 //===----------------------------------------------------------------------===//
 #define DEBUG_TYPE "ocl-to-spv"
 
+#include "OCLToSPIRV.h"
 #include "OCLTypeToSPIRV.h"
-#include "OCLUtil.h"
 #include "SPIRVInternal.h"
 #include "libSPIRV/SPIRVDebug.h"
 
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/IR/PassManager.h"
-#include "llvm/Pass.h"
 #include "llvm/Support/Debug.h"
 
 #include <algorithm>
@@ -70,290 +67,78 @@ static size_t getOCLCpp11AtomicMaxNumOps(StringRef Name) {
       .Default(0);
 }
 
-class OCLToSPIRVBase : public InstVisitor<OCLToSPIRVBase> {
-public:
-  OCLToSPIRVBase() : M(nullptr), Ctx(nullptr), CLVer(0) {}
-  virtual ~OCLToSPIRVBase() {}
-  bool runOCLToSPIRV(Module &M);
+/// Return one of the SPIR-V 1.4 SignExtend or ZeroExtend image operands
+/// for a demangled function name, or 0 if the function does not return an
+/// integer type (e.g. read_imagef).
+static unsigned getImageSignZeroExt(StringRef DemangledName) {
+  bool IsSigned = !DemangledName.endswith("ui") && DemangledName.back() == 'i';
+  bool IsUnsigned = DemangledName.endswith("ui");
 
-  virtual void visitCallInst(CallInst &CI);
+  if (IsSigned)
+    return ImageOperandsMask::ImageOperandsSignExtendMask;
+  if (IsUnsigned)
+    return ImageOperandsMask::ImageOperandsZeroExtendMask;
+  return 0;
+}
 
-  /// Transform barrier/work_group_barrier/sub_group_barrier
-  ///     to __spirv_ControlBarrier.
-  /// barrier(flag) =>
-  ///   __spirv_ControlBarrier(workgroup, workgroup, map(flag))
-  /// work_group_barrier(scope, flag) =>
-  ///   __spirv_ControlBarrier(workgroup, map(scope), map(flag))
-  /// sub_group_barrier(scope, flag) =>
-  ///   __spirv_ControlBarrier(subgroup, map(scope), map(flag))
-  void visitCallBarrier(CallInst *CI);
+bool OCLToSPIRVLegacy::runOnModule(Module &M) {
+  setOCLTypeToSPIRV(&getAnalysis<OCLTypeToSPIRVLegacy>());
+  return runOCLToSPIRV(M);
+}
 
-  /// Erase useless convert functions.
-  /// \return true if the call instruction is erased.
-  bool eraseUselessConvert(CallInst *Call, StringRef MangledName,
-                           StringRef DeMangledName);
+void OCLToSPIRVLegacy::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.addRequired<OCLTypeToSPIRVLegacy>();
+}
 
-  /// Transform convert_ to
-  ///   __spirv_{CastOpName}_R{TargeTyName}{_sat}{_rt[p|n|z|e]}
-  void visitCallConvert(CallInst *CI, StringRef MangledName,
-                        StringRef DemangledName);
+llvm::PreservedAnalyses OCLToSPIRVPass::run(llvm::Module &M,
+                                            llvm::ModuleAnalysisManager &MAM) {
+  setOCLTypeToSPIRV(&MAM.getResult<OCLTypeToSPIRVPass>(M));
+  return runOCLToSPIRV(M) ? llvm::PreservedAnalyses::none()
+                          : llvm::PreservedAnalyses::all();
+}
 
-  /// Transform async_work_group{_strided}_copy.
-  /// async_work_group_copy(dst, src, n, event)
-  ///   => async_work_group_strided_copy(dst, src, n, 1, event)
-  /// async_work_group_strided_copy(dst, src, n, stride, event)
-  ///   => __spirv_AsyncGroupCopy(ScopeWorkGroup, dst, src, n, stride, event)
-  void visitCallAsyncWorkGroupCopy(CallInst *CI, StringRef DemangledName);
+/// Get vector width from OpenCL vload* function name.
+SPIRVWord OCLToSPIRVBase::getVecLoadWidth(const std::string &DemangledName) {
+  SPIRVWord Width = 0;
+  if (DemangledName == "vloada_half")
+    Width = 1;
+  else {
+    unsigned Loc = 5;
+    if (DemangledName.find("vload_half") == 0)
+      Loc = 10;
+    else if (DemangledName.find("vloada_half") == 0)
+      Loc = 11;
 
-  /// Transform OCL builtin function to SPIR-V builtin function.
-  void transBuiltin(CallInst *CI, OCLBuiltinTransInfo &Info);
-
-  /// Transform atomic_work_item_fence/mem_fence to __spirv_MemoryBarrier.
-  /// func(flag, order, scope) =>
-  ///   __spirv_MemoryBarrier(map(scope), map(flag)|map(order))
-  void transMemoryBarrier(CallInst *CI, AtomicWorkItemFenceLiterals);
-
-  /// Transform all to __spirv_Op(All|Any).  Note that the types mismatch so
-  // some extra code is emitted to convert between the two.
-  void visitCallAllAny(spv::Op OC, CallInst *CI);
-
-  /// Transform atomic_* to __spirv_Atomic*.
-  /// atomic_x(ptr_arg, args, order, scope) =>
-  ///   __spirv_AtomicY(ptr_arg, map(order), map(scope), args)
-  void transAtomicBuiltin(CallInst *CI, OCLBuiltinTransInfo &Info);
-
-  /// Transform atomic_work_item_fence to __spirv_MemoryBarrier.
-  /// atomic_work_item_fence(flag, order, scope) =>
-  ///   __spirv_MemoryBarrier(map(scope), map(flag)|map(order))
-  void visitCallAtomicWorkItemFence(CallInst *CI);
-
-  /// Transform atomic_compare_exchange call.
-  /// In atomic_compare_exchange, the expected value parameter is a pointer.
-  /// However in SPIR-V it is a value. The transformation adds a load
-  /// instruction, result of which is passed to atomic_compare_exchange as
-  /// argument.
-  /// The transformation adds a store instruction after the call, to update the
-  /// value in expected with the value pointed to by object. Though, it is not
-  /// necessary in case they are equal, this approach makes result code simpler.
-  /// Also ICmp instruction is added, because the call must return result of
-  /// comparison.
-  /// \returns the call instruction of atomic_compare_exchange_strong.
-  CallInst *visitCallAtomicCmpXchg(CallInst *CI);
-
-  /// Transform atomic_init.
-  /// atomic_init(p, x) => store p, x
-  void visitCallAtomicInit(CallInst *CI);
-
-  /// Transform legacy OCL 1.x atomic builtins to SPIR-V builtins for extensions
-  ///   cl_khr_int64_base_atomics
-  ///   cl_khr_int64_extended_atomics
-  /// Do nothing if the called function is not a legacy atomic builtin.
-  void visitCallAtomicLegacy(CallInst *CI, StringRef MangledName,
-                             StringRef DemangledName);
-
-  /// Transform OCL 2.0 C++11 atomic builtins to SPIR-V builtins.
-  /// Do nothing if the called function is not a C++11 atomic builtin.
-  void visitCallAtomicCpp11(CallInst *CI, StringRef MangledName,
-                            StringRef DemangledName);
-
-  /// Transform OCL builtin function to SPIR-V builtin function.
-  /// Assuming there is a simple name mapping without argument changes.
-  /// Should be called at last.
-  void visitCallBuiltinSimple(CallInst *CI, StringRef MangledName,
-                              StringRef DemangledName);
-
-  /// Transform get_image_{width|height|depth|dim}.
-  /// get_image_xxx(...) =>
-  ///   dimension = __spirv_ImageQuerySizeLod_R{ReturnType}(...);
-  ///   return dimension.{x|y|z};
-  void visitCallGetImageSize(CallInst *CI, StringRef DemangledName);
-
-  /// Transform {work|sub}_group_x =>
-  ///   __spirv_{OpName}
-  ///
-  /// Special handling of work_group_broadcast.
-  ///   work_group_broadcast(a, x, y, z)
-  ///     =>
-  ///   __spirv_GroupBroadcast(a, vec3(x, y, z))
-
-  void visitCallGroupBuiltin(CallInst *CI, StringRef DemangledName);
-
-  /// Transform mem_fence to __spirv_MemoryBarrier.
-  /// mem_fence(flag) => __spirv_MemoryBarrier(Workgroup, map(flag))
-  void visitCallMemFence(CallInst *CI, StringRef DemangledName);
-
-  void visitCallNDRange(CallInst *CI, StringRef DemangledName);
-
-  /// Transform read_image with sampler arguments.
-  /// read_image(image, sampler, ...) =>
-  ///   sampled_image = __spirv_SampledImage(image, sampler);
-  ///   return __spirv_ImageSampleExplicitLod_R{ReturnType}(sampled_image, ...);
-  void visitCallReadImageWithSampler(CallInst *CI, StringRef MangledName);
-
-  /// Transform read_image with msaa image arguments.
-  /// Sample argument must be acoded as Image Operand.
-  void visitCallReadImageMSAA(CallInst *CI, StringRef MangledName);
-
-  /// Transform {read|write}_image without sampler arguments.
-  void visitCallReadWriteImage(CallInst *CI, StringRef DemangledName);
-
-  /// Transform to_{global|local|private}.
-  ///
-  /// T* a = ...;
-  /// addr T* b = to_addr(a);
-  ///   =>
-  /// i8* x = cast<i8*>(a);
-  /// addr i8* y = __spirv_GenericCastToPtr_ToAddr(x);
-  /// addr T* b = cast<addr T*>(y);
-  void visitCallToAddr(CallInst *CI, StringRef DemangledName);
-
-  /// Transform return type of relatinal built-in functions like isnan, isfinite
-  /// to boolean values.
-  void visitCallRelational(CallInst *CI, StringRef DemangledName);
-
-  /// Transform vector load/store functions to SPIR-V extended builtin
-  ///   functions
-  /// {vload|vstore{a}}{_half}{n}{_rte|_rtz|_rtp|_rtn} =>
-  ///   __spirv_ocl_{ExtendedInstructionOpCodeName}__R{ReturnType}
-  void visitCallVecLoadStore(CallInst *CI, StringRef MangledName,
-                             StringRef DemangledName);
-
-  /// Transforms get_mem_fence built-in to SPIR-V function and aligns result
-  /// values with SPIR 1.2. get_mem_fence(ptr) => __spirv_GenericPtrMemSemantics
-  /// GenericPtrMemSemantics valid values are 0x100, 0x200 and 0x300, where is
-  /// SPIR 1.2 defines them as 0x1, 0x2 and 0x3, so this function adjusts
-  /// GenericPtrMemSemantics results to SPIR 1.2 values.
-  void visitCallGetFence(CallInst *CI, StringRef DemangledName);
-
-  /// Transforms OpDot instructions with a scalar type to a fmul instruction
-  void visitCallDot(CallInst *CI);
-
-  /// Fixes for built-in functions with vector+scalar arguments that are
-  /// translated to the SPIR-V instructions where all arguments must have the
-  /// same type.
-  void visitCallScalToVec(CallInst *CI, StringRef MangledName,
-                          StringRef DemangledName);
-
-  /// Transform get_image_channel_{order|data_type} built-in functions to
-  ///   __spirv_ocl_{ImageQueryOrder|ImageQueryFormat}
-  void visitCallGetImageChannel(CallInst *CI, StringRef DemangledName,
-                                unsigned int Offset);
-
-  /// Transform enqueue_kernel and kernel query built-in functions to
-  /// spirv-friendly format filling arguments, required for device-side enqueue
-  /// instructions, but missed in the original call
-  void visitCallEnqueueKernel(CallInst *CI, StringRef DemangledName);
-  void visitCallKernelQuery(CallInst *CI, StringRef DemangledName);
-
-  /// For cl_intel_subgroups block read built-ins:
-  void visitSubgroupBlockReadINTEL(CallInst *CI);
-
-  /// For cl_intel_subgroups block write built-ins:
-  void visitSubgroupBlockWriteINTEL(CallInst *CI);
-
-  /// For cl_intel_media_block_io built-ins:
-  void visitSubgroupImageMediaBlockINTEL(CallInst *CI, StringRef DemangledName);
-  // For cl_intel_device_side_avc_motion_estimation built-ins
-  void visitSubgroupAVCBuiltinCall(CallInst *CI, StringRef DemangledName);
-  void visitSubgroupAVCWrapperBuiltinCall(CallInst *CI, Op WrappedOC,
-                                          StringRef DemangledName);
-  void visitSubgroupAVCBuiltinCallWithSampler(CallInst *CI,
-                                              StringRef DemangledName);
-
-  void visitCallLdexp(CallInst *CI, StringRef MangledName,
-                      StringRef DemangledName);
-
-  /// For cl_intel_convert_bfloat16_as_ushort
-  void visitCallConvertBFloat16AsUshort(CallInst *CI, StringRef DemangledName);
-  /// For cl_intel_convert_as_bfloat16_float
-  void visitCallConvertAsBFloat16Float(CallInst *CI, StringRef DemangledName);
-
-  void setOCLTypeToSPIRV(OCLTypeToSPIRVBase *OCLTypeToSPIRV) {
-    OCLTypeToSPIRVPtr = OCLTypeToSPIRV;
+    std::stringstream SS(DemangledName.substr(Loc));
+    SS >> Width;
   }
-  OCLTypeToSPIRVBase *getOCLTypeToSPIRV() { return OCLTypeToSPIRVPtr; }
+  return Width;
+}
 
-private:
-  Module *M;
-  LLVMContext *Ctx;
-  unsigned CLVer; /// OpenCL version as major*10+minor
-  std::set<Value *> ValuesToDelete;
-  OCLTypeToSPIRVBase *OCLTypeToSPIRVPtr;
-
-  ConstantInt *addInt32(int I) { return getInt32(M, I); }
-  ConstantInt *addSizet(uint64_t I) { return getSizet(M, I); }
-
-  /// Get vector width from OpenCL vload* function name.
-  SPIRVWord getVecLoadWidth(const std::string &DemangledName) {
-    SPIRVWord Width = 0;
-    if (DemangledName == "vloada_half")
-      Width = 1;
-    else {
-      unsigned Loc = 5;
-      if (DemangledName.find("vload_half") == 0)
-        Loc = 10;
-      else if (DemangledName.find("vloada_half") == 0)
-        Loc = 11;
-
-      std::stringstream SS(DemangledName.substr(Loc));
-      SS >> Width;
-    }
-    return Width;
+/// Transform OpenCL vload/vstore function name.
+void OCLToSPIRVBase::transVecLoadStoreName(std::string &DemangledName,
+                                           const std::string &Stem,
+                                           bool AlwaysN) {
+  auto HalfStem = Stem + "_half";
+  auto HalfStemR = HalfStem + "_r";
+  if (!AlwaysN && DemangledName == HalfStem)
+    return;
+  if (!AlwaysN && DemangledName.find(HalfStemR) == 0) {
+    DemangledName = HalfStemR;
+    return;
   }
-
-  /// Transform OpenCL vload/vstore function name.
-  void transVecLoadStoreName(std::string &DemangledName,
-                             const std::string &Stem, bool AlwaysN) {
-    auto HalfStem = Stem + "_half";
-    auto HalfStemR = HalfStem + "_r";
-    if (!AlwaysN && DemangledName == HalfStem)
-      return;
-    if (!AlwaysN && DemangledName.find(HalfStemR) == 0) {
-      DemangledName = HalfStemR;
-      return;
-    }
-    if (DemangledName.find(HalfStem) == 0) {
-      auto OldName = DemangledName;
-      DemangledName = HalfStem + "n";
-      if (OldName.find("_r") != std::string::npos)
-        DemangledName += "_r";
-      return;
-    }
-    if (DemangledName.find(Stem) == 0) {
-      DemangledName = Stem + "n";
-      return;
-    }
+  if (DemangledName.find(HalfStem) == 0) {
+    auto OldName = DemangledName;
+    DemangledName = HalfStem + "n";
+    if (OldName.find("_r") != std::string::npos)
+      DemangledName += "_r";
+    return;
   }
-};
-
-class OCLToSPIRVLegacy : public OCLToSPIRVBase, public llvm::ModulePass {
-public:
-  OCLToSPIRVLegacy() : ModulePass(ID) {
-    initializeOCLToSPIRVLegacyPass(*PassRegistry::getPassRegistry());
+  if (DemangledName.find(Stem) == 0) {
+    DemangledName = Stem + "n";
+    return;
   }
-
-  bool runOnModule(Module &M) override {
-    setOCLTypeToSPIRV(&getAnalysis<OCLTypeToSPIRVLegacy>());
-    return runOCLToSPIRV(M);
-  }
-
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<OCLTypeToSPIRVLegacy>();
-  }
-
-  static char ID;
-};
-
-class OCLToSPIRVPass : public OCLToSPIRVBase,
-                       public llvm::PassInfoMixin<OCLToSPIRVBase> {
-public:
-  llvm::PreservedAnalyses run(llvm::Module &M,
-                              llvm::ModuleAnalysisManager &MAM) {
-    setOCLTypeToSPIRV(&MAM.getResult<OCLTypeToSPIRVPass>(M));
-    return runOCLToSPIRV(M) ? llvm::PreservedAnalyses::none()
-                            : llvm::PreservedAnalyses::all();
-  }
-};
+}
 
 char OCLToSPIRVLegacy::ID = 0;
 
@@ -374,12 +159,8 @@ bool OCLToSPIRVBase::runOCLToSPIRV(Module &Module) {
 
   visit(*M);
 
-  for (auto &I : ValuesToDelete)
-    if (auto Inst = dyn_cast<Instruction>(I))
-      Inst->eraseFromParent();
-  for (auto &I : ValuesToDelete)
-    if (auto GV = dyn_cast<GlobalValue>(I))
-      GV->eraseFromParent();
+  for (Instruction *I : ValuesToDelete)
+    I->eraseFromParent();
 
   eraseUselessFunctions(M); // remove unused functions declarations
   LLVM_DEBUG(dbgs() << "After OCLToSPIRV:\n" << *M);
@@ -478,7 +259,7 @@ void OCLToSPIRVBase::visitCallInst(CallInst &CI) {
   }
   if (DemangledName.find(kOCLBuiltinName::ReadImage) == 0) {
     if (MangledName.find(kMangledName::Sampler) != StringRef::npos) {
-      visitCallReadImageWithSampler(&CI, MangledName);
+      visitCallReadImageWithSampler(&CI, MangledName, DemangledName);
       return;
     }
     if (MangledName.find("msaa") != StringRef::npos) {
@@ -521,8 +302,22 @@ void OCLToSPIRVBase::visitCallInst(CallInst &CI) {
     return;
   }
   if (DemangledName == kOCLBuiltinName::Dot &&
-      !(CI.getOperand(0)->getType()->isVectorTy())) {
+      CI.getOperand(0)->getType()->isFloatingPointTy()) {
     visitCallDot(&CI);
+    return;
+  }
+  if (DemangledName == kOCLBuiltinName::Dot ||
+      DemangledName == kOCLBuiltinName::DotAccSat ||
+      DemangledName.startswith(kOCLBuiltinName::Dot4x8PackedPrefix) ||
+      DemangledName.startswith(kOCLBuiltinName::DotAccSat4x8PackedPrefix)) {
+    if (CI.getOperand(0)->getType()->isVectorTy()) {
+      auto *VT = (VectorType *)(CI.getOperand(0)->getType());
+      if (!isa<llvm::IntegerType>(VT->getElementType())) {
+        visitCallBuiltinSimple(&CI, MangledName, DemangledName);
+        return;
+      }
+    }
+    visitCallDot(&CI, MangledName, DemangledName);
     return;
   }
   if (DemangledName == kOCLBuiltinName::FMin ||
@@ -563,6 +358,10 @@ void OCLToSPIRVBase::visitCallInst(CallInst &CI) {
   if (DemangledName.find(kOCLBuiltinName::SubgroupImageMediaBlockINTELPrefix) ==
       0) {
     visitSubgroupImageMediaBlockINTEL(&CI, DemangledName);
+    return;
+  }
+  if (DemangledName.find(kOCLBuiltinName::SplitBarrierINTELPrefix) == 0) {
+    visitCallSplitBarrierINTEL(&CI, DemangledName);
     return;
   }
   // Handle 'cl_intel_device_side_avc_motion_estimation' extension built-ins
@@ -904,14 +703,24 @@ void OCLToSPIRVBase::transAtomicBuiltin(CallInst *CI,
         if (!IsFPType(AtomicBuiltinsReturnType))
           return SPIRVFunctionName;
         // Translate FP-typed atomic builtins. Currently we only need to
-        // translate atomic_fetch_[add, max, min] and atomic_fetch_[add, max,
-        // min]_explicit to related float instructions
+        // translate atomic_fetch_[add, sub, max, min] and atomic_fetch_[add,
+        // sub, max, min]_explicit to related float instructions.
+        // Translate atomic_fetch_sub to OpAtomicFAddEXT with negative value
+        // operand
         auto SPIRFunctionNameForFloatAtomics =
             llvm::StringSwitch<std::string>(SPIRVFunctionName)
                 .Case("__spirv_AtomicIAdd", "__spirv_AtomicFAddEXT")
+                .Case("__spirv_AtomicISub", "__spirv_AtomicFAddEXT")
                 .Case("__spirv_AtomicSMax", "__spirv_AtomicFMaxEXT")
                 .Case("__spirv_AtomicSMin", "__spirv_AtomicFMinEXT")
                 .Default("others");
+        if (SPIRVFunctionName == "__spirv_AtomicISub") {
+          IRBuilder<> IRB(CI);
+          // Set float operand to its negation
+          CI->setOperand(1, IRB.CreateFNeg(CI->getArgOperand(1)));
+          // Update Args which is used to generate new call
+          Args.back() = CI->getArgOperand(1);
+        }
         return SPIRFunctionNameForFloatAtomics == "others"
                    ? SPIRVFunctionName
                    : SPIRFunctionNameForFloatAtomics;
@@ -1177,17 +986,23 @@ void OCLToSPIRVBase::visitCallReadImageMSAA(CallInst *CI,
 }
 
 void OCLToSPIRVBase::visitCallReadImageWithSampler(CallInst *CI,
-                                                   StringRef MangledName) {
+                                                   StringRef MangledName,
+                                                   StringRef DemangledName) {
   assert(MangledName.find(kMangledName::Sampler) != StringRef::npos);
   assert(CI->getCalledFunction() && "Unexpected indirect call");
-  AttributeList Attrs = CI->getCalledFunction()->getAttributes();
+  Function *Func = CI->getCalledFunction();
+  AttributeList Attrs = Func->getAttributes();
   bool IsRetScalar = !CI->getType()->isVectorTy();
+  SmallVector<StructType *, 3> ArgStructTys;
+  getParameterTypes(CI, ArgStructTys);
   mutateCallInstSPIRV(
       M, CI,
       [=](CallInst *, std::vector<Value *> &Args, Type *&Ret) {
-        auto ImageTy = OCLTypeToSPIRVPtr->getAdaptedType(Args[0]);
-        if (isOCLImageType(ImageTy))
-          ImageTy = getSPIRVImageTypeFromOCL(M, ImageTy);
+        auto *ImageTy =
+            OCLTypeToSPIRVPtr->getAdaptedArgumentType(Func, 0).second;
+        if (!ImageTy)
+          ImageTy = ArgStructTys[0];
+        ImageTy = adaptSPIRVImageType(M, ImageTy);
         auto SampledImgTy = getSPIRVTypeByChangeBaseTypeName(
             M, ImageTy, kSPIRVTypeName::Image, kSPIRVTypeName::SampledImg);
         Value *SampledImgArgs[] = {Args[0], Args[1]};
@@ -1198,22 +1013,26 @@ void OCLToSPIRVBase::visitCallReadImageWithSampler(CallInst *CI,
         Args[0] = SampledImg;
         Args.erase(Args.begin() + 1, Args.begin() + 2);
 
+        unsigned ImgOpMask = getImageSignZeroExt(DemangledName);
+        unsigned ImgOpMaskInsIndex = Args.size();
         switch (Args.size()) {
         case 2: // no lod
-          Args.push_back(getInt32(M, ImageOperandsMask::ImageOperandsLodMask));
+          ImgOpMask |= ImageOperandsMask::ImageOperandsLodMask;
+          ImgOpMaskInsIndex = Args.size();
           Args.push_back(getFloat32(M, 0.f));
           break;
         case 3: // explicit lod
-          Args.insert(Args.begin() + 2,
-                      getInt32(M, ImageOperandsMask::ImageOperandsLodMask));
+          ImgOpMask |= ImageOperandsMask::ImageOperandsLodMask;
+          ImgOpMaskInsIndex = 2;
           break;
         case 4: // gradient
-          Args.insert(Args.begin() + 2,
-                      getInt32(M, ImageOperandsMask::ImageOperandsGradMask));
+          ImgOpMask |= ImageOperandsMask::ImageOperandsGradMask;
+          ImgOpMaskInsIndex = 2;
           break;
         default:
           assert(0 && "read_image* with unhandled number of args!");
         }
+        Args.insert(Args.begin() + ImgOpMaskInsIndex, getInt32(M, ImgOpMask));
 
         // SPIR-V instruction always returns 4-element vector
         if (IsRetScalar)
@@ -1236,7 +1055,9 @@ void OCLToSPIRVBase::visitCallGetImageSize(CallInst *CI,
   AttributeList Attrs = CI->getCalledFunction()->getAttributes();
   StringRef TyName;
   SmallVector<StringRef, 4> SubStrs;
-  auto IsImg = isOCLImageType(CI->getArgOperand(0)->getType(), &TyName);
+  SmallVector<StructType *, 4> ParamTys;
+  getParameterTypes(CI, ParamTys);
+  auto IsImg = isOCLImageStructType(ParamTys[0], &TyName);
   (void)IsImg;
   assert(IsImg);
   std::string ImageTyName = getImageBaseTypeName(TyName);
@@ -1310,7 +1131,6 @@ bool OCLToSPIRVBase::eraseUselessConvert(CallInst *CI, StringRef MangledName,
                     << *CI->getArgOperand(0) << '\n');
     CI->replaceAllUsesWith(CI->getArgOperand(0));
     ValuesToDelete.insert(CI);
-    ValuesToDelete.insert(CI->getCalledFunction());
     return true;
   }
   return false;
@@ -1327,18 +1147,31 @@ void OCLToSPIRVBase::visitCallBuiltinSimple(CallInst *CI, StringRef MangledName,
 void OCLToSPIRVBase::visitCallReadWriteImage(CallInst *CI,
                                              StringRef DemangledName) {
   OCLBuiltinTransInfo Info;
-  if (DemangledName.find(kOCLBuiltinName::ReadImage) == 0)
+  if (DemangledName.find(kOCLBuiltinName::ReadImage) == 0) {
     Info.UniqName = kOCLBuiltinName::ReadImage;
+    unsigned ImgOpMask = getImageSignZeroExt(DemangledName);
+    if (ImgOpMask) {
+      Info.PostProc = [&](std::vector<Value *> &Args) {
+        Args.push_back(getInt32(M, ImgOpMask));
+      };
+    }
+  }
 
   if (DemangledName.find(kOCLBuiltinName::WriteImage) == 0) {
     Info.UniqName = kOCLBuiltinName::WriteImage;
     Info.PostProc = [&](std::vector<Value *> &Args) {
+      unsigned ImgOpMask = getImageSignZeroExt(DemangledName);
+      unsigned ImgOpMaskInsIndex = Args.size();
       if (Args.size() == 4) // write with lod
       {
         auto Lod = Args[2];
         Args.erase(Args.begin() + 2);
-        Args.push_back(getInt32(M, ImageOperandsMask::ImageOperandsLodMask));
+        ImgOpMask |= ImageOperandsMask::ImageOperandsLodMask;
+        ImgOpMaskInsIndex = Args.size();
         Args.push_back(Lod);
+      }
+      if (ImgOpMask) {
+        Args.insert(Args.begin() + ImgOpMaskInsIndex, getInt32(M, ImgOpMask));
       }
     };
   }
@@ -1468,6 +1301,112 @@ void OCLToSPIRVBase::visitCallDot(CallInst *CI) {
   Value *FMulVal = Builder.CreateFMul(CI->getOperand(0), CI->getOperand(1));
   CI->replaceAllUsesWith(FMulVal);
   CI->eraseFromParent();
+}
+
+void OCLToSPIRVBase::visitCallDot(CallInst *CI, StringRef MangledName,
+                                  StringRef DemangledName) {
+  // translation for dot function calls,
+  // to differentiate between integer dot products
+
+  bool IsFirstSigned, IsSecondSigned;
+  bool IsDot = DemangledName == kOCLBuiltinName::Dot;
+  bool IsAccSat = DemangledName.contains(kOCLBuiltinName::DotAccSat);
+  bool IsPacked = CI->getOperand(0)->getType()->isIntegerTy();
+  if (!IsPacked) {
+    if (IsDot) {
+      // dot(char4, char4) _Z3dotDv4_cS_
+      // dot(char4, uchar4) _Z3dotDv4_cDv4_h
+      // dot(uchar4, char4) _Z3dotDv4_hDv4_c
+      // dot(uchar4, uchar4) _Z3dotDv4_hS_
+      // or
+      // dot(short2, short2) _Z3dotDv2_sS_
+      // dot(short2, ushort2) _Z3dotDv2_sDv2_t
+      // dot(ushort2, short2) _Z3dotDv2_tDv2_s
+      // dot(ushort2, ushort2) _Z3dotDv2_tS_
+      assert(MangledName.startswith("_Z3dotDv"));
+      if (MangledName[MangledName.size() - 1] == '_') {
+        IsFirstSigned = ((MangledName[MangledName.size() - 3] == 'c') ||
+                         (MangledName[MangledName.size() - 3] == 's'));
+        IsSecondSigned = IsFirstSigned;
+      } else {
+        IsFirstSigned = ((MangledName[MangledName.size() - 6] == 'c') ||
+                         (MangledName[MangledName.size() - 6] == 's'));
+        IsSecondSigned = ((MangledName[MangledName.size() - 1] == 'c') ||
+                          (MangledName[MangledName.size() - 1] == 's'));
+      }
+    } else {
+      // dot_acc_sat(char4, char4, int) _Z11dot_acc_satDv4_cS_i
+      // dot_acc_sat(char4, uchar4, int) _Z11dot_acc_satDv4_cDv4_hi
+      // dot_acc_sat(uchar4, char4, int) _Z11dot_acc_satDv4_hDv4_ci
+      // dot_acc_sat(uchar4, uchar4, uint) _Z11dot_acc_satDv4_hS_j
+      // or
+      // dot_acc_sat(short2, short2, int) _Z11dot_acc_satDv4_sS_i
+      // dot_acc_sat(short2, ushort2, int) _Z11dot_acc_satDv4_sDv4_ti
+      // dot_acc_sat(ushort2, short2, int) _Z11dot_acc_satDv4_tDv4_si
+      // dot_acc_sat(ushort2, ushort2, uint) _Z11dot_acc_satDv4_tS_j
+      assert(MangledName.startswith("_Z11dot_acc_satDv"));
+      IsFirstSigned = ((MangledName[19] == 'c') || (MangledName[19] == 's'));
+      IsSecondSigned = (MangledName[20] == 'S'
+                            ? IsFirstSigned
+                            : ((MangledName[MangledName.size() - 2] == 'c') ||
+                               (MangledName[MangledName.size() - 2] == 's')));
+    }
+  } else {
+    // for packed format
+    // dot_4x8packed_ss_int(uint, uint) _Z20dot_4x8packed_ss_intjj
+    // dot_4x8packed_su_int(uint, uint) _Z20dot_4x8packed_su_intjj
+    // dot_4x8packed_us_int(uint, uint) _Z20dot_4x8packed_us_intjj
+    // dot_4x8packed_uu_uint(uint, uint) _Z21dot_4x8packed_uu_uintjj
+    // or
+    // dot_acc_sat_4x8packed_ss_int(uint, uint, int)
+    // _Z28dot_acc_sat_4x8packed_ss_intjji
+    // dot_acc_sat_4x8packed_su_int(uint, uint, int)
+    // _Z28dot_acc_sat_4x8packed_su_intjji
+    // dot_acc_sat_4x8packed_us_int(uint, uint, int)
+    // _Z28dot_acc_sat_4x8packed_us_intjji
+    // dot_acc_sat_4x8packed_uu_uint(uint, uint, uint)
+    // _Z29dot_acc_sat_4x8packed_uu_uintjjj
+    assert(MangledName.startswith("_Z20dot_4x8packed") ||
+           MangledName.startswith("_Z21dot_4x8packed") ||
+           MangledName.startswith("_Z28dot_acc_sat_4x8packed") ||
+           MangledName.startswith("_Z29dot_acc_sat_4x8packed"));
+    size_t SignIndex = IsAccSat
+                           ? strlen(kOCLBuiltinName::DotAccSat4x8PackedPrefix)
+                           : strlen(kOCLBuiltinName::Dot4x8PackedPrefix);
+    IsFirstSigned = DemangledName[SignIndex] == 's';
+    IsSecondSigned = DemangledName[SignIndex + 1] == 's';
+  }
+  AttributeList Attrs = CI->getCalledFunction()->getAttributes();
+  mutateCallInstSPIRV(
+      M, CI,
+      [=](CallInst *, std::vector<Value *> &Args) {
+        // If arguments are in order unsigned -> signed
+        // then the translator should swap them,
+        // so that the OpSUDotKHR can be used properly
+        if (IsFirstSigned == false && IsSecondSigned == true) {
+          std::swap(Args[0], Args[1]);
+        }
+        Op OC;
+        if (!IsAccSat) {
+          OC = (IsFirstSigned != IsSecondSigned
+                    ? OpSUDot
+                    : ((IsFirstSigned) ? OpSDot : OpUDot));
+        } else {
+          OC = (IsFirstSigned != IsSecondSigned
+                    ? OpSUDotAccSat
+                    : ((IsFirstSigned) ? OpSDotAccSat : OpUDotAccSat));
+        }
+        if (IsPacked) {
+          // As per SPIRV specification the dot OpCodes
+          // which use scalar integers to represent
+          // packed vectors need additional argument
+          // specified - the Packed Vector Format
+          Args.push_back(
+              getInt32(M, PackedVectorFormatPackedVectorFormat4x8BitKHR));
+        }
+        return getSPIRVFuncName(OC);
+      },
+      &Attrs);
 }
 
 void OCLToSPIRVBase::visitCallScalToVec(CallInst *CI, StringRef MangledName,
@@ -1686,7 +1625,9 @@ static void processSubgroupBlockReadWriteINTEL(CallInst *CI,
 // reads and vector block reads.
 void OCLToSPIRVBase::visitSubgroupBlockReadINTEL(CallInst *CI) {
   OCLBuiltinTransInfo Info;
-  if (isOCLImageType(CI->getArgOperand(0)->getType()))
+  SmallVector<StructType *, 2> ParamTys;
+  getParameterTypes(CI, ParamTys);
+  if (isOCLImageStructType(ParamTys[0]))
     Info.UniqName = getSPIRVFuncName(spv::OpSubgroupImageBlockReadINTEL);
   else
     Info.UniqName = getSPIRVFuncName(spv::OpSubgroupBlockReadINTEL);
@@ -1699,7 +1640,9 @@ void OCLToSPIRVBase::visitSubgroupBlockReadINTEL(CallInst *CI) {
 // instructions.
 void OCLToSPIRVBase::visitSubgroupBlockWriteINTEL(CallInst *CI) {
   OCLBuiltinTransInfo Info;
-  if (isOCLImageType(CI->getArgOperand(0)->getType()))
+  SmallVector<StructType *, 3> ParamTys;
+  getParameterTypes(CI, ParamTys);
+  if (isOCLImageStructType(ParamTys[0]))
     Info.UniqName = getSPIRVFuncName(spv::OpSubgroupImageBlockWriteINTEL);
   else
     Info.UniqName = getSPIRVFuncName(spv::OpSubgroupBlockWriteINTEL);
@@ -1733,10 +1676,11 @@ static const char *getSubgroupAVCIntelOpKind(StringRef Name) {
       .StartsWith(kOCLSubgroupsAVCIntel::SICPrefix, "sic");
 }
 
-static const char *getSubgroupAVCIntelTyKind(Type *Ty) {
-  auto *STy = cast<StructType>(cast<PointerType>(Ty)->getPointerElementType());
-  auto TName = STy->getName();
-  return TName.endswith("_payload_t") ? "payload" : "result";
+static const char *getSubgroupAVCIntelTyKind(StringRef MangledName) {
+  // We're looking for the type name of the last parameter, which will be at the
+  // very end of the mangled name. Since we only care about the ending of the
+  // name, we don't need to be any more clever than this.
+  return MangledName.endswith("_payload_t") ? "payload" : "result";
 }
 
 static Type *getSubgroupAVCIntelMCEType(Module *M, std::string &TName) {
@@ -1768,11 +1712,9 @@ void OCLToSPIRVBase::visitSubgroupAVCBuiltinCall(CallInst *CI,
 
   // Update names for built-ins mapped on two or more SPIRV instructions
   if (FName.find(Prefix + "ime_get_streamout_major_shape_") == 0) {
-    auto PTy = cast<PointerType>(CI->getArgOperand(0)->getType());
-    auto *STy = cast<StructType>(PTy->getPointerElementType());
-    assert(STy->hasName() && "Invalid Subgroup AVC Intel built-in call");
-    FName += (STy->getName().contains("single")) ? "_single_reference"
-                                                 : "_dual_reference";
+    // _single_reference functions have 2 arguments, _dual_reference have 3
+    // arguments.
+    FName += (CI->arg_size() == 2) ? "_single_reference" : "_dual_reference";
   } else if (FName.find(Prefix + "sic_configure_ipe") == 0) {
     FName += (CI->arg_size() == 8) ? "_luma" : "_luma_chroma";
   }
@@ -1808,8 +1750,8 @@ void OCLToSPIRVBase::visitSubgroupAVCWrapperBuiltinCall(
   // Find 'to_mce' conversion function.
   // The operand required conversion is always the last one.
   const char *OpKind = getSubgroupAVCIntelOpKind(DemangledName);
-  const char *TyKind = getSubgroupAVCIntelTyKind(
-      CI->getArgOperand(CI->arg_size() - 1)->getType());
+  const char *TyKind =
+      getSubgroupAVCIntelTyKind(CI->getCalledFunction()->getName());
   std::string MCETName =
       std::string(kOCLSubgroupsAVCIntel::TypePrefix) + "mce_" + TyKind + "_t";
   auto *MCETy =
@@ -1885,21 +1827,28 @@ void OCLToSPIRVBase::visitSubgroupAVCBuiltinCallWithSampler(
   mutateCallInstSPIRV(
       M, CI,
       [=](CallInst *, std::vector<Value *> &Args) {
-        auto SamplerIt = std::find_if(Args.begin(), Args.end(), [](Value *V) {
-          return OCLUtil::isSamplerTy(V->getType());
-        });
-        assert(SamplerIt != Args.end() &&
+        SmallVector<StructType *, 4> ParamTys;
+        getParameterTypes(CI, ParamTys);
+        auto *TyIt =
+            std::find_if(ParamTys.begin(), ParamTys.end(), isSamplerStructTy);
+        assert(TyIt != ParamTys.end() &&
                "Invalid Subgroup AVC Intel built-in call");
+        auto SamplerIt = Args.begin() + (TyIt - ParamTys.begin());
         auto *SamplerVal = *SamplerIt;
         Args.erase(SamplerIt);
+        ParamTys.erase(TyIt);
 
         for (unsigned I = 0, E = Args.size(); I < E; ++I) {
-          if (!isOCLImageType(Args[I]->getType()))
+          if (!isOCLImageStructType(ParamTys[I]))
             continue;
 
-          auto *ImageTy = OCLTypeToSPIRVPtr->getAdaptedType(Args[I]);
-          if (isOCLImageType(ImageTy))
-            ImageTy = getSPIRVImageTypeFromOCL(M, ImageTy);
+          auto *ImageTy =
+              OCLTypeToSPIRVPtr
+                  ->getAdaptedArgumentType(CI->getCalledFunction(), I)
+                  .second;
+          if (!ImageTy)
+            ImageTy = ParamTys[I];
+          ImageTy = adaptSPIRVImageType(M, ImageTy);
           auto *SampledImgTy = getSPIRVTypeByChangeBaseTypeName(
               M, ImageTy, kSPIRVTypeName::Image, kSPIRVTypeName::VmeImageINTEL);
 
@@ -1909,6 +1858,37 @@ void OCLToSPIRVBase::visitSubgroupAVCBuiltinCallWithSampler(
                                      kSPIRVName::TempSampledImage);
         }
         return getSPIRVFuncName(OC);
+      },
+      &Attrs);
+}
+
+void OCLToSPIRVBase::visitCallSplitBarrierINTEL(CallInst *CI,
+                                                StringRef DemangledName) {
+  auto Lit = getBarrierLiterals(CI);
+  AttributeList Attrs = CI->getCalledFunction()->getAttributes();
+  Op OpCode =
+      StringSwitch<Op>(DemangledName)
+          .Case("intel_work_group_barrier_arrive", OpControlBarrierArriveINTEL)
+          .Case("intel_work_group_barrier_wait", OpControlBarrierWaitINTEL)
+          .Default(OpNop);
+
+  mutateCallInstSPIRV(
+      M, CI,
+      [=](CallInst *, std::vector<Value *> &Args) {
+        Args.resize(3);
+        // Execution scope
+        Args[0] = addInt32(map<Scope>(std::get<2>(Lit)));
+        // Memory scope
+        Args[1] = addInt32(map<Scope>(std::get<1>(Lit)));
+        // Memory semantics
+        // OpControlBarrierArriveINTEL -> Release,
+        // OpControlBarrierWaitINTEL -> Acquire
+        unsigned MemFenceFlag = std::get<0>(Lit);
+        OCLMemOrderKind MemOrder = OpCode == OpControlBarrierArriveINTEL
+                                       ? OCLMO_release
+                                       : OCLMO_acquire;
+        Args[2] = addInt32(mapOCLMemSemanticToSPIRV(MemFenceFlag, MemOrder));
+        return getSPIRVFuncName(OpCode);
       },
       &Attrs);
 }

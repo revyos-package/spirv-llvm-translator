@@ -411,14 +411,14 @@ For example:
 are translated for image types, but they should be encoded in LLVM IR type name
 rather than function metadata.
 
-Function parameter and global variable decoration through metadata
+Function parameter, instruction and global variable decoration through metadata
 ------------------------------------------------------------------
 
-Both function parameters and global variables can be decorated using LLVM
+Function parameters, instructions and global variables can be decorated using LLVM
 metadata through the metadata names ``spirv.ParameterDecorations`` and
 ``spirv.Decorations`` respectively. ``spirv.ParameterDecorations`` must be tied
 to the kernel function while ``spirv.Decorations`` is tied directly to the
-global variable.
+instruction or global variable.
 
 A "decoration-node" is a metadata node consisting of one or more operands. The
 first operand is an integer literal representing the SPIR-V decoration
@@ -434,7 +434,7 @@ decoration-nodes.
 references to decoration-lists, where N is the number of arguments of the
 function the metadata is tied to.
 
-``spirv.Decorations`` example:
+``spirv.Decorations`` applied on a global variable example:
 
 .. code-block:: llvm
 
@@ -446,6 +446,18 @@ function the metadata is tied to.
 
 decorates a global variable ``v`` with ``Constant`` and ``LinkageAttributes``
 with extra operands ``"v"`` and ``Export`` in SPIR-V.
+
+``spirv.Decorations`` applied on an instruction example:
+
+.. code-block:: llvm
+
+  %idx = getelementptr inbounds i32, ptr addrspace(1) %b, i64 1, !spirv.Decorations !1
+  ...
+  !1 = !{!2}
+  !2 = !{i32 6442, i32 1, i32 2}  ; {CacheControlLoadINTEL, CacheLevel=1, Cached}
+
+decorates getelementptr instruction with CacheControlLoadINTEL decoration with
+extra operands ``i32 1`` and ``i32 2``.
 
 ``spirv.ParameterDecorations`` example:
 
@@ -460,6 +472,76 @@ with extra operands ``"v"`` and ``Export`` in SPIR-V.
 
 decorates the argument ``b`` of ``k`` with ``Restrict`` in SPIR-V while not
 adding any decoration to argument ``a``.
+
+Member decoration through pointer annotations
+---------------------------------------------
+
+Class members can be decorated using the ``llvm.ptr.annotation`` LLVM IR
+intrinsic. Member decorations specified in ``llvm.ptr.annotation`` must be in
+the second argument and must have the format ``{X}`` or ``{X:Y}`` where ``X`` is
+either one of the reserved names or an integer literal representing the SPIR-V
+decoration identifier and ``Y`` is 1 or more arguments separated by ",", where
+each argument must be either a word (including numbers) or a string enclosed by
+quotation marks. The ``llvm.ptr.annotation`` can contain any number decorations
+following this format.
+
+For example, both ``{5835:1,2,3}`` and ``{bank_bits:1,2,3}`` will result in the
+``BankwidthINTEL`` decoration with literals 1, 2, and 3 attached to the
+annotated member.
+
+The translator accepts a number of reserved names that correspond to SPIR-V
+member decorations.
+
++-----------------------+------------------+-----------------------------------+
+| Decoration            | Reserved Name    | Note                              |
++=======================+==================+===================================+
+| RegisterINTEL         | register         | Additional arguments are ignored, |
+|                       |                  | but reverse translation will add  |
+|                       |                  | a 1 argument, i.e.                |
+|                       |                  | ``{register:1}``.                 |
++-----------------------+------------------+-----------------------------------+
+| MemoryINTEL           | memory           |                                   |
++-----------------------+------------------+-----------------------------------+
+| NumbanksINTEL         | numbanks         |                                   |
++-----------------------+------------------+-----------------------------------+
+| BankwidthINTEL        | bankwidth        |                                   |
++-----------------------+------------------+-----------------------------------+
+| MaxPrivateCopiesINTEL | private_copies   |                                   |
++-----------------------+------------------+-----------------------------------+
+| SinglepumpINTEL       | pump             | Reserved name is shared with      |
+|                       |                  | DoublepumpINTEL. SinglepumpINTEL  |
+|                       |                  | will be selected if the argument  |
+|                       |                  | is 2, i.e ``{pump:1}``.           |
++-----------------------+------------------+-----------------------------------+
+| DoublepumpINTEL       | pump             | Reserved name is shared with      |
+|                       |                  | SinglepumpINTEL. DoublepumpINTEL  |
+|                       |                  | will be selected if the argument  |
+|                       |                  | is 2, i.e ``{pump:2}``.           |
++-----------------------+------------------+-----------------------------------+
+| MaxReplicatesINTEL    | max_replicates   |                                   |
++-----------------------+------------------+-----------------------------------+
+| SimpleDualPortINTEL   | simple_dual_port | Additional arguments are ignored, |
+|                       |                  | but reverse translation will add  |
+|                       |                  | a 1 argument, i.e.                |
+|                       |                  | ``{simple_dual_port:1}``.         |
++-----------------------+------------------+-----------------------------------+
+| MergeINTEL            | merge            | Arguments of this are separated by|
+|                       |                  | ":" rather than ",", i.e.         |
+|                       |                  | ``{merge:X:Y}``.                  |
++-----------------------+------------------+-----------------------------------+
+| BankBitsINTEL         | bank_bits        |                                   |
++-----------------------+------------------+-----------------------------------+
+| ForcePow2DepthINTEL   | force_pow2_depth |                                   |
++-----------------------+------------------+-----------------------------------+
+
+None of the special requirements imposed from using the reserved names apply to
+using decoration identifiers directly.
+
+During reverse translation, the translator prioritizes reserved names over
+decoration identifiers, even if the member decoration was generated using the
+corresponding decoration identifier. For example, this means that translating
+``{5825}`` to SPIR-V and back to LLVM IR will result in ``{register:1}`` being
+in the annotation string argument instead of the initial value.
 
 Debug information extension
 ===========================

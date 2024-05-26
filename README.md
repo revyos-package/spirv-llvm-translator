@@ -19,7 +19,7 @@ The files/directories related to the translator:
 
 ## Build Instructions
 
-The `master` branch of this repo is aimed to be buildable with the latest
+The `main` branch of this repo is aimed to be buildable with the latest
 LLVM `main` revision.
 
 ### Build with pre-installed LLVM
@@ -202,7 +202,7 @@ the version of the SPIR-V file which is being generated/consumed.
   the input file and emit an error if the SPIR-V version in it is higher than
   one specified via this option.
 
-Allowed values are `1.0`, `1.1`, `1.2`, `1.3`, and `1.4`.
+Allowed values are `1.0`, `1.1`, `1.2`, `1.3`, `1.4`, and `1.5`.
 
 More information can be found in
 [SPIR-V versions and extensions handling](docs/SPIRVVersionsAndExtensionsHandling.rst)
@@ -233,13 +233,13 @@ More information can be found in
 
 ## Branching strategy
 
-Code on the master branch in this repository is intended to be compatible with
+Code on the main branch in this repository is intended to be compatible with
 the main branch of the [llvm](https://github.com/llvm/llvm-project)
 project. That is, for an OpenCL kernel compiled to llvm bitcode by the latest
 git revision of Clang it should be possible to translate it to SPIR-V with the
 llvm-spirv tool.
 
-All new development should be done on the master branch.
+All new development should be done on the main branch.
 
 To have versions compatible with released versions of LLVM and Clang,
 corresponding tags are available in this repository. For example, to build
@@ -249,9 +249,9 @@ one should use the
 [v7.0.0-1](https://github.com/KhronosGroup/SPIRV-LLVM-Translator/tree/v7.0.0-1)
 tag. The 7.x releases are maintained on the
 [llvm_release_70](https://github.com/KhronosGroup/SPIRV-LLVM-Translator/tree/llvm_release_70)
-branch. As a general rule, commits from the master branch may be backported to
+branch. As a general rule, commits from the main branch may be backported to
 the release branches as long as they do not depend on features from a later
 LLVM/Clang release and there are no objections from the maintainer(s). There
 is no guarantee that older release branches are proactively kept up to date
-with master, but you can request specific commits on older release branches by
+with main, but you can request specific commits on older release branches by
 creating a pull request or raising an issue on GitHub.

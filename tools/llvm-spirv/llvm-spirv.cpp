@@ -109,7 +109,8 @@ static cl::opt<VersionNumber> MaxSPIRVVersion(
                clEnumValN(VersionNumber::SPIRV_1_1, "1.1", "SPIR-V 1.1"),
                clEnumValN(VersionNumber::SPIRV_1_2, "1.2", "SPIR-V 1.2"),
                clEnumValN(VersionNumber::SPIRV_1_3, "1.3", "SPIR-V 1.3"),
-               clEnumValN(VersionNumber::SPIRV_1_4, "1.4", "SPIR-V 1.4")),
+               clEnumValN(VersionNumber::SPIRV_1_4, "1.4", "SPIR-V 1.4"),
+               clEnumValN(VersionNumber::SPIRV_1_5, "1.5", "SPIR-V 1.5")),
     cl::init(VersionNumber::MaximumVersion));
 
 static cl::list<std::string>
@@ -183,6 +184,10 @@ static cl::opt<bool>
     SPIRVMemToReg("spirv-mem2reg", cl::init(false),
                   cl::desc("LLVM/SPIR-V translation enable mem2reg"));
 
+static cl::opt<bool> SPIRVPreserveAuxData(
+    "spirv-preserve-auxdata", cl::init(false),
+    cl::desc("Preserve all auxiliary data, such as function attributes and metadata"));
+
 static cl::opt<bool> SpecConstInfo(
     "spec-const-info",
     cl::desc("Display id of constants available for specializaion and their "
@@ -218,7 +223,21 @@ static cl::opt<SPIRV::DebugInfoEIS> DebugEIS(
         clEnumValN(SPIRV::DebugInfoEIS::OpenCL_DebugInfo_100, "ocl-100",
                    "Emit debug info compliant with the OpenCL.DebugInfo.100 "
                    "extended instruction set. This version of SPIR-V debug "
-                   "info format is compatible with the SPIRV-Tools")));
+                   "info format is compatible with the SPIRV-Tools"),
+        clEnumValN(
+            SPIRV::DebugInfoEIS::NonSemantic_Shader_DebugInfo_100,
+            "nonsemantic-shader-100",
+            "Emit debug info compliant with the "
+            "NonSemantic.Shader.DebugInfo.100 extended instruction set. This "
+            "version of SPIR-V debug info format is compatible with the rules "
+            "regarding non-semantic instruction sets."),
+        clEnumValN(
+            SPIRV::DebugInfoEIS::NonSemantic_Shader_DebugInfo_200,
+            "nonsemantic-shader-200",
+            "Emit debug info compliant with the "
+            "NonSemantic.Shader.DebugInfo.200 extended instruction set. This "
+            "version of SPIR-V debug info format is compatible with the rules "
+            "regarding non-semantic instruction sets.")));
 
 static cl::opt<bool> SPIRVReplaceLLVMFmulAddWithOpenCLMad(
     "spirv-replace-fmuladd-with-ocl-mad",
@@ -473,15 +492,19 @@ static int parseSPVExtOption(
   //  - during SPIR-V generation, assume that any known extension is disallowed.
   //  - during conversion to/from SPIR-V text representation, assume that any
   //    known extension is allowed.
+  llvm::Optional<bool> DefaultVal;
+  if (IsReverse)
+    DefaultVal = true;
   for (const auto &It : ExtensionNamesMap)
-    ExtensionsStatus[It.second] = IsReverse;
+    ExtensionsStatus[It.second] = DefaultVal;
 
   if (SPVExt.empty())
     return 0; // Nothing to do
 
   for (unsigned i = 0; i < SPVExt.size(); ++i) {
     const std::string &ExtString = SPVExt[i];
-    if ('+' != ExtString.front() && '-' != ExtString.front()) {
+    if (ExtString.empty() ||
+        ('+' != ExtString.front() && '-' != ExtString.front())) {
       errs() << "Invalid value of --spirv-ext, expected format is:\n"
              << "\t--spirv-ext=+EXT_NAME,-EXT_NAME\n";
       return -1;
@@ -675,6 +698,14 @@ int main(int Ac, char **Av) {
       return -1;
   }
 
+  if (SPIRVPreserveAuxData) {
+    Opts.setPreserveAuxData(
+        SPIRVPreserveAuxData);
+    if (!IsReverse)
+      Opts.setAllowedToUseExtension(
+          SPIRV::ExtensionID::SPV_KHR_non_semantic_info);
+  }
+
   if (SPIRVAllowUnknownIntrinsics.getNumOccurrences() != 0) {
     if (IsReverse) {
       errs()
@@ -705,6 +736,15 @@ int main(int Ac, char **Av) {
                 "affects translation from LLVM IR to SPIR-V";
     } else {
       Opts.setDebugInfoEIS(DebugEIS);
+      if (DebugEIS.getValue() ==
+          SPIRV::DebugInfoEIS::NonSemantic_Shader_DebugInfo_200)
+        Opts.setAllowExtraDIExpressionsEnabled(true);
+      if (DebugEIS.getValue() ==
+          SPIRV::DebugInfoEIS::NonSemantic_Shader_DebugInfo_100 ||
+          DebugEIS.getValue() ==
+          SPIRV::DebugInfoEIS::NonSemantic_Shader_DebugInfo_200)
+        Opts.setAllowedToUseExtension(
+            SPIRV::ExtensionID::SPV_KHR_non_semantic_info);
     }
   }
 

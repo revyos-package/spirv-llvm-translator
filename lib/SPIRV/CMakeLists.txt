@@ -14,8 +14,7 @@ add_llvm_library(LLVMSPIRVLib
   SPIRVLowerConstExpr.cpp
   SPIRVLowerMemmove.cpp
   SPIRVLowerOCLBlocks.cpp
-  SPIRVLowerSaddWithOverflow.cpp
-  SPIRVLowerSPIRBlocks.cpp
+  SPIRVLowerSaddIntrinsics.cpp
   SPIRVReader.cpp
   SPIRVRegularizeLLVM.cpp
   SPIRVToLLVMDbgTran.cpp
@@ -44,6 +43,7 @@ add_llvm_library(LLVMSPIRVLib
     Demangle
     IRReader
     Linker
+    Passes
     Support
     TransformUtils
   DEPENDS
