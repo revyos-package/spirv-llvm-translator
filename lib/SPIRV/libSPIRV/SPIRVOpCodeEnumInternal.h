@@ -9,7 +9,21 @@ _SPIRV_OP_INTERNAL(TypeJointMatrixINTEL, internal::OpTypeJointMatrixINTEL)
 _SPIRV_OP_INTERNAL(JointMatrixLoadINTEL, internal::OpJointMatrixLoadINTEL)
 _SPIRV_OP_INTERNAL(JointMatrixStoreINTEL, internal::OpJointMatrixStoreINTEL)
 _SPIRV_OP_INTERNAL(JointMatrixMadINTEL, internal::OpJointMatrixMadINTEL)
+_SPIRV_OP_INTERNAL(JointMatrixSUMadINTEL, internal::OpJointMatrixSUMadINTEL)
+_SPIRV_OP_INTERNAL(JointMatrixUSMadINTEL, internal::OpJointMatrixUSMadINTEL)
+_SPIRV_OP_INTERNAL(JointMatrixUUMadINTEL, internal::OpJointMatrixUUMadINTEL)
 _SPIRV_OP_INTERNAL(JointMatrixWorkItemLengthINTEL,
                    internal::OpJointMatrixWorkItemLengthINTEL)
+_SPIRV_OP_INTERNAL(JointMatrixGetElementCoordINTEL,
+                   internal::OpJointMatrixGetElementCoordINTEL)
+_SPIRV_OP_INTERNAL(CooperativeMatrixLoadCheckedINTEL,
+                   internal::OpCooperativeMatrixLoadCheckedINTEL)
+_SPIRV_OP_INTERNAL(CooperativeMatrixStoreCheckedINTEL,
+                   internal::OpCooperativeMatrixStoreCheckedINTEL)
+_SPIRV_OP_INTERNAL(CooperativeMatrixConstructCheckedINTEL,
+                   internal::OpCooperativeMatrixConstructCheckedINTEL)
 _SPIRV_OP_INTERNAL(ComplexFMulINTEL, internal::ComplexFMulINTEL)
 _SPIRV_OP_INTERNAL(ComplexFDivINTEL, internal::ComplexFDivINTEL)
+_SPIRV_OP_INTERNAL(MaskedGatherINTEL, internal::OpMaskedGatherINTEL)
+_SPIRV_OP_INTERNAL(MaskedScatterINTEL, internal::OpMaskedScatterINTEL)
+_SPIRV_OP_INTERNAL(RoundFToTF32INTEL, internal::RoundFToTF32INTEL)

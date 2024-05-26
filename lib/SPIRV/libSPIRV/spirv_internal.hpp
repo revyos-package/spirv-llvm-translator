@@ -29,6 +29,29 @@
 namespace spv {
 namespace internal {
 
+enum InternalSourceLanguageNonSemanticDI {
+  ISourceLanguagePython = 200,
+  ISourceLanguageJulia = 201,
+  ISourceLanguageRust = 202,
+  ISourceLanguageD = 203,
+  ISourceLanguageFortran77 = 204,
+  ISourceLanguageFortran90 = 205,
+  ISourceLanguageFortran95 = 206,
+  ISourceLanguageFortran2003 = 207,
+  ISourceLanguageFortran2008 = 208,
+  ISourceLanguageFortran2018 = 209,
+  ISourceLanguageC = 210,
+  ISourceLanguageC99 = 211,
+  ISourceLanguageC11 = 212,
+  ISourceLanguageC17 = 213,
+  ISourceLanguageCPP = 214,
+  ISourceLanguageCPP03 = 215,
+  ISourceLanguageCPP11 = 216,
+  ISourceLanguageCPP14 = 217,
+  ISourceLanguageCPP17 = 218,
+  ISourceLanguageCPP20 = 219,
+};
+
 enum InternalLinkageType {
   ILTPrev = LinkageTypeMax - 2,
   ILTInternal
@@ -42,10 +65,20 @@ enum InternalOp {
   IOpJointMatrixLoadINTEL = 6120,
   IOpJointMatrixStoreINTEL = 6121,
   IOpJointMatrixMadINTEL = 6122,
+  IOpJointMatrixSUMadINTEL = 6128,
+  IOpJointMatrixUSMadINTEL = 6129,
+  IOpJointMatrixUUMadINTEL = 6130,
   IOpArithmeticFenceINTEL = 6145,
+  IOpCooperativeMatrixLoadCheckedINTEL = 6193,
+  IOpCooperativeMatrixStoreCheckedINTEL = 6194,
+  IOpCooperativeMatrixConstructCheckedINTEL = 6195,
   IOpJointMatrixWorkItemLengthINTEL = 6410,
   IOpComplexFMulINTEL = 6415,
   IOpComplexFDivINTEL = 6416,
+  IOpRoundFToTF32INTEL = 6426,
+  IOpMaskedGatherINTEL = 6428,
+  IOpMaskedScatterINTEL = 6429,
+  IOpJointMatrixGetElementCoordINTEL = 6440,
   IOpPrev = OpMax - 2,
   IOpForward
 };
@@ -60,7 +93,9 @@ enum InternalDecoration {
   IDecHostAccessINTEL = 6147,
   IDecInitModeINTEL = 6148,
   IDecImplementInCSRINTEL = 6149,
-  IDecArgumentAttributeINTEL = 6409
+  IDecArgumentAttributeINTEL = 6409,
+  IDecCacheControlLoadINTEL = 6442,
+  IDecCacheControlStoreINTEL = 6443
 };
 
 enum InternalCapability {
@@ -75,15 +110,23 @@ enum InternalCapability {
   ICapabilityHWThreadQueryINTEL = 6134,
   ICapFPArithmeticFenceINTEL = 6144,
   ICapGlobalVariableDecorationsINTEL = 6146,
-  ICapabilityNonConstantAddrspacePrintfINTEL = 6411,
-  ICapabilityComplexFloatMulDivINTEL = 6414
+  ICapabilityCooperativeMatrixCheckedInstructionsINTEL = 6192,
+  ICapabilityComplexFloatMulDivINTEL = 6414,
+  ICapabilityTensorFloat32RoundingINTEL = 6425,
+  ICapabilityMaskedGatherScatterINTEL = 6427,
+  ICapabilityJointMatrixWIInstructionsINTEL = 6435,
+  ICapabilityCacheControlsINTEL = 6441,
+  ICapRegisterLimitsINTEL = 6460
 };
 
 enum InternalFunctionControlMask { IFunctionControlOptNoneINTELMask = 0x10000 };
 
 enum InternalExecutionMode {
   IExecModeFastCompositeKernelINTEL = 6088,
-  IExecModeStreamingInterfaceINTEL = 6154
+  IExecModeStreamingInterfaceINTEL = 6154,
+  IExecModeMaximumRegistersINTEL = 6461,
+  IExecModeMaximumRegistersIdINTEL = 6462,
+  IExecModeNamedMaximumRegistersINTEL = 6463
 };
 
 enum InternalLoopControlMask { ILoopControlLoopCountINTELMask = 0x1000000 };
@@ -105,23 +148,101 @@ enum InternalBuiltIn {
   IBuiltInGlobalHWThreadIDINTEL = 6136,
 };
 
+enum class LoadCacheControlINTEL {
+  Uncached = 0,
+  Cached = 1,
+  Streaming = 2,
+  InvalidateAfterRead = 3,
+  ConstCached = 4
+};
+
+enum class StoreCacheControlINTEL {
+  Uncached = 0,
+  WriteThrough = 1,
+  WriteBack = 2,
+  Streaming = 3
+};
+
+enum InternalNamedMaximumNumberOfRegisters {
+  NamedMaximumNumberOfRegistersAutoINTEL = 0,
+};
+
 #define _SPIRV_OP(x, y) constexpr x x##y = static_cast<x>(I##x##y);
 _SPIRV_OP(Capability, JointMatrixINTEL)
+_SPIRV_OP(Capability, JointMatrixWIInstructionsINTEL)
 _SPIRV_OP(Op, TypeJointMatrixINTEL)
 _SPIRV_OP(Op, JointMatrixLoadINTEL)
 _SPIRV_OP(Op, JointMatrixStoreINTEL)
 _SPIRV_OP(Op, JointMatrixMadINTEL)
+_SPIRV_OP(Op, JointMatrixSUMadINTEL)
+_SPIRV_OP(Op, JointMatrixUSMadINTEL)
+_SPIRV_OP(Op, JointMatrixUUMadINTEL)
 _SPIRV_OP(Op, JointMatrixWorkItemLengthINTEL)
+_SPIRV_OP(Op, JointMatrixGetElementCoordINTEL)
+
+_SPIRV_OP(Capability, CooperativeMatrixCheckedInstructionsINTEL)
+_SPIRV_OP(Op, CooperativeMatrixLoadCheckedINTEL)
+_SPIRV_OP(Op, CooperativeMatrixStoreCheckedINTEL)
+_SPIRV_OP(Op, CooperativeMatrixConstructCheckedINTEL)
+
 _SPIRV_OP(Capability, HWThreadQueryINTEL)
 _SPIRV_OP(BuiltIn, SubDeviceIDINTEL)
 _SPIRV_OP(BuiltIn, GlobalHWThreadIDINTEL)
 
-_SPIRV_OP(Capability, NonConstantAddrspacePrintfINTEL)
-
 _SPIRV_OP(Capability, ComplexFloatMulDivINTEL)
 _SPIRV_OP(Op, ComplexFMulINTEL)
 _SPIRV_OP(Op, ComplexFDivINTEL)
+
+_SPIRV_OP(Capability, MaskedGatherScatterINTEL)
+_SPIRV_OP(Op, MaskedGatherINTEL)
+_SPIRV_OP(Op, MaskedScatterINTEL)
+
+_SPIRV_OP(Capability, TensorFloat32RoundingINTEL)
+_SPIRV_OP(Op, RoundFToTF32INTEL)
+
+_SPIRV_OP(Capability, CacheControlsINTEL)
 #undef _SPIRV_OP
+
+constexpr SourceLanguage SourceLanguagePython =
+    static_cast<SourceLanguage>(ISourceLanguagePython);
+constexpr SourceLanguage SourceLanguageJulia =
+    static_cast<SourceLanguage>(ISourceLanguageJulia);
+constexpr SourceLanguage SourceLanguageRust =
+    static_cast<SourceLanguage>(ISourceLanguageRust);
+constexpr SourceLanguage SourceLanguageD =
+    static_cast<SourceLanguage>(ISourceLanguageD);
+constexpr SourceLanguage SourceLanguageFortran77 =
+    static_cast<SourceLanguage>(ISourceLanguageFortran77);
+constexpr SourceLanguage SourceLanguageFortran90 =
+    static_cast<SourceLanguage>(ISourceLanguageFortran90);
+constexpr SourceLanguage SourceLanguageFortran95 =
+    static_cast<SourceLanguage>(ISourceLanguageFortran95);
+constexpr SourceLanguage SourceLanguageFortran2003 =
+    static_cast<SourceLanguage>(ISourceLanguageFortran2003);
+constexpr SourceLanguage SourceLanguageFortran2008 =
+    static_cast<SourceLanguage>(ISourceLanguageFortran2008);
+constexpr SourceLanguage SourceLanguageFortran2018 =
+    static_cast<SourceLanguage>(ISourceLanguageFortran2018);
+constexpr SourceLanguage SourceLanguageC =
+    static_cast<SourceLanguage>(ISourceLanguageC);
+constexpr SourceLanguage SourceLanguageC99 =
+    static_cast<SourceLanguage>(ISourceLanguageC99);
+constexpr SourceLanguage SourceLanguageC11 =
+    static_cast<SourceLanguage>(ISourceLanguageC11);
+constexpr SourceLanguage SourceLanguageC17 =
+    static_cast<SourceLanguage>(ISourceLanguageC17);
+constexpr SourceLanguage SourceLanguageCPP =
+    static_cast<SourceLanguage>(ISourceLanguageCPP);
+constexpr SourceLanguage SourceLanguageCPP03 =
+    static_cast<SourceLanguage>(ISourceLanguageCPP03);
+constexpr SourceLanguage SourceLanguageCPP11 =
+    static_cast<SourceLanguage>(ISourceLanguageCPP11);
+constexpr SourceLanguage SourceLanguageCPP14 =
+    static_cast<SourceLanguage>(ISourceLanguageCPP14);
+constexpr SourceLanguage SourceLanguageCPP17 =
+    static_cast<SourceLanguage>(ISourceLanguageCPP17);
+constexpr SourceLanguage SourceLanguageCPP20 =
+    static_cast<SourceLanguage>(ISourceLanguageCPP20);
 
 constexpr Op OpForward = static_cast<Op>(IOpForward);
 constexpr Op OpTypeTokenINTEL = static_cast<Op>(IOpTypeTokenINTEL);
@@ -147,6 +268,10 @@ constexpr Decoration DecorationImplementInCSRINTEL =
     static_cast<Decoration>(IDecImplementInCSRINTEL);
 constexpr Decoration DecorationArgumentAttributeINTEL =
     static_cast<Decoration>(IDecArgumentAttributeINTEL);
+constexpr Decoration DecorationCacheControlLoadINTEL =
+    static_cast<Decoration>(IDecCacheControlLoadINTEL);
+constexpr Decoration DecorationCacheControlStoreINTEL =
+    static_cast<Decoration>(IDecCacheControlStoreINTEL);
 
 constexpr Capability CapabilityFastCompositeINTEL =
     static_cast<Capability>(ICapFastCompositeINTEL);
@@ -166,6 +291,8 @@ constexpr Capability CapabilityBfloat16ConversionINTEL =
     static_cast<Capability>(ICapBfloat16ConversionINTEL);
 constexpr Capability CapabilityGlobalVariableDecorationsINTEL =
     static_cast<Capability>(ICapGlobalVariableDecorationsINTEL);
+constexpr Capability CapabilityRegisterLimitsINTEL =
+    static_cast<Capability>(ICapRegisterLimitsINTEL);
 
 constexpr FunctionControlMask FunctionControlOptNoneINTELMask =
     static_cast<FunctionControlMask>(IFunctionControlOptNoneINTELMask);
@@ -180,6 +307,12 @@ constexpr ExecutionMode ExecutionModeStreamingInterfaceINTEL =
 
 constexpr LoopControlMask LoopControlLoopCountINTELMask =
     static_cast<LoopControlMask>(ILoopControlLoopCountINTELMask);
+constexpr ExecutionMode ExecutionModeMaximumRegistersINTEL =
+    static_cast<ExecutionMode>(IExecModeMaximumRegistersINTEL);
+constexpr ExecutionMode ExecutionModeMaximumRegistersIdINTEL =
+    static_cast<ExecutionMode>(IExecModeMaximumRegistersIdINTEL);
+constexpr ExecutionMode ExecutionModeNamedMaximumRegistersINTEL =
+    static_cast<ExecutionMode>(IExecModeNamedMaximumRegistersINTEL);
 
 } // namespace internal
 } // namespace spv

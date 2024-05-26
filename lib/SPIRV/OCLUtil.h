@@ -234,6 +234,8 @@ const static char Clamp[] = "clamp";
 const static char ConvertPrefix[] = "convert_";
 const static char Dot[] = "dot";
 const static char DotAccSat[] = "dot_acc_sat";
+const static char Dot4x8PackedPrefix[] = "dot_4x8packed_";
+const static char DotAccSat4x8PackedPrefix[] = "dot_acc_sat_4x8packed_";
 const static char EnqueueKernel[] = "enqueue_kernel";
 const static char FixedSqrtINTEL[] = "intel_arbitrary_fixed_sqrt";
 const static char FixedRecipINTEL[] = "intel_arbitrary_fixed_recip";
@@ -305,6 +307,7 @@ const static char SubgroupBlockWriteINTELPrefix[] =
     "intel_sub_group_block_write";
 const static char SubgroupImageMediaBlockINTELPrefix[] =
     "intel_sub_group_media_block";
+const static char SplitBarrierINTELPrefix[] = "intel_work_group_barrier_";
 const static char LDEXP[] = "ldexp";
 #define _SPIRV_OP(x)                                                           \
   const static char ConvertBFloat16##x##AsUShort##x[] =                        \

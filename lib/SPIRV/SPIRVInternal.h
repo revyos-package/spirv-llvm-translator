@@ -59,6 +59,7 @@ using namespace llvm;
 
 namespace llvm {
 class IntrinsicInst;
+class IRBuilderBase;
 }
 
 namespace SPIRV {
@@ -240,6 +241,7 @@ inline void SPIRVMap<Attribute::AttrKind, SPIRVFuncParamAttrKind>::init() {
   add(Attribute::NoAlias, FunctionParameterAttributeNoAlias);
   add(Attribute::NoCapture, FunctionParameterAttributeNoCapture);
   add(Attribute::ReadOnly, FunctionParameterAttributeNoWrite);
+  add(Attribute::ReadNone, FunctionParameterAttributeNoReadWrite);
 }
 typedef SPIRVMap<Attribute::AttrKind, SPIRVFuncParamAttrKind>
     SPIRSPIRVFuncParamAttrMap;
@@ -332,6 +334,7 @@ const static char PipeStorage[] = "PipeStorage";
 const static char ConstantPipeStorage[] = "ConstantPipeStorage";
 const static char VmeImageINTEL[] = "VmeImageINTEL";
 const static char JointMatrixINTEL[] = "JointMatrixINTEL";
+const static char CooperativeMatrixKHR[] = "CooperativeMatrixKHR";
 } // namespace kSPIRVTypeName
 
 namespace kSPR2TypeName {
@@ -571,6 +574,10 @@ std::string mapSPIRVTypeToOCLType(SPIRVType *Ty, bool Signed);
 std::string mapLLVMTypeToOCLType(const Type *Ty, bool Signed,
                                  Type *PointerElementType = nullptr);
 SPIRVDecorate *mapPostfixToDecorate(StringRef Postfix, SPIRVEntry *Target);
+
+/// Return vector V extended with poison elements to match the number of
+/// components of NewType.
+Value *extendVector(Value *V, FixedVectorType *NewType, IRBuilderBase &Builder);
 
 /// Add decorations to a SPIR-V entry.
 /// \param Decs Each string is a postfix without _ at the beginning.
@@ -924,6 +931,9 @@ std::string getImageBaseTypeName(StringRef Name);
 /// Map OpenCL opaque type name to SPIR-V type name.
 std::string mapOCLTypeNameToSPIRV(StringRef Name, StringRef Acc = "");
 
+/// Return the index of image operands given an image op.
+size_t getImageOperandsIndex(Op OpCode);
+
 /// Check if access qualifier is encoded in the type name.
 bool hasAccessQualifiedName(StringRef TyName);
 
@@ -997,10 +1007,12 @@ std::string getSPIRVFriendlyIRFunctionName(OCLExtOpKind ExtOpId,
 /// \param OC opcode of corresponding built-in instruction. Used to gather info
 /// for unsigned/constant arguments.
 /// \param Types of arguments of SPIR-V built-in function
+/// \param Ops Operands of SPIRVInstruction
 /// \return IA64 mangled name.
 std::string getSPIRVFriendlyIRFunctionName(const std::string &UniqName,
                                            spv::Op OC, ArrayRef<Type *> ArgTys,
-                                           ArrayRef<PointerIndirectPair> PETs);
+                                           ArrayRef<PointerIndirectPair> PETs,
+                                           ArrayRef<SPIRVValue *> Ops);
 
 /// Cast a function to a void(void) funtion pointer.
 Constant *castToVoidFuncPtr(Function *F);
@@ -1034,6 +1046,7 @@ template <> inline void SPIRVMap<std::string, Op, SPIRVOpaqueType>::init() {
   _SPIRV_OP(AvcImeDualReferenceStreaminINTEL)
   _SPIRV_OP(AvcRefResultINTEL)
   _SPIRV_OP(AvcSicResultINTEL)
+  _SPIRV_OP(CooperativeMatrixKHR)
 #undef _SPIRV_OP
 }
 
@@ -1055,7 +1068,7 @@ std::string decodeSPIRVTypeName(StringRef Name,
                                 SmallVectorImpl<std::string> &Strs);
 
 // Copy attributes from function to call site.
-void setAttrByCalledFunc(CallInst *Call);
+CallInst *setAttrByCalledFunc(CallInst *Call);
 bool isSPIRVBuiltinVariable(GlobalVariable *GV, SPIRVBuiltinVariableKind *Kind);
 // Transform builtin variable from GlobalVariable to builtin call.
 // e.g.
