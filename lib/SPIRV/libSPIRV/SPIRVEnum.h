@@ -78,6 +78,9 @@ enum SPIRVExtInstSetKind {
   SPIRVEIS_OpenCL,
   SPIRVEIS_Debug,
   SPIRVEIS_OpenCL_DebugInfo_100,
+  SPIRVEIS_NonSemantic_Shader_DebugInfo_100,
+  SPIRVEIS_NonSemantic_Shader_DebugInfo_200,
+  SPIRVEIS_NonSemantic_AuxData,
   SPIRVEIS_Count,
 };
 
@@ -129,6 +132,11 @@ template <> inline void SPIRVMap<SPIRVExtInstSetKind, std::string>::init() {
   add(SPIRVEIS_OpenCL, "OpenCL.std");
   add(SPIRVEIS_Debug, "SPIRV.debug");
   add(SPIRVEIS_OpenCL_DebugInfo_100, "OpenCL.DebugInfo.100");
+  add(SPIRVEIS_NonSemantic_Shader_DebugInfo_100,
+      "NonSemantic.Shader.DebugInfo.100");
+  add(SPIRVEIS_NonSemantic_Shader_DebugInfo_200,
+      "NonSemantic.Shader.DebugInfo.200");
+  add(SPIRVEIS_NonSemantic_AuxData, "NonSemantic.AuxData");
 }
 typedef SPIRVMap<SPIRVExtInstSetKind, std::string> SPIRVBuiltinSetNameMap;
 
@@ -197,6 +205,8 @@ template <> inline void SPIRVMap<SPIRVCapabilityKind, SPIRVCapVec>::init() {
                {CapabilitySubgroupAvcMotionEstimationINTEL});
   ADD_VEC_INIT(CapabilitySubgroupAvcMotionEstimationChromaINTEL,
                {CapabilitySubgroupAvcMotionEstimationIntraINTEL});
+  ADD_VEC_INIT(internal::CapabilityCooperativeMatrixCheckedInstructionsINTEL,
+               {CapabilityCooperativeMatrixKHR});
 }
 
 template <> inline void SPIRVMap<SPIRVExecutionModelKind, SPIRVCapVec>::init() {
@@ -265,6 +275,12 @@ template <> inline void SPIRVMap<SPIRVExecutionModeKind, SPIRVCapVec>::init() {
                {CapabilityFPGAKernelAttributesINTEL});
   ADD_VEC_INIT(ExecutionModeNamedBarrierCountINTEL,
                {CapabilityVectorComputeINTEL});
+  ADD_VEC_INIT(internal::ExecutionModeMaximumRegistersINTEL,
+               {internal::CapabilityRegisterLimitsINTEL});
+  ADD_VEC_INIT(internal::ExecutionModeMaximumRegistersIdINTEL,
+               {internal::CapabilityRegisterLimitsINTEL});
+  ADD_VEC_INIT(internal::ExecutionModeNamedMaximumRegistersINTEL,
+               {internal::CapabilityRegisterLimitsINTEL});
 }
 
 template <> inline void SPIRVMap<SPIRVMemoryModelKind, SPIRVCapVec>::init() {
@@ -449,8 +465,18 @@ template <> inline void SPIRVMap<Decoration, SPIRVCapVec>::init() {
                {internal::CapabilityGlobalVariableDecorationsINTEL});
   ADD_VEC_INIT(internal::DecorationImplementInCSRINTEL,
                {internal::CapabilityGlobalVariableDecorationsINTEL});
+  ADD_VEC_INIT(DecorationHostAccessINTEL,
+               {CapabilityGlobalVariableHostAccessINTEL});
+  ADD_VEC_INIT(DecorationInitModeINTEL,
+               {CapabilityGlobalVariableFPGADecorationsINTEL});
+  ADD_VEC_INIT(DecorationImplementInRegisterMapINTEL,
+               {CapabilityGlobalVariableFPGADecorationsINTEL});
   ADD_VEC_INIT(internal::DecorationArgumentAttributeINTEL,
                {CapabilityFunctionPointersINTEL});
+  ADD_VEC_INIT(internal::DecorationCacheControlLoadINTEL,
+               {internal::CapabilityCacheControlsINTEL});
+  ADD_VEC_INIT(internal::DecorationCacheControlStoreINTEL,
+               {internal::CapabilityCacheControlsINTEL});
   ADD_VEC_INIT(DecorationConduitKernelArgumentINTEL,
                {CapabilityFPGAArgumentInterfacesINTEL});
   ADD_VEC_INIT(DecorationRegisterMapKernelArgumentINTEL,
@@ -469,6 +495,8 @@ template <> inline void SPIRVMap<Decoration, SPIRVCapVec>::init() {
                {CapabilityFPGAArgumentInterfacesINTEL});
   ADD_VEC_INIT(DecorationStableKernelArgumentINTEL,
                {CapabilityFPGAArgumentInterfacesINTEL});
+  ADD_VEC_INIT(DecorationFPMaxErrorDecorationINTEL,
+               {CapabilityFPMaxErrorINTEL});
 }
 
 template <> inline void SPIRVMap<BuiltIn, SPIRVCapVec>::init() {

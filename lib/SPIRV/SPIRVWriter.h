@@ -109,6 +109,16 @@ public:
   bool transWorkItemBuiltinCallsToVariables();
   bool isKnownIntrinsic(Intrinsic::ID Id);
   SPIRVValue *transIntrinsicInst(IntrinsicInst *Intrinsic, SPIRVBasicBlock *BB);
+  enum class FPBuiltinType {
+    REGULAR_MATH,
+    EXT_1OPS,
+    EXT_2OPS,
+    EXT_3OPS,
+    UNKNOWN
+  };
+  FPBuiltinType getFPBuiltinType(IntrinsicInst *II, StringRef &);
+  SPIRVValue *transFPBuiltinIntrinsicInst(IntrinsicInst *II,
+                                          SPIRVBasicBlock *BB);
   SPIRVValue *transFenceInst(FenceInst *FI, SPIRVBasicBlock *BB);
   SPIRVValue *transCallInst(CallInst *Call, SPIRVBasicBlock *BB);
   SPIRVValue *transDirectCallInst(CallInst *Call, SPIRVBasicBlock *BB);
@@ -122,6 +132,8 @@ public:
   SPIRVFunction *transFunctionDecl(Function *F);
   void transVectorComputeMetadata(Function *F);
   void transFPGAFunctionMetadata(SPIRVFunction *BF, Function *F);
+  void transAuxDataInst(SPIRVFunction *BF, Function *F);
+  void transFunctionMetadataAsExecutionMode(SPIRVFunction *BF, Function *F);
   void transFunctionMetadataAsUserSemanticDecoration(SPIRVFunction *BF,
                                                      Function *F);
   bool transGlobalVariables();

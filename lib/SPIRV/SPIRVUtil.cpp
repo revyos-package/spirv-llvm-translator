@@ -94,6 +94,24 @@ void removeFnAttr(CallInst *Call, Attribute::AttrKind Attr) {
   Call->removeFnAttr(Attr);
 }
 
+Value *extendVector(Value *V, FixedVectorType *NewType,
+                    IRBuilderBase &Builder) {
+  unsigned OldSize = cast<FixedVectorType>(V->getType())->getNumElements();
+  unsigned NewSize = NewType->getNumElements();
+  assert(OldSize < NewSize);
+  std::vector<Constant *> Components;
+  IntegerType *Int32Ty = Builder.getInt32Ty();
+  for (unsigned I = 0; I < NewSize; I++) {
+    if (I < OldSize)
+      Components.push_back(ConstantInt::get(Int32Ty, I));
+    else
+      Components.push_back(PoisonValue::get(Int32Ty));
+  }
+
+  return Builder.CreateShuffleVector(V, PoisonValue::get(V->getType()),
+                                     ConstantVector::get(Components), "vecext");
+}
+
 void saveLLVMModule(Module *M, const std::string &OutputFile) {
   std::error_code EC;
   ToolOutputFile Out(OutputFile.c_str(), EC, sys::fs::OF_None);
@@ -170,7 +188,7 @@ StructType *getOrCreateOpaqueStructType(Module *M, StringRef Name) {
 }
 
 void getFunctionTypeParameterTypes(llvm::FunctionType *FT,
-                                   std::vector<Type *> &ArgTys) {
+                                   SmallVector<Type *> &ArgTys) {
   for (auto I = FT->param_begin(), E = FT->param_end(); I != E; ++I) {
     ArgTys.push_back(*I);
   }
@@ -1312,6 +1330,34 @@ static SPIR::RefParamType transTypeDesc(Type *Ty,
     return SPIR::RefParamType(new SPIR::UserDefinedType(Name.str()));
   }
 
+  if (auto *TargetTy = dyn_cast<TargetExtType>(Ty)) {
+    std::string FullName;
+    unsigned AS = 0;
+    {
+      raw_string_ostream OS(FullName);
+      StringRef Name = TargetTy->getName();
+      if (Name.consume_front(kSPIRVTypeName::PrefixAndDelim)) {
+        OS << "__spirv_" << Name;
+        AS = getOCLOpaqueTypeAddrSpace(
+            SPIRVOpaqueTypeOpCodeMap::map(Name.str()));
+      } else {
+        OS << Name;
+      }
+      if (!TargetTy->int_params().empty())
+        OS << "_";
+      for (Type *InnerTy : TargetTy->type_params())
+        OS << "_" << convertTypeToPostfix(InnerTy);
+      for (unsigned Param : TargetTy->int_params())
+        OS << "_" << Param;
+    }
+    // Translate as if it's a pointer to the named struct.
+    auto *Inner = new SPIR::UserDefinedType(FullName);
+    auto *PT = new SPIR::PointerType(Inner);
+    PT->setAddressSpace(static_cast<SPIR::TypeAttributeEnum>(
+        AS + (unsigned)SPIR::ATTR_ADDR_SPACE_FIRST));
+    return SPIR::RefParamType(PT);
+  }
+
   if (auto *TPT = dyn_cast<TypedPointerType>(Ty)) {
     auto *ET = TPT->getElementType();
     SPIR::ParamType *EPT = nullptr;
@@ -1558,6 +1604,18 @@ std::string getImageBaseTypeName(StringRef Name) {
     ImageTyName.erase(ImageTyName.size() - 5, 3);
 
   return ImageTyName;
+}
+
+size_t getImageOperandsIndex(Op OpCode) {
+  switch (OpCode) {
+  case OpImageRead:
+  case OpImageSampleExplicitLod:
+    return 2;
+  case OpImageWrite:
+    return 3;
+  default:
+    return ~0U;
+  }
 }
 
 SPIRVTypeImageDescriptor getImageDescriptor(Type *Ty) {
@@ -1849,14 +1907,15 @@ bool checkTypeForSPIRVExtendedInstLowering(IntrinsicInst *II, SPIRVModule *BM) {
   return true;
 }
 
-void setAttrByCalledFunc(CallInst *Call) {
+CallInst *setAttrByCalledFunc(CallInst *Call) {
   Function *F = Call->getCalledFunction();
   assert(F);
   if (F->isIntrinsic()) {
-    return;
+    return Call;
   }
   Call->setCallingConv(F->getCallingConv());
   Call->setAttributes(F->getAttributes());
+  return Call;
 }
 
 bool isSPIRVBuiltinVariable(GlobalVariable *GV,
@@ -1906,6 +1965,94 @@ bool isSPIRVBuiltinVariable(GlobalVariable *GV,
 // %4 = call spir_func i64 @_Z13get_global_idj(i32 2) #1
 // %5 = insertelement <3 x i64> %3, i64 %4, i32 2
 // %6 = extractelement <3 x i64> %5, i32 0
+
+/// Recursively look through the uses of a global variable, including casts or
+/// gep offsets, to find all loads of the variable. Gep offsets that are non-0
+/// are accumulated in the AccumulatedOffset parameter, which will eventually be
+/// used to figure out which index of a variable is being used.
+static void replaceUsesOfBuiltinVar(Value *V, const APInt &AccumulatedOffset,
+                                    Function *ReplacementFunc,
+                                    GlobalVariable *GV) {
+  const DataLayout &DL = ReplacementFunc->getParent()->getDataLayout();
+  SmallVector<Instruction *, 4> InstsToRemove;
+  for (User *U : V->users()) {
+    if (auto *Cast = dyn_cast<CastInst>(U)) {
+      replaceUsesOfBuiltinVar(Cast, AccumulatedOffset, ReplacementFunc, GV);
+      InstsToRemove.push_back(Cast);
+    } else if (auto *GEP = dyn_cast<GetElementPtrInst>(U)) {
+      APInt NewOffset = AccumulatedOffset.sextOrTrunc(
+          DL.getIndexSizeInBits(GEP->getPointerAddressSpace()));
+      if (!GEP->accumulateConstantOffset(DL, NewOffset))
+        llvm_unreachable("Illegal GEP of a SPIR-V builtin variable");
+      replaceUsesOfBuiltinVar(GEP, NewOffset, ReplacementFunc, GV);
+      InstsToRemove.push_back(GEP);
+    } else if (auto *Load = dyn_cast<LoadInst>(U)) {
+      // Figure out which index the accumulated offset corresponds to. If we
+      // have a weird offset (e.g., trying to load byte 7), bail out.
+      Type *ScalarTy = ReplacementFunc->getReturnType();
+      APInt Index;
+      uint64_t Remainder;
+      APInt::udivrem(AccumulatedOffset, ScalarTy->getScalarSizeInBits() / 8,
+                     Index, Remainder);
+      if (Remainder != 0)
+        llvm_unreachable("Illegal GEP of a SPIR-V builtin variable");
+
+      IRBuilder<> Builder(Load);
+      Value *Replacement;
+      if (ReplacementFunc->getFunctionType()->getNumParams() == 0) {
+        if (Load->getType() != ScalarTy)
+          llvm_unreachable("Illegal use of a SPIR-V builtin variable");
+        Replacement =
+            setAttrByCalledFunc(Builder.CreateCall(ReplacementFunc, {}));
+      } else {
+        // The function has an index parameter.
+        if (auto *VecTy = dyn_cast<FixedVectorType>(Load->getType())) {
+          // Reconstruct the original global variable vector because
+          // the load type may not match.
+          // global <3 x i64>, load <6 x i32>
+          VecTy = cast<FixedVectorType>(GV->getValueType());
+          if (!Index.isZero() || DL.getTypeSizeInBits(VecTy) !=
+                                     DL.getTypeSizeInBits(Load->getType()))
+            llvm_unreachable("Illegal use of a SPIR-V builtin variable");
+          Replacement = UndefValue::get(VecTy);
+          for (unsigned I = 0; I < VecTy->getNumElements(); I++) {
+            Replacement = Builder.CreateInsertElement(
+                Replacement,
+                setAttrByCalledFunc(
+                    Builder.CreateCall(ReplacementFunc, {Builder.getInt32(I)})),
+                Builder.getInt32(I));
+          }
+          // Insert a bitcast from the reconstructed vector to the load vector
+          // type in case they are different.
+          // Input:
+          // %1 = load <6 x i32>, ptr addrspace(1) %0, align 32
+          // %2 = extractelement <6 x i32> %1, i32 0
+          // %3 = add i32 5, %2
+          // Modified:
+          // < reconstruct global vector elements 0 and 1 >
+          // %2 = insertelement <3 x i64> %0, i64 %1, i32 2
+          // %3 = bitcast <3 x i64> %2 to <6 x i32>
+          // %4 = extractelement <6 x i32> %3, i32 0
+          // %5 = add i32 5, %4
+          Replacement = Builder.CreateBitCast(Replacement, Load->getType());
+        } else if (Load->getType() == ScalarTy) {
+          Replacement = setAttrByCalledFunc(Builder.CreateCall(
+              ReplacementFunc, {Builder.getInt32(Index.getZExtValue())}));
+        } else {
+          llvm_unreachable("Illegal load type of a SPIR-V builtin variable");
+        }
+      }
+      Load->replaceAllUsesWith(Replacement);
+      InstsToRemove.push_back(Load);
+    } else {
+      llvm_unreachable("Illegal use of a SPIR-V builtin variable");
+    }
+  }
+
+  for (Instruction *I : InstsToRemove)
+    I->eraseFromParent();
+}
+
 bool lowerBuiltinVariableToCall(GlobalVariable *GV,
                                 SPIRVBuiltinVariableKind Kind) {
   // There might be dead constant users of GV (for example, SPIRVLowerConstExpr
@@ -1941,113 +2088,7 @@ bool lowerBuiltinVariableToCall(GlobalVariable *GV,
     Func->setDoesNotAccessMemory();
   }
 
-  // Collect instructions in these containers to remove them later.
-  std::vector<Instruction *> Loads;
-  std::vector<Instruction *> Casts;
-  std::vector<Instruction *> GEPs;
-
-  auto Replace = [&](std::vector<Value *> Arg, Instruction *I) {
-    auto *Call = CallInst::Create(Func, Arg, "", I);
-    Call->takeName(I);
-    setAttrByCalledFunc(Call);
-    SPIRVDBG(dbgs() << "[lowerBuiltinVariableToCall] " << *I << " -> " << *Call
-                    << '\n';)
-    I->replaceAllUsesWith(Call);
-  };
-
-  // If HasIndexArg is true, we create 3 built-in calls and insertelement to
-  // get 3-element vector filled with ids and replace uses of Load instruction
-  // with this vector.
-  // If HasIndexArg is false, the result of the Load instruction is the value
-  // which should be replaced with the Func.
-  // Returns true if Load was replaced, false otherwise.
-  auto ReplaceIfLoad = [&](User *I) {
-    auto *LD = dyn_cast<LoadInst>(I);
-    if (!LD)
-      return false;
-    std::vector<Value *> Vectors;
-    Loads.push_back(LD);
-    if (HasIndexArg) {
-      auto *VecTy = cast<FixedVectorType>(GVTy);
-      Value *EmptyVec = UndefValue::get(VecTy);
-      Vectors.push_back(EmptyVec);
-      const DebugLoc &DLoc = LD->getDebugLoc();
-      for (unsigned I = 0; I < VecTy->getNumElements(); ++I) {
-        auto *Idx = ConstantInt::get(Type::getInt32Ty(C), I);
-        auto *Call = CallInst::Create(Func, {Idx}, "", LD);
-        if (DLoc)
-          Call->setDebugLoc(DLoc);
-        setAttrByCalledFunc(Call);
-        auto *Insert = InsertElementInst::Create(Vectors.back(), Call, Idx);
-        if (DLoc)
-          Insert->setDebugLoc(DLoc);
-        Insert->insertAfter(Call);
-        Vectors.push_back(Insert);
-      }
-
-      Value *Ptr = LD->getPointerOperand();
-
-      if (isa<FixedVectorType>(LD->getType())) {
-        LD->replaceAllUsesWith(Vectors.back());
-      } else {
-        auto *GEP = dyn_cast<GetElementPtrInst>(Ptr);
-        assert(GEP && "Unexpected pattern!");
-        assert(GEP->getNumIndices() == 2 && "Unexpected pattern!");
-        Value *Idx = GEP->getOperand(2);
-        Value *Vec = Vectors.back();
-        auto *NewExtract = ExtractElementInst::Create(Vec, Idx);
-        NewExtract->insertAfter(cast<Instruction>(Vec));
-        LD->replaceAllUsesWith(NewExtract);
-      }
-
-    } else {
-      Replace({}, LD);
-    }
-
-    return true;
-  };
-
-  // Go over the GV users, find Load and ExtractElement instructions and
-  // replace them with the corresponding function call.
-  for (auto *UI : GV->users()) {
-    // There might or might not be an addrspacecast instruction.
-    if (auto *ASCast = dyn_cast<AddrSpaceCastInst>(UI)) {
-      Casts.push_back(ASCast);
-      for (auto *CastUser : ASCast->users()) {
-        if (ReplaceIfLoad(CastUser))
-          continue;
-        if (auto *GEP = dyn_cast<GetElementPtrInst>(CastUser)) {
-          GEPs.push_back(GEP);
-          for (auto *GEPUser : GEP->users()) {
-            if (!ReplaceIfLoad(GEPUser))
-              llvm_unreachable("Unexpected pattern!");
-          }
-        } else {
-          llvm_unreachable("Unexpected pattern!");
-        }
-      }
-    } else if (auto *GEP = dyn_cast<GetElementPtrInst>(UI)) {
-      GEPs.push_back(GEP);
-      for (auto *GEPUser : GEP->users()) {
-        if (!ReplaceIfLoad(GEPUser))
-          llvm_unreachable("Unexpected pattern!");
-      }
-    } else if (!ReplaceIfLoad(UI)) {
-      llvm_unreachable("Unexpected pattern!");
-    }
-  }
-
-  auto Erase = [](std::vector<Instruction *> &ToErase) {
-    for (Instruction *I : ToErase) {
-      assert(I->hasNUses(0));
-      I->eraseFromParent();
-    }
-  };
-  // Order of erasing is important.
-  Erase(Loads);
-  Erase(GEPs);
-  Erase(Casts);
-
+  replaceUsesOfBuiltinVar(GV, APInt(64, 0), Func, GV);
   return true;
 }
 
@@ -2076,11 +2117,23 @@ bool postProcessBuiltinReturningStruct(Function *F) {
   SmallVector<Instruction *, 32> InstToRemove;
   for (auto *U : F->users()) {
     if (auto *CI = dyn_cast<CallInst>(U)) {
-      auto *ST = cast<StoreInst>(*(CI->user_begin()));
-      std::vector<Type *> ArgTys;
+      IRBuilder<> Builder(CI->getParent());
+      Builder.SetInsertPoint(CI);
+      SmallVector<User *> Users(CI->users());
+      Value *A = nullptr;
+      for (auto *U : Users) {
+        if (auto *SI = dyn_cast<StoreInst>(U)) {
+          A = SI->getPointerOperand();
+          InstToRemove.push_back(SI);
+          break;
+        }
+      }
+      if (!A) {
+        A = Builder.CreateAlloca(F->getReturnType());
+      }
+      SmallVector<Type *> ArgTys;
       getFunctionTypeParameterTypes(F->getFunctionType(), ArgTys);
-      ArgTys.insert(ArgTys.begin(),
-                    PointerType::get(F->getReturnType(), SPIRAS_Private));
+      ArgTys.insert(ArgTys.begin(), A->getType());
       auto *NewF =
           getOrCreateFunction(M, Type::getVoidTy(*Context), ArgTys, Name);
       auto SretAttr = Attribute::get(*Context, Attribute::AttrKind::StructRet,
@@ -2088,11 +2141,14 @@ bool postProcessBuiltinReturningStruct(Function *F) {
       NewF->addParamAttr(0, SretAttr);
       NewF->setCallingConv(F->getCallingConv());
       auto Args = getArguments(CI);
-      Args.insert(Args.begin(), ST->getPointerOperand());
-      auto *NewCI = CallInst::Create(NewF, Args, CI->getName(), CI);
+      Args.insert(Args.begin(), A);
+      CallInst *NewCI = Builder.CreateCall(NewF, Args, CI->getName());
       NewCI->addParamAttr(0, SretAttr);
       NewCI->setCallingConv(CI->getCallingConv());
-      InstToRemove.push_back(ST);
+      SmallVector<User *> CIUsers(CI->users());
+      for (auto *CIUser : CIUsers) {
+        CIUser->replaceUsesOfWith(CI, A);
+      }
       InstToRemove.push_back(CI);
     }
   }
@@ -2169,8 +2225,9 @@ bool postProcessBuiltinsWithArrayArguments(Module *M, bool IsCpp) {
 namespace {
 class SPIRVFriendlyIRMangleInfo : public BuiltinFuncMangleInfo {
 public:
-  SPIRVFriendlyIRMangleInfo(spv::Op OC, ArrayRef<Type *> ArgTys)
-      : OC(OC), ArgTys(ArgTys) {}
+  SPIRVFriendlyIRMangleInfo(spv::Op OC, ArrayRef<Type *> ArgTys,
+                            ArrayRef<SPIRVValue *> Ops)
+      : OC(OC), ArgTys(ArgTys), Ops(Ops) {}
 
   void init(StringRef UniqUnmangledName) override {
     UnmangledName = UniqUnmangledName.str();
@@ -2322,6 +2379,23 @@ public:
     case OpSubgroupAvcSicConfigureSkcINTEL:
       addUnsignedArgs(0, 4);
       break;
+    case OpUDotKHR:
+    case OpUDotAccSatKHR:
+      addUnsignedArg(-1);
+      break;
+    case OpSUDotKHR:
+    case OpSUDotAccSatKHR:
+      addUnsignedArg(1);
+      break;
+    case OpImageWrite: {
+      size_t Idx = getImageOperandsIndex(OC);
+      if (Ops.size() > Idx) {
+        auto ImOp = static_cast<SPIRVConstant *>(Ops[Idx])->getZExtIntValue();
+        if (ImOp & ImageOperandsMask::ImageOperandsZeroExtendMask)
+          addUnsignedArg(2);
+      }
+      break;
+    }
     default:;
       // No special handling is needed
     }
@@ -2330,6 +2404,7 @@ public:
 private:
   spv::Op OC;
   ArrayRef<Type *> ArgTys;
+  ArrayRef<SPIRVValue *> Ops;
 };
 class OpenCLStdToSPIRVFriendlyIRMangleInfo : public BuiltinFuncMangleInfo {
 public:
@@ -2399,9 +2474,9 @@ std::string getSPIRVFriendlyIRFunctionName(OCLExtOpKind ExtOpId,
 }
 
 std::string getSPIRVFriendlyIRFunctionName(const std::string &UniqName,
-                                           spv::Op OC,
-                                           ArrayRef<Type *> ArgTys) {
-  SPIRVFriendlyIRMangleInfo MangleInfo(OC, ArgTys);
+                                           spv::Op OC, ArrayRef<Type *> ArgTys,
+                                           ArrayRef<SPIRVValue *> Ops) {
+  SPIRVFriendlyIRMangleInfo MangleInfo(OC, ArgTys, Ops);
   return mangleBuiltin(UniqName, ArgTys, &MangleInfo);
 }
 
