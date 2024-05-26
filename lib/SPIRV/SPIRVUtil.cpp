@@ -94,6 +94,24 @@ void removeFnAttr(CallInst *Call, Attribute::AttrKind Attr) {
   Call->removeFnAttr(Attr);
 }
 
+Value *extendVector(Value *V, FixedVectorType *NewType,
+                    IRBuilderBase &Builder) {
+  unsigned OldSize = cast<FixedVectorType>(V->getType())->getNumElements();
+  unsigned NewSize = NewType->getNumElements();
+  assert(OldSize < NewSize);
+  std::vector<Constant *> Components;
+  IntegerType *Int32Ty = Builder.getInt32Ty();
+  for (unsigned I = 0; I < NewSize; I++) {
+    if (I < OldSize)
+      Components.push_back(ConstantInt::get(Int32Ty, I));
+    else
+      Components.push_back(PoisonValue::get(Int32Ty));
+  }
+
+  return Builder.CreateShuffleVector(V, PoisonValue::get(V->getType()),
+                                     ConstantVector::get(Components), "vecext");
+}
+
 void saveLLVMModule(Module *M, const std::string &OutputFile) {
   std::error_code EC;
   ToolOutputFile Out(OutputFile.c_str(), EC, sys::fs::OF_None);
@@ -167,7 +185,7 @@ StructType *getOrCreateOpaqueStructType(Module *M, StringRef Name) {
 }
 
 void getFunctionTypeParameterTypes(llvm::FunctionType *FT,
-                                   std::vector<Type *> &ArgTys) {
+                                   SmallVector<Type *> &ArgTys) {
   for (auto I = FT->param_begin(), E = FT->param_end(); I != E; ++I) {
     ArgTys.push_back(*I);
   }
@@ -1629,6 +1647,18 @@ std::string getImageBaseTypeName(StringRef Name) {
   return ImageTyName;
 }
 
+size_t getImageOperandsIndex(Op OpCode) {
+  switch (OpCode) {
+  case OpImageRead:
+  case OpImageSampleExplicitLod:
+    return 2;
+  case OpImageWrite:
+    return 3;
+  default:
+    return ~0U;
+  }
+}
+
 SPIRVTypeImageDescriptor getImageDescriptor(Type *Ty) {
   if (auto *TET = dyn_cast_or_null<TargetExtType>(Ty)) {
     auto IntParams = TET->int_params();
@@ -1989,19 +2019,20 @@ bool isSPIRVBuiltinVariable(GlobalVariable *GV,
 /// are accumulated in the AccumulatedOffset parameter, which will eventually be
 /// used to figure out which index of a variable is being used.
 static void replaceUsesOfBuiltinVar(Value *V, const APInt &AccumulatedOffset,
-                                    Function *ReplacementFunc) {
+                                    Function *ReplacementFunc,
+                                    GlobalVariable *GV) {
   const DataLayout &DL = ReplacementFunc->getParent()->getDataLayout();
   SmallVector<Instruction *, 4> InstsToRemove;
   for (User *U : V->users()) {
     if (auto *Cast = dyn_cast<CastInst>(U)) {
-      replaceUsesOfBuiltinVar(Cast, AccumulatedOffset, ReplacementFunc);
+      replaceUsesOfBuiltinVar(Cast, AccumulatedOffset, ReplacementFunc, GV);
       InstsToRemove.push_back(Cast);
     } else if (auto *GEP = dyn_cast<GetElementPtrInst>(U)) {
       APInt NewOffset = AccumulatedOffset.sextOrTrunc(
           DL.getIndexSizeInBits(GEP->getPointerAddressSpace()));
       if (!GEP->accumulateConstantOffset(DL, NewOffset))
         llvm_unreachable("Illegal GEP of a SPIR-V builtin variable");
-      replaceUsesOfBuiltinVar(GEP, NewOffset, ReplacementFunc);
+      replaceUsesOfBuiltinVar(GEP, NewOffset, ReplacementFunc, GV);
       InstsToRemove.push_back(GEP);
     } else if (auto *Load = dyn_cast<LoadInst>(U)) {
       // Figure out which index the accumulated offset corresponds to. If we
@@ -2024,7 +2055,12 @@ static void replaceUsesOfBuiltinVar(Value *V, const APInt &AccumulatedOffset,
       } else {
         // The function has an index parameter.
         if (auto *VecTy = dyn_cast<FixedVectorType>(Load->getType())) {
-          if (!Index.isZero())
+          // Reconstruct the original global variable vector because
+          // the load type may not match.
+          // global <3 x i64>, load <6 x i32>
+          VecTy = cast<FixedVectorType>(GV->getValueType());
+          if (!Index.isZero() || DL.getTypeSizeInBits(VecTy) !=
+                                     DL.getTypeSizeInBits(Load->getType()))
             llvm_unreachable("Illegal use of a SPIR-V builtin variable");
           Replacement = UndefValue::get(VecTy);
           for (unsigned I = 0; I < VecTy->getNumElements(); I++) {
@@ -2034,6 +2070,19 @@ static void replaceUsesOfBuiltinVar(Value *V, const APInt &AccumulatedOffset,
                     Builder.CreateCall(ReplacementFunc, {Builder.getInt32(I)})),
                 Builder.getInt32(I));
           }
+          // Insert a bitcast from the reconstructed vector to the load vector
+          // type in case they are different.
+          // Input:
+          // %1 = load <6 x i32>, ptr addrspace(1) %0, align 32
+          // %2 = extractelement <6 x i32> %1, i32 0
+          // %3 = add i32 5, %2
+          // Modified:
+          // < reconstruct global vector elements 0 and 1 >
+          // %2 = insertelement <3 x i64> %0, i64 %1, i32 2
+          // %3 = bitcast <3 x i64> %2 to <6 x i32>
+          // %4 = extractelement <6 x i32> %3, i32 0
+          // %5 = add i32 5, %4
+          Replacement = Builder.CreateBitCast(Replacement, Load->getType());
         } else if (Load->getType() == ScalarTy) {
           Replacement = setAttrByCalledFunc(Builder.CreateCall(
               ReplacementFunc, {Builder.getInt32(Index.getZExtValue())}));
@@ -2087,7 +2136,7 @@ bool lowerBuiltinVariableToCall(GlobalVariable *GV,
     Func->setDoesNotAccessMemory();
   }
 
-  replaceUsesOfBuiltinVar(GV, APInt(64, 0), Func);
+  replaceUsesOfBuiltinVar(GV, APInt(64, 0), Func, GV);
   return true;
 }
 
@@ -2192,11 +2241,23 @@ bool postProcessBuiltinReturningStruct(Function *F) {
   SmallVector<Instruction *, 32> InstToRemove;
   for (auto *U : F->users()) {
     if (auto *CI = dyn_cast<CallInst>(U)) {
-      auto *ST = cast<StoreInst>(*(CI->user_begin()));
-      std::vector<Type *> ArgTys;
+      IRBuilder<> Builder(CI->getParent());
+      Builder.SetInsertPoint(CI);
+      SmallVector<User *> Users(CI->users());
+      Value *A = nullptr;
+      for (auto *U : Users) {
+        if (auto *SI = dyn_cast<StoreInst>(U)) {
+          A = SI->getPointerOperand();
+          InstToRemove.push_back(SI);
+          break;
+        }
+      }
+      if (!A) {
+        A = Builder.CreateAlloca(F->getReturnType());
+      }
+      SmallVector<Type *> ArgTys;
       getFunctionTypeParameterTypes(F->getFunctionType(), ArgTys);
-      ArgTys.insert(ArgTys.begin(),
-                    PointerType::get(F->getReturnType(), SPIRAS_Private));
+      ArgTys.insert(ArgTys.begin(), A->getType());
       auto *NewF =
           getOrCreateFunction(M, Type::getVoidTy(*Context), ArgTys, Name);
       auto SretAttr = Attribute::get(*Context, Attribute::AttrKind::StructRet,
@@ -2204,11 +2265,14 @@ bool postProcessBuiltinReturningStruct(Function *F) {
       NewF->addParamAttr(0, SretAttr);
       NewF->setCallingConv(F->getCallingConv());
       auto Args = getArguments(CI);
-      Args.insert(Args.begin(), ST->getPointerOperand());
-      auto *NewCI = CallInst::Create(NewF, Args, CI->getName(), CI);
+      Args.insert(Args.begin(), A);
+      CallInst *NewCI = Builder.CreateCall(NewF, Args, CI->getName());
       NewCI->addParamAttr(0, SretAttr);
       NewCI->setCallingConv(CI->getCallingConv());
-      InstToRemove.push_back(ST);
+      SmallVector<User *> CIUsers(CI->users());
+      for (auto *CIUser : CIUsers) {
+        CIUser->replaceUsesOfWith(CI, A);
+      }
       InstToRemove.push_back(CI);
     }
   }
@@ -2285,8 +2349,9 @@ bool postProcessBuiltinsWithArrayArguments(Module *M, bool IsCpp) {
 namespace {
 class SPIRVFriendlyIRMangleInfo : public BuiltinFuncMangleInfo {
 public:
-  SPIRVFriendlyIRMangleInfo(spv::Op OC, ArrayRef<Type *> ArgTys)
-      : OC(OC), ArgTys(ArgTys) {}
+  SPIRVFriendlyIRMangleInfo(spv::Op OC, ArrayRef<Type *> ArgTys,
+                            ArrayRef<SPIRVValue *> Ops)
+      : OC(OC), ArgTys(ArgTys), Ops(Ops) {}
 
   void init(StringRef UniqUnmangledName) override {
     UnmangledName = UniqUnmangledName.str();
@@ -2446,6 +2511,15 @@ public:
     case OpSUDotAccSatKHR:
       addUnsignedArg(1);
       break;
+    case OpImageWrite: {
+      size_t Idx = getImageOperandsIndex(OC);
+      if (Ops.size() > Idx) {
+        auto ImOp = static_cast<SPIRVConstant *>(Ops[Idx])->getZExtIntValue();
+        if (ImOp & ImageOperandsMask::ImageOperandsZeroExtendMask)
+          addUnsignedArg(2);
+      }
+      break;
+    }
     default:;
       // No special handling is needed
     }
@@ -2454,6 +2528,7 @@ public:
 private:
   spv::Op OC;
   ArrayRef<Type *> ArgTys;
+  ArrayRef<SPIRVValue *> Ops;
 };
 class OpenCLStdToSPIRVFriendlyIRMangleInfo : public BuiltinFuncMangleInfo {
 public:
@@ -2523,9 +2598,9 @@ std::string getSPIRVFriendlyIRFunctionName(OCLExtOpKind ExtOpId,
 }
 
 std::string getSPIRVFriendlyIRFunctionName(const std::string &UniqName,
-                                           spv::Op OC,
-                                           ArrayRef<Type *> ArgTys) {
-  SPIRVFriendlyIRMangleInfo MangleInfo(OC, ArgTys);
+                                           spv::Op OC, ArrayRef<Type *> ArgTys,
+                                           ArrayRef<SPIRVValue *> Ops) {
+  SPIRVFriendlyIRMangleInfo MangleInfo(OC, ArgTys, Ops);
   return mangleBuiltin(UniqName, ArgTys, &MangleInfo);
 }
 

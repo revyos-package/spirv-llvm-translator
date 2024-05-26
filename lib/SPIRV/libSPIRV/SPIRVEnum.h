@@ -215,6 +215,10 @@ template <> inline void SPIRVMap<SPIRVCapabilityKind, SPIRVCapVec>::init() {
                {internal::CapabilityJointMatrixINTEL});
   ADD_VEC_INIT(internal::CapabilityJointMatrixPackedInt4ComponentTypeINTEL,
                {internal::CapabilityJointMatrixINTEL});
+  ADD_VEC_INIT(internal::CapabilityCooperativeMatrixPrefetchINTEL,
+               {CapabilityCooperativeMatrixKHR});
+  ADD_VEC_INIT(internal::CapabilityCooperativeMatrixCheckedInstructionsINTEL,
+               {CapabilityCooperativeMatrixKHR});
 }
 
 template <> inline void SPIRVMap<SPIRVExecutionModelKind, SPIRVCapVec>::init() {
@@ -285,6 +289,12 @@ template <> inline void SPIRVMap<SPIRVExecutionModeKind, SPIRVCapVec>::init() {
                {CapabilityFPGAKernelAttributesINTEL});
   ADD_VEC_INIT(ExecutionModeNamedBarrierCountINTEL,
                {CapabilityVectorComputeINTEL});
+  ADD_VEC_INIT(internal::ExecutionModeMaximumRegistersINTEL,
+               {internal::CapabilityRegisterLimitsINTEL});
+  ADD_VEC_INIT(internal::ExecutionModeMaximumRegistersIdINTEL,
+               {internal::CapabilityRegisterLimitsINTEL});
+  ADD_VEC_INIT(internal::ExecutionModeNamedMaximumRegistersINTEL,
+               {internal::CapabilityRegisterLimitsINTEL});
 }
 
 template <> inline void SPIRVMap<SPIRVMemoryModelKind, SPIRVCapVec>::init() {
@@ -469,6 +479,12 @@ template <> inline void SPIRVMap<Decoration, SPIRVCapVec>::init() {
                {internal::CapabilityGlobalVariableDecorationsINTEL});
   ADD_VEC_INIT(internal::DecorationImplementInCSRINTEL,
                {internal::CapabilityGlobalVariableDecorationsINTEL});
+  ADD_VEC_INIT(DecorationHostAccessINTEL,
+               {CapabilityGlobalVariableHostAccessINTEL});
+  ADD_VEC_INIT(DecorationInitModeINTEL,
+               {CapabilityGlobalVariableFPGADecorationsINTEL});
+  ADD_VEC_INIT(DecorationImplementInRegisterMapINTEL,
+               {CapabilityGlobalVariableFPGADecorationsINTEL});
   ADD_VEC_INIT(internal::DecorationArgumentAttributeINTEL,
                {CapabilityFunctionPointersINTEL});
   ADD_VEC_INIT(internal::DecorationCacheControlLoadINTEL,
@@ -497,6 +513,8 @@ template <> inline void SPIRVMap<Decoration, SPIRVCapVec>::init() {
                {CapabilityFPGALatencyControlINTEL});
   ADD_VEC_INIT(DecorationLatencyControlConstraintINTEL,
                {CapabilityFPGALatencyControlINTEL});
+  ADD_VEC_INIT(DecorationFPMaxErrorDecorationINTEL,
+               {CapabilityFPMaxErrorINTEL});
 }
 
 template <> inline void SPIRVMap<BuiltIn, SPIRVCapVec>::init() {
