@@ -34,7 +34,7 @@ libLLVMSPIRVLib.so.14 #PACKAGE# #MINVER#
  _ZN4llvm32initializeSPIRVToOCL20LegacyPassERNS_12PassRegistryE@Base 13
  _ZN4llvm34initializeOCLTypeToSPIRVLegacyPassERNS_12PassRegistryE@Base 13
  _ZN4llvm34initializeSPIRVLowerBoolLegacyPassERNS_12PassRegistryE@Base 13
- _ZN4llvm36createSPIRVLowerSaddIntrinsicsLegacyEv@Base 14.0.0-10~
+ _ZN4llvm36createSPIRVLowerSaddIntrinsicsLegacyEv@Base 14.0.1
  _ZN4llvm37initializeSPIRVLowerMemmoveLegacyPassERNS_12PassRegistryE@Base 13
 #MISSING: 14.0.0-10~# _ZN4llvm38createSPIRVLowerSaddWithOverflowLegacyEv@Base 13
  _ZN4llvm38initializePreprocessMetadataLegacyPassERNS_12PassRegistryE@Base 13
@@ -42,7 +42,7 @@ libLLVMSPIRVLib.so.14 #PACKAGE# #MINVER#
  _ZN4llvm39initializeSPIRVLowerOCLBlocksLegacyPassERNS_12PassRegistryE@Base 13
  _ZN4llvm39initializeSPIRVRegularizeLLVMLegacyPassERNS_12PassRegistryE@Base 13
 #MISSING: 14.0.0-10~# _ZN4llvm40initializeSPIRVLowerSPIRBlocksLegacyPassERNS_12PassRegistryE@Base 13
- _ZN4llvm44initializeSPIRVLowerSaddIntrinsicsLegacyPassERNS_12PassRegistryE@Base 14.0.0-10~
+ _ZN4llvm44initializeSPIRVLowerSaddIntrinsicsLegacyPassERNS_12PassRegistryE@Base 14.0.1
  _ZN4llvm46createSPIRVLowerBitCastToNonStandardTypeLegacyERKN5SPIRV14TranslatorOptsE@Base 14
 #MISSING: 14.0.0-10~# _ZN4llvm46initializeSPIRVLowerSaddWithOverflowLegacyPassERNS_12PassRegistryE@Base 13
  _ZN4llvm54initializeSPIRVLowerBitCastToNonStandardTypeLegacyPassERNS_12PassRegistryE@Base 13

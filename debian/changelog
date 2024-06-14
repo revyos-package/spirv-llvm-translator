@@ -1,9 +1,9 @@
-spirv-llvm-translator-14 (14.0.0-13) UNRELEASED; urgency=medium
+spirv-llvm-translator-14 (14.0.1-1) UNRELEASED; urgency=medium
 
-  * Update from llvm_release_140 branch (v14.0.0-183-gccae9f2a).
+  * New upstream release.
   * Update .symbols control file.
 
- -- Andreas Beckmann <anbe@debian.org>  Fri, 22 Mar 2024 14:00:19 +0100
+ -- Andreas Beckmann <anbe@debian.org>  Fri, 14 Jun 2024 09:12:45 +0200
 
 spirv-llvm-translator-14 (14.0.0-12) unstable; urgency=medium
 
