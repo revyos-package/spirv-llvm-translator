@@ -1,10 +1,11 @@
-spirv-llvm-translator-14 (14.0.1-1) UNRELEASED; urgency=medium
+spirv-llvm-translator-14 (14.0.1-1) experimental; urgency=medium
 
   * New upstream release.
   * Update .symbols control file.
   * Bump Standards-Version to 4.7.0, no changes needed.
+  * Upload to experimental.
 
- -- Andreas Beckmann <anbe@debian.org>  Fri, 14 Jun 2024 09:12:45 +0200
+ -- Andreas Beckmann <anbe@debian.org>  Fri, 14 Jun 2024 11:31:37 +0200
 
 spirv-llvm-translator-14 (14.0.0-12) unstable; urgency=medium
 
