@@ -2,6 +2,7 @@ spirv-llvm-translator-14 (14.0.1-1) UNRELEASED; urgency=medium
 
   * New upstream release.
   * Update .symbols control file.
+  * Bump Standards-Version to 4.7.0, no changes needed.
 
  -- Andreas Beckmann <anbe@debian.org>  Fri, 14 Jun 2024 09:12:45 +0200
 
