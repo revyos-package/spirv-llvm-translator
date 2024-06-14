@@ -222,6 +222,12 @@ public:
   /// - OCL1.2: barrier
   virtual void visitCallSPIRVControlBarrier(CallInst *CI) = 0;
 
+  /// Transform split __spirv_ControlBarrierArriveINTEL and
+  /// __spirv_ControlBarrierWaitINTEL barrier to:
+  /// - OCL2.0: overload with a memory_scope argument
+  /// - OCL1.2: overload with no memory_scope argument
+  virtual void visitCallSPIRVSplitBarrierINTEL(CallInst *CI, Op OC) = 0;
+
   /// Transform __spirv_EnqueueKernel to __enqueue_kernel
   virtual void visitCallSPIRVEnqueueKernel(CallInst *CI, Op OC) = 0;
 
@@ -241,6 +247,9 @@ public:
   // Transform FP atomic opcode to corresponding OpenCL function name
   virtual std::string mapFPAtomicName(Op OC) = 0;
 
+  void translateOpaqueTypes();
+
+private:
   /// Transform uniform group opcode to corresponding OpenCL function name,
   /// example: GroupIAdd(Reduce) => group_iadd => work_group_reduce_add |
   /// sub_group_reduce_add
@@ -253,6 +262,9 @@ public:
   /// example: GroupNonUniformBallotBitCount(Reduce) =>
   /// group_ballot_bit_count_iadd => sub_group_ballot_bit_count
   std::string getBallotBuiltinName(CallInst *CI, Op OC);
+  /// Transform OpGroupNonUniformRotateKHR to corresponding OpenCL function
+  /// name.
+  std::string getRotateBuiltinName(CallInst *CI, Op OC);
   /// Transform group opcode to corresponding OpenCL function name
   std::string groupOCToOCLBuiltinName(CallInst *CI, Op OC);
   /// Transform SPV-IR image opaque type into OpenCL representation,
@@ -262,8 +274,17 @@ public:
   /// example: spirv.Pipe._0 => opencl.pipe_ro_t
   std::string getOCLPipeOpaqueType(SmallVector<std::string, 8> &Postfixes);
 
-  void translateOpaqueTypes();
+  void getParameterTypes(CallInst *CI, SmallVectorImpl<StructType *> &Tys);
 
+  std::string translateOpaqueType(StringRef STName);
+
+  /// Mutate the argument list based on (optional) image operands at position
+  /// ImOpArgIndex.  Set IsSigned according to any SignExtend/ZeroExtend Image
+  /// Operands present in Args, or default to signed if there are none.
+  void mutateArgsForImageOperands(std::vector<Value *> &Args,
+                                  unsigned ImOpArgIndex, bool &IsSigned);
+
+protected:
   Module *M;
   LLVMContext *Ctx;
 };
@@ -289,6 +310,11 @@ public:
   ///   __spirv_ControlBarrier(execScope, memScope, sema) =>
   ///       barrier(flag(sema))
   void visitCallSPIRVControlBarrier(CallInst *CI) override;
+
+  /// Transform split __spirv_ControlBarrierArriveINTEL and
+  /// __spirv_ControlBarrierWaitINTEL barrier to overloads without a
+  /// memory_scope argument.
+  void visitCallSPIRVSplitBarrierINTEL(CallInst *CI, Op OC) override;
 
   /// Transform __spirv_OpAtomic functions. It firstly conduct generic
   /// mutations for all builtins and then mutate some of them seperately
@@ -379,6 +405,11 @@ public:
   ///         sub_group_barrier(flag(sema), map(memScope))
   void visitCallSPIRVControlBarrier(CallInst *CI) override;
 
+  /// Transform split __spirv_ControlBarrierArriveINTEL and
+  /// __spirv_ControlBarrierWaitINTEL barrier to overloads with a
+  /// memory_scope argument.
+  void visitCallSPIRVSplitBarrierINTEL(CallInst *CI, Op OC) override;
+
   /// Transform __spirv_Atomic* to atomic_*.
   ///   __spirv_Atomic*(atomic_op, scope, sema, ops, ...) =>
   ///      atomic_*(generic atomic_op, ops, ..., order(sema), map(scope))
@@ -425,6 +456,11 @@ public:
   bool runOnModule(Module &M) override;
   static char ID;
 };
+
+/// Add passes for translating SPIR-V Instructions to the desired
+/// representation in LLVM IR (such as OpenCL builtins or SPIR-V Friendly IR).
+void addSPIRVBIsLoweringPass(ModulePassManager &PassMgr,
+                             SPIRV::BIsRepresentation BIsRep);
 
 } // namespace SPIRV
 

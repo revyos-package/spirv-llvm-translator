@@ -96,6 +96,7 @@ class SPIRVAsmCallINTEL;
 class SPIRVTypeBufferSurfaceINTEL;
 class SPIRVTypeTokenINTEL;
 class SPIRVTypeJointMatrixINTEL;
+class SPIRVTypeCooperativeMatrixKHR;
 
 typedef SPIRVBasicBlock SPIRVLabel;
 struct SPIRVTypeImageDescriptor;
@@ -157,6 +158,8 @@ public:
   virtual unsigned short getGeneratorVer() const = 0;
   virtual SPIRVWord getSPIRVVersion() const = 0;
   virtual const std::vector<SPIRVExtInst *> &getDebugInstVec() const = 0;
+  virtual const std::vector<SPIRVExtInst *> &getAuxDataInstVec() const = 0;
+
   virtual const std::vector<SPIRVString *> &getStringVec() const = 0;
 
   // Module changing functions
@@ -198,6 +201,14 @@ public:
                        SPIRVWord Column) = 0;
   virtual const std::shared_ptr<const SPIRVLine> &getCurrentLine() const = 0;
   virtual void setCurrentLine(const std::shared_ptr<const SPIRVLine> &) = 0;
+  virtual void addDebugLine(SPIRVEntry *E, SPIRVType *TheType,
+                            SPIRVId FileNameId, SPIRVWord LineStart,
+                            SPIRVWord LineEnd, SPIRVWord ColumnStart,
+                            SPIRVWord ColumnEnd) = 0;
+  virtual const std::shared_ptr<const SPIRVExtInst> &
+  getCurrentDebugLine() const = 0;
+  virtual void
+  setCurrentDebugLine(const std::shared_ptr<const SPIRVExtInst> &) = 0;
   virtual const SPIRVDecorateGeneric *addDecorate(SPIRVDecorateGeneric *) = 0;
   virtual SPIRVDecorationGroup *addDecorationGroup() = 0;
   virtual SPIRVDecorationGroup *
@@ -244,8 +255,9 @@ public:
   virtual void closeStructType(SPIRVTypeStruct *, bool) = 0;
   virtual SPIRVTypeVector *addVectorType(SPIRVType *, SPIRVWord) = 0;
   virtual SPIRVTypeJointMatrixINTEL *
-  addJointMatrixINTELType(SPIRVType *, SPIRVValue *, SPIRVValue *, SPIRVValue *,
-                          SPIRVValue *) = 0;
+  addJointMatrixINTELType(SPIRVType *, std::vector<SPIRVValue *>) = 0;
+  virtual SPIRVTypeCooperativeMatrixKHR *
+  addCooperativeMatrixKHRType(SPIRVType *, std::vector<SPIRVValue *>) = 0;
   virtual SPIRVTypeVoid *addVoidType() = 0;
   virtual SPIRVType *addOpaqueGenericType(Op) = 0;
   virtual SPIRVTypeDeviceEvent *addDeviceEventType() = 0;
@@ -308,8 +320,12 @@ public:
                                        const std::vector<SPIRVValue *> &,
                                        SPIRVBasicBlock *,
                                        SPIRVInstruction * = nullptr) = 0;
+  virtual SPIRVEntry *createDebugInfo(SPIRVWord, SPIRVType *,
+                                      const std::vector<SPIRVWord> &) = 0;
   virtual SPIRVEntry *addDebugInfo(SPIRVWord, SPIRVType *,
                                    const std::vector<SPIRVWord> &) = 0;
+  virtual SPIRVEntry *addAuxData(SPIRVWord, SPIRVType *,
+                                 const std::vector<SPIRVWord> &) = 0;
   virtual SPIRVEntry *addModuleProcessed(const std::string &) = 0;
   virtual void addCapability(SPIRVCapabilityKind) = 0;
   template <typename T> void addCapabilities(const T &Caps) {
@@ -523,12 +539,20 @@ public:
         .shouldPreserveOCLKernelArgTypeMetadataThroughString();
   }
 
+  bool preserveAuxData() const noexcept {
+    return TranslationOpts.preserveAuxData();
+  }
+
   SPIRVExtInstSetKind getDebugInfoEIS() const {
     switch (TranslationOpts.getDebugInfoEIS()) {
     case DebugInfoEIS::SPIRV_Debug:
       return SPIRVEIS_Debug;
     case DebugInfoEIS::OpenCL_DebugInfo_100:
       return SPIRVEIS_OpenCL_DebugInfo_100;
+    case DebugInfoEIS::NonSemantic_Shader_DebugInfo_100:
+      return SPIRVEIS_NonSemantic_Shader_DebugInfo_100;
+    case DebugInfoEIS::NonSemantic_Shader_DebugInfo_200:
+      return SPIRVEIS_NonSemantic_Shader_DebugInfo_200;
     }
     assert(false && "Unexpected debug info EIS!");
     return SPIRVEIS_Debug;

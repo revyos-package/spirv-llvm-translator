@@ -55,6 +55,7 @@
 #include "SPIRVValue.h"
 
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/IR/IntrinsicInst.h"
 
@@ -80,10 +81,16 @@ public:
   enum class FuncTransMode { Decl, Pointer };
 
   SPIRVType *transType(Type *T);
-  SPIRVType *transSPIRVOpaqueType(Type *T);
+  SPIRVType *transPointerType(Type *PointeeTy, unsigned AddrSpace);
+  SPIRVType *transSPIRVOpaqueType(StringRef STName, unsigned AddrSpace);
   SPIRVType *
-  transSPIRVJointMatrixINTELType(Type *T,
-                                 SmallVector<std::string, 8> Postfixes);
+  transSPIRVJointOrCooperativeMatrixType(SmallVector<std::string, 8> Postfixes,
+                                         bool IsCooperative = false);
+  // SPIRVType* transSPIRVCooperativeMatrixKHRType();
+  /// Use the type scavenger to get the correct type for V. This is equivalent
+  /// to transType(V->getType()) if V is not a pointer type; otherwise, it tries
+  /// to pick an appropriate pointee type for V.
+  SPIRVType *transScavengedType(Value *V);
 
   SPIRVValue *getTranslatedValue(const Value *) const;
 
@@ -101,6 +108,16 @@ public:
   bool transWorkItemBuiltinCallsToVariables();
   bool isKnownIntrinsic(Intrinsic::ID Id);
   SPIRVValue *transIntrinsicInst(IntrinsicInst *Intrinsic, SPIRVBasicBlock *BB);
+  enum class FPBuiltinType {
+    REGULAR_MATH,
+    EXT_1OPS,
+    EXT_2OPS,
+    EXT_3OPS,
+    UNKNOWN
+  };
+  FPBuiltinType getFPBuiltinType(IntrinsicInst *II, StringRef &);
+  SPIRVValue *transFPBuiltinIntrinsicInst(IntrinsicInst *II,
+                                          SPIRVBasicBlock *BB);
   SPIRVValue *transFenceInst(FenceInst *FI, SPIRVBasicBlock *BB);
   SPIRVValue *transCallInst(CallInst *Call, SPIRVBasicBlock *BB);
   SPIRVValue *transDirectCallInst(CallInst *Call, SPIRVBasicBlock *BB);
@@ -114,6 +131,8 @@ public:
   SPIRVFunction *transFunctionDecl(Function *F);
   void transVectorComputeMetadata(Function *F);
   void transFPGAFunctionMetadata(SPIRVFunction *BF, Function *F);
+  void transAuxDataInst(SPIRVFunction *BF, Function *F);
+  void transFunctionMetadataAsExecutionMode(SPIRVFunction *BF, Function *F);
   bool transGlobalVariables();
 
   Op transBoolOpCode(SPIRVValue *Opn, Op OC);
@@ -150,7 +169,21 @@ private:
   Module *M;
   LLVMContext *Ctx;
   SPIRVModule *BM;
+
+  // This maps LLVM types (except for pointers) to SPIRVType.
   LLVMToSPIRVTypeMap TypeMap;
+  // This maps {struct name, addrspace} to SPIRVType, for those structs that
+  // represent special SPIRV types.
+  DenseMap<std::pair<StringRef, unsigned>, SPIRVType *> OpaqueStructMap;
+  // This maps <type-unique keys> to SPIRVType, for use in function types.
+  StringMap<SPIRVType *> PointeeTypeMap;
+
+  /// Get the SPIRVFunctionType with appropriate return and argument types,
+  /// returning an existing instance if one has already been created. This is
+  /// necessary to unique locally, as SPIRVModule does not do such uniquing.
+  SPIRVType *getSPIRVFunctionType(SPIRVType *RT,
+                                  const std::vector<SPIRVType *> &Args);
+
   LLVMToSPIRVValueMap ValueMap;
   LLVMToSPIRVMetadataMap IndexGroupArrayMap;
   SPIRVWord SrcLang;
@@ -168,7 +201,6 @@ private:
 
   SPIRVType *mapType(Type *T, SPIRVType *BT);
   SPIRVValue *mapValue(Value *V, SPIRVValue *BV);
-  SPIRVType *getSPIRVType(Type *T) { return TypeMap[T]; }
   SPIRVErrorLog &getErrorLog() { return BM->getErrorLog(); }
   llvm::IntegerType *getSizetType(unsigned AS = 0);
   std::vector<SPIRVValue *> transValue(const std::vector<Value *> &Values,
@@ -224,15 +256,20 @@ private:
                                                    Function *F);
 };
 
-class LLVMToSPIRVPass : public PassInfoMixin<LLVMToSPIRVPass>,
-                        public LLVMToSPIRVBase {
+class LLVMToSPIRVPass : public PassInfoMixin<LLVMToSPIRVPass> {
 public:
+  LLVMToSPIRVPass(SPIRVModule *SMod) : SMod(SMod) {}
+
   llvm::PreservedAnalyses run(llvm::Module &M,
                               llvm::ModuleAnalysisManager &MAM) {
-    setOCLTypeToSPIRV(&MAM.getResult<OCLTypeToSPIRVPass>(M));
-    return runLLVMToSPIRV(M) ? llvm::PreservedAnalyses::none()
-                             : llvm::PreservedAnalyses::all();
+    LLVMToSPIRVBase PassInstance(SMod);
+    PassInstance.setOCLTypeToSPIRV(&MAM.getResult<OCLTypeToSPIRVPass>(M));
+    return PassInstance.runLLVMToSPIRV(M) ? llvm::PreservedAnalyses::none()
+                                          : llvm::PreservedAnalyses::all();
   }
+
+private:
+  SPIRVModule *SMod;
 };
 
 class LLVMToSPIRVLegacy : public ModulePass, public LLVMToSPIRVBase {

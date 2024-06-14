@@ -71,7 +71,11 @@ inline bool isValid(spv::ExecutionModel V) {
   case ExecutionModelClosestHitKHR:
   case ExecutionModelMissKHR:
   case ExecutionModelCallableKHR:
+  case ExecutionModeRegisterMapInterfaceINTEL:
   case internal::ExecutionModeStreamingInterfaceINTEL:
+  case internal::ExecutionModeMaximumRegistersINTEL:
+  case internal::ExecutionModeMaximumRegistersIdINTEL:
+  case internal::ExecutionModeNamedMaximumRegistersINTEL:
     return true;
   default:
     return false;
@@ -250,8 +254,8 @@ inline bool isValid(spv::BuiltIn V) {
   case BuiltInLayerPerViewNV:
   case BuiltInMeshViewCountNV:
   case BuiltInMeshViewIndicesNV:
-  case BuiltInBaryCoordNV:
-  case BuiltInBaryCoordNoPerspNV:
+  case BuiltInBaryCoordKHR:
+  case BuiltInBaryCoordNoPerspKHR:
   case BuiltInFragSizeEXT:
   case BuiltInFragInvocationCountEXT:
   case BuiltInLaunchIdKHR:
@@ -267,12 +271,14 @@ inline bool isValid(spv::BuiltIn V) {
   case BuiltInWorldToObjectKHR:
   case BuiltInHitTNV:
   case BuiltInHitKindKHR:
+  case BuiltInCurrentRayTimeNV:
   case BuiltInIncomingRayFlagsKHR:
   case BuiltInRayGeometryIndexKHR:
   case BuiltInWarpsPerSMNV:
   case BuiltInSMCountNV:
   case BuiltInWarpIDNV:
   case BuiltInSMIDNV:
+  case BuiltInCullMaskKHR:
   case internal::BuiltInSubDeviceIDINTEL:
   case internal::BuiltInGlobalHWThreadIDINTEL:
     return true;

@@ -78,6 +78,7 @@ public:
   void ignoreInstruction();
   std::vector<SPIRVEntry *>
   getContinuedInstructions(const spv::Op ContinuedOpCode);
+  std::vector<SPIRVEntry *> getSourceContinuedInstructions();
 
   std::istream &IS;
   SPIRVModule &M;
@@ -193,6 +194,7 @@ template <typename T>
 const SPIRVEncoder &operator<<(const SPIRVEncoder &O, T *P) {
   return O << P->getId();
 }
+template <> const SPIRVEncoder &operator<<(const SPIRVEncoder &O, SPIRVType *P);
 
 template <typename T>
 const SPIRVEncoder &operator<<(const SPIRVEncoder &O, const std::vector<T> &V) {
@@ -226,6 +228,10 @@ SPIRV_DEC_ENCDEC(Capability)
 SPIRV_DEC_ENCDEC(Decoration)
 SPIRV_DEC_ENCDEC(OCLExtOpKind)
 SPIRV_DEC_ENCDEC(SPIRVDebugExtOpKind)
+SPIRV_DEC_ENCDEC(NonSemanticAuxDataOpKind)
+SPIRV_DEC_ENCDEC(InitializationModeQualifier)
+SPIRV_DEC_ENCDEC(HostAccessQualifier)
+SPIRV_DEC_ENCDEC(internal::InternalNamedMaximumNumberOfRegisters)
 SPIRV_DEC_ENCDEC(LinkageType)
 
 const SPIRVEncoder &operator<<(const SPIRVEncoder &O, const std::string &Str);
