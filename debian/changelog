@@ -1,9 +1,9 @@
-spirv-llvm-translator-15 (15.0.0-8) UNRELEASED; urgency=medium
+spirv-llvm-translator-15 (15.0.1-1) UNRELEASED; urgency=medium
 
-  * Update from llvm_release_150 branch (v15.0.0-89-g7f033c0e).
+  * New upstream release.  (Closes: #1073426)
   * Bump Standards-Version to 4.7.0, no changes needed.
 
- -- Andreas Beckmann <anbe@debian.org>  Fri, 22 Mar 2024 14:25:01 +0100
+ -- Andreas Beckmann <anbe@debian.org>  Tue, 18 Jun 2024 10:46:31 +0200
 
 spirv-llvm-translator-15 (15.0.0-7) unstable; urgency=medium
 
