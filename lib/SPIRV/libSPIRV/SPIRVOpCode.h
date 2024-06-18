@@ -71,7 +71,7 @@ inline bool isAtomicOpCode(Op OpCode) {
 }
 inline bool isBinaryOpCode(Op OpCode) {
   return ((unsigned)OpCode >= OpIAdd && (unsigned)OpCode <= OpFMod) ||
-         OpCode == OpDot;
+         OpCode == OpDot || OpCode == OpIAddCarry || OpCode == OpISubBorrow;
 }
 
 inline bool isShiftOpCode(Op OpCode) {
@@ -224,7 +224,8 @@ inline bool isTypeOpCode(Op OpCode) {
   return (OpTypeVoid <= OC && OC <= OpTypePipe) || OC == OpTypePipeStorage ||
          isSubgroupAvcINTELTypeOpCode(OpCode) || OC == OpTypeVmeImageINTEL ||
          isVCOpCode(OpCode) || OC == internal::OpTypeTokenINTEL ||
-         OC == internal::OpTypeJointMatrixINTEL;
+         OC == internal::OpTypeJointMatrixINTEL ||
+         OC == OpTypeCooperativeMatrixKHR;
 }
 
 inline bool isSpecConstantOpCode(Op OpCode) {
@@ -250,6 +251,11 @@ inline bool isIntelSubgroupOpCode(Op OpCode) {
 
 inline bool isEventOpCode(Op OpCode) {
   return OpRetainEvent <= OpCode && OpCode <= OpCaptureEventProfilingInfo;
+}
+
+inline bool isSplitBarrierINTELOpCode(Op OpCode) {
+  return OpCode == OpControlBarrierArriveINTEL ||
+         OpCode == OpControlBarrierWaitINTEL;
 }
 
 } // namespace SPIRV
