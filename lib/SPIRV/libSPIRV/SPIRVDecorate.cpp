@@ -114,8 +114,14 @@ void SPIRVDecorate::encode(spv_ostream &O) const {
   case DecorationUserSemantic:
     SPIRVDecorateUserSemanticAttr::encodeLiterals(Encoder, Literals);
     break;
-  case spv::internal::DecorationHostAccessINTEL:
+  case internal::DecorationHostAccessINTEL:
+    SPIRVDecorateHostAccessINTELLegacy::encodeLiterals(Encoder, Literals);
+    break;
+  case DecorationHostAccessINTEL:
     SPIRVDecorateHostAccessINTEL::encodeLiterals(Encoder, Literals);
+    break;
+  case DecorationInitModeINTEL:
+    SPIRVDecorateInitModeINTEL::encodeLiterals(Encoder, Literals);
     break;
   default:
     Encoder << Literals;
@@ -143,7 +149,10 @@ void SPIRVDecorate::decode(std::istream &I) {
   case DecorationUserSemantic:
     SPIRVDecorateUserSemanticAttr::decodeLiterals(Decoder, Literals);
     break;
-  case spv::internal::DecorationHostAccessINTEL:
+  case internal::DecorationHostAccessINTEL:
+    SPIRVDecorateHostAccessINTELLegacy::decodeLiterals(Decoder, Literals);
+    break;
+  case DecorationHostAccessINTEL:
     SPIRVDecorateHostAccessINTEL::decodeLiterals(Decoder, Literals);
     break;
   default:

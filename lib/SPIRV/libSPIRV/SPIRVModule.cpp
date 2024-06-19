@@ -58,6 +58,41 @@
 
 namespace SPIRV {
 
+namespace {
+std::string to_string(uint32_t Version) {
+  std::string Res;
+  switch (Version) {
+  case static_cast<uint32_t>(VersionNumber::SPIRV_1_0):
+    Res = "1.0";
+    break;
+  case static_cast<uint32_t>(VersionNumber::SPIRV_1_1):
+    Res = "1.1";
+    break;
+  case static_cast<uint32_t>(VersionNumber::SPIRV_1_2):
+    Res = "1.2";
+    break;
+  case static_cast<uint32_t>(VersionNumber::SPIRV_1_3):
+    Res = "1.3";
+    break;
+  case static_cast<uint32_t>(VersionNumber::SPIRV_1_4):
+    Res = "1.4";
+    break;
+  case static_cast<uint32_t>(VersionNumber::SPIRV_1_5):
+    Res = "1.5";
+    break;
+  default:
+    Res = "unknown";
+  }
+
+  Res += " (" + std::to_string(Version) + ")";
+  return Res;
+}
+
+std::string to_string(VersionNumber Version) {
+  return to_string(static_cast<uint32_t>(Version));
+}
+} // Anonymous namespace
+
 SPIRVModule::SPIRVModule()
     : AutoAddCapability(true), ValidateCapability(false), IsValid(true) {}
 
@@ -143,6 +178,9 @@ public:
   const std::vector<SPIRVExtInst *> &getDebugInstVec() const override {
     return DebugInstVec;
   }
+  const std::vector<SPIRVExtInst *> &getAuxDataInstVec() const override {
+    return AuxDataInstVec;
+  }
   const std::vector<SPIRVString *> &getStringVec() const override {
     return StringVec;
   }
@@ -169,7 +207,16 @@ public:
   void insertEntryNoId(SPIRVEntry *Entry) override { EntryNoId.insert(Entry); }
 
   void setSPIRVVersion(SPIRVWord Ver) override {
-    assert(this->isAllowedToUseVersion(static_cast<VersionNumber>(Ver)));
+    if (!this->isAllowedToUseVersion(static_cast<VersionNumber>(Ver))) {
+      std::stringstream SS;
+      SS << "SPIR-V version was restricted to at most "
+         << to_string(getMaximumAllowedSPIRVVersion())
+         << " but a construct from the input requires SPIR-V version "
+         << to_string(Ver) << " or above\n";
+      getErrorLog().checkError(false, SPIRVEC_RequiresVersion, SS.str());
+      setInvalid();
+      return;
+    }
     SPIRVVersion = Ver;
   }
 
@@ -234,6 +281,8 @@ public:
   SPIRVTypeVector *addVectorType(SPIRVType *, SPIRVWord) override;
   SPIRVTypeJointMatrixINTEL *
   addJointMatrixINTELType(SPIRVType *, std::vector<SPIRVValue *>) override;
+  SPIRVTypeCooperativeMatrixKHR *
+  addCooperativeMatrixKHRType(SPIRVType *, std::vector<SPIRVValue *>) override;
   SPIRVType *addOpaqueGenericType(Op) override;
   SPIRVTypeDeviceEvent *addDeviceEventType() override;
   SPIRVTypeQueue *addQueueType() override;
@@ -295,6 +344,8 @@ public:
                                SPIRVInstruction * = nullptr) override;
   SPIRVEntry *addDebugInfo(SPIRVWord, SPIRVType *TheType,
                            const std::vector<SPIRVWord> &) override;
+  SPIRVEntry *addAuxData(SPIRVWord, SPIRVType *TheType,
+                         const std::vector<SPIRVWord> &) override;
   SPIRVEntry *addModuleProcessed(const std::string &) override;
   std::vector<SPIRVModuleProcessed *> getModuleProcessedVec() override;
   SPIRVInstruction *addBinaryInst(Op, SPIRVType *, SPIRVValue *, SPIRVValue *,
@@ -519,6 +570,7 @@ private:
   std::map<unsigned, SPIRVTypeInt *> IntTypeMap;
   std::map<unsigned, SPIRVConstant *> LiteralMap;
   std::vector<SPIRVExtInst *> DebugInstVec;
+  std::vector<SPIRVExtInst *> AuxDataInstVec;
   std::vector<SPIRVModuleProcessed *> ModuleProcessedVec;
   SPIRVAliasInstMDVec AliasInstMDVec;
   SPIRVAliasInstMDMap AliasInstMDMap;
@@ -583,6 +635,17 @@ void SPIRVModuleImpl::addExtension(ExtensionID Ext) {
     return;
   }
   SPIRVExt.insert(ExtName);
+
+  // SPV_EXT_shader_atomic_float16_add extends the
+  // SPV_EXT_shader_atomic_float_add extension.
+  // The specification requires both extensions to be added to use
+  // AtomicFloat16AddEXT capability whereas getRequiredExtension()
+  // is able to return a single extensionID.
+  if (Ext == ExtensionID::SPV_EXT_shader_atomic_float16_add) {
+    SPIRVMap<ExtensionID, std::string>::find(
+        ExtensionID::SPV_EXT_shader_atomic_float_add, &ExtName);
+    SPIRVExt.insert(ExtName);
+  }
 }
 
 void SPIRVModuleImpl::addCapability(SPIRVCapabilityKind Cap) {
@@ -642,13 +705,17 @@ void SPIRVModuleImpl::layoutEntry(SPIRVEntry *E) {
   case OpExtInst: {
     SPIRVExtInst *EI = static_cast<SPIRVExtInst *>(E);
     if ((EI->getExtSetKind() == SPIRVEIS_Debug ||
-         EI->getExtSetKind() == SPIRVEIS_OpenCL_DebugInfo_100) &&
+         EI->getExtSetKind() == SPIRVEIS_OpenCL_DebugInfo_100 ||
+         EI->getExtSetKind() == SPIRVEIS_NonSemantic_Shader_DebugInfo_100 ||
+         EI->getExtSetKind() == SPIRVEIS_NonSemantic_Shader_DebugInfo_200) &&
         EI->getExtOp() != SPIRVDebug::Declare &&
         EI->getExtOp() != SPIRVDebug::Value &&
         EI->getExtOp() != SPIRVDebug::Scope &&
         EI->getExtOp() != SPIRVDebug::NoScope) {
       DebugInstVec.push_back(EI);
     }
+    if (EI->getExtSetKind() == SPIRVEIS_NonSemantic_AuxData)
+      AuxDataInstVec.push_back(EI);
     break;
   }
   case OpAsmTargetINTEL: {
@@ -906,6 +973,13 @@ SPIRVTypeJointMatrixINTEL *
 SPIRVModuleImpl::addJointMatrixINTELType(SPIRVType *CompType,
                                          std::vector<SPIRVValue *> Args) {
   return addType(new SPIRVTypeJointMatrixINTEL(this, getId(), CompType, Args));
+}
+
+SPIRVTypeCooperativeMatrixKHR *
+SPIRVModuleImpl::addCooperativeMatrixKHRType(SPIRVType *CompType,
+                                             std::vector<SPIRVValue *> Args) {
+  return addType(
+      new SPIRVTypeCooperativeMatrixKHR(this, getId(), CompType, Args));
 }
 
 SPIRVType *SPIRVModuleImpl::addOpaqueGenericType(Op TheOpCode) {
@@ -1301,6 +1375,13 @@ SPIRVEntry *SPIRVModuleImpl::addDebugInfo(SPIRVWord InstId, SPIRVType *TheType,
   return addEntry(
       new SPIRVExtInst(this, getId(), TheType, SPIRVEIS_OpenCL_DebugInfo_100,
                        ExtInstSetIds[getDebugInfoEIS()], InstId, Args));
+}
+
+SPIRVEntry *SPIRVModuleImpl::addAuxData(SPIRVWord InstId, SPIRVType *TheType,
+                                        const std::vector<SPIRVWord> &Args) {
+  return addEntry(new SPIRVExtInst(
+      this, getId(), TheType, SPIRVEIS_NonSemantic_AuxData,
+      getExtInstSetId(SPIRVEIS_NonSemantic_AuxData), InstId, Args));
 }
 
 SPIRVEntry *SPIRVModuleImpl::addModuleProcessed(const std::string &Process) {
@@ -1881,7 +1962,8 @@ spv_ostream &operator<<(spv_ostream &O, SPIRVModule &M) {
     O << SPIRVNL() << MI.AsmTargetVec << MI.AsmVec;
   }
 
-  O << SPIRVNL() << MI.DebugInstVec << SPIRVNL() << MI.FuncVec;
+  O << SPIRVNL() << MI.DebugInstVec << MI.AuxDataInstVec << SPIRVNL()
+    << MI.FuncVec;
   return O;
 }
 
@@ -1948,36 +2030,6 @@ SPIRVMemberName *SPIRVModuleImpl::addMemberName(SPIRVTypeStruct *ST,
 void SPIRVModuleImpl::addUnknownStructField(SPIRVTypeStruct *Struct, unsigned I,
                                             SPIRVId ID) {
   UnknownStructFieldMap[Struct].push_back(std::make_pair(I, ID));
-}
-
-static std::string to_string(uint32_t Version) {
-  std::string Res;
-  switch (Version) {
-  case static_cast<uint32_t>(VersionNumber::SPIRV_1_0):
-    Res = "1.0";
-    break;
-  case static_cast<uint32_t>(VersionNumber::SPIRV_1_1):
-    Res = "1.1";
-    break;
-  case static_cast<uint32_t>(VersionNumber::SPIRV_1_2):
-    Res = "1.2";
-    break;
-  case static_cast<uint32_t>(VersionNumber::SPIRV_1_3):
-    Res = "1.3";
-    break;
-  case static_cast<uint32_t>(VersionNumber::SPIRV_1_4):
-    Res = "1.4";
-    break;
-  default:
-    Res = "unknown";
-  }
-
-  Res += " (" + std::to_string(Version) + ")";
-  return Res;
-}
-
-static std::string to_string(VersionNumber Version) {
-  return to_string(static_cast<uint32_t>(Version));
 }
 
 std::istream &operator>>(std::istream &I, SPIRVModule &M) {

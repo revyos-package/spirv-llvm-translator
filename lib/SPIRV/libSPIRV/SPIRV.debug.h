@@ -1,7 +1,9 @@
 #ifndef SPIRV_DEBUG_H
 #define SPIRV_DEBUG_H
+#include "SPIRVEnum.h"
 #include "SPIRVUtil.h"
 #include "spirv/unified1/spirv.hpp"
+#include "spirv_internal.hpp"
 #include "llvm/BinaryFormat/Dwarf.h"
 
 namespace SPIRVDebug {
@@ -12,6 +14,8 @@ static const std::string ChecksumKindPrefx = {"//__CSK_"};
 
 // clang-format off
 
+// Need to update hasDbgInstParentScopeIdx each time we add new instruction
+// with ParentScopeIdx
 enum Instruction {
   DebugInfoNone                 = 0,
   CompilationUnit               = 1,
@@ -25,14 +29,14 @@ enum Instruction {
   TypeEnum                      = 9,
   TypeComposite                 = 10,
   TypeMember                    = 11,
-  Inheritance                   = 12,
+  TypeInheritance               = 12,
   TypePtrToMember               = 13,
   TypeTemplate                  = 14,
   TypeTemplateParameter         = 15,
   TypeTemplateParameterPack     = 16,
   TypeTemplateTemplateParameter = 17,
   GlobalVariable                = 18,
-  FunctionDecl                  = 19,
+  FunctionDeclaration           = 19,
   Function                      = 20,
   LexicalBlock                  = 21,
   LexicalBlockDiscriminator     = 22,
@@ -50,7 +54,11 @@ enum Instruction {
   ImportedEntity                = 34,
   Source                        = 35,
   ModuleINTEL                   = 36,
-  InstCount                     = 37
+  InstCount                     = 37,
+  Module                        = 200,
+  TypeSubrange                  = 201,
+  TypeArrayDynamic              = 202,
+  TypeString                    = 203
 };
 
 enum Flag {
@@ -323,11 +331,46 @@ namespace TypeArray {
 enum {
   BaseTypeIdx       = 0,
   ComponentCountIdx = 1,
+  SubrangesIdx      = 1,
   MinOperandCount   = 2
 };
 }
 
+namespace TypeArrayDynamic {
+enum {
+  BaseTypeIdx     = 0,
+  DataLocationIdx = 1,
+  AssociatedIdx   = 2,
+  AllocatedIdx    = 3,
+  RankIdx         = 4,
+  SubrangesIdx    = 5,
+  MinOperandCount = 6
+};
+}
+
 namespace TypeVector = TypeArray;
+
+namespace TypeSubrange {
+enum {
+  CountIdx        = 0,
+  LowerBoundIdx   = 1,
+  UpperBoundIdx   = 2,
+  StrideIdx       = 3,
+  OperandCount    = 4
+};
+}
+
+namespace TypeString {
+enum {
+  NameIdx         = 0,
+  BaseTypeIdx     = 1,
+  DataLocationIdx = 2,
+  SizeIdx         = 3,
+  LengthAddrIdx   = 4,
+  LengthSizeIdx   = 5,
+  MinOperandCount = 5
+};
+}
 
 namespace Typedef {
 enum {
@@ -398,17 +441,29 @@ enum {
 }
 
 namespace TypeInheritance {
+namespace NonSemantic {
 enum {
-  ChildIdx     = 0,
-  ParentIdx    = 1,
-  OffsetIdx    = 2,
-  SizeIdx      = 3,
-  FlagsIdx     = 4,
-  OperandCount = 5
+  ParentIdx       = 0,
+  OffsetIdx       = 1,
+  SizeIdx         = 2,
+  FlagsIdx        = 3,
+  OperandCount    = 4
 };
 }
 
-namespace PtrToMember {
+namespace OpenCL {
+enum {
+  ChildIdx        = 0,
+  ParentIdx       = 1,
+  OffsetIdx       = 2,
+  SizeIdx         = 3,
+  FlagsIdx        = 4,
+  OperandCount    = 5
+};
+}
+} // namespace TypeInheritance
+
+namespace TypePtrToMember {
 enum {
   MemberTypeIdx = 0,
   ParentIdx     = 1,
@@ -416,7 +471,7 @@ enum {
 };
 }
 
-namespace Template {
+namespace TypeTemplate {
 enum {
   TargetIdx         = 0,
   FirstParameterIdx = 1,
@@ -424,7 +479,7 @@ enum {
 };
 }
 
-namespace TemplateParameter {
+namespace TypeTemplateParameter {
 enum {
   NameIdx      = 0,
   TypeIdx      = 1,
@@ -436,7 +491,7 @@ enum {
 };
 }
 
-namespace TemplateTemplateParameter {
+namespace TypeTemplateTemplateParameter {
 enum {
   NameIdx         = 0,
   TemplateNameIdx = 1,
@@ -447,7 +502,7 @@ enum {
 };
 }
 
-namespace TemplateParameterPack {
+namespace TypeTemplateParameterPack {
 enum {
   NameIdx           = 0,
   SourceIdx         = 1,
@@ -501,6 +556,7 @@ enum {
   ScopeLineIdx    = 8,
   FunctionIdIdx   = 9,
   DeclarationIdx  = 10,
+  TargetFunctionNameIdx  = 11,
   MinOperandCount = 10
 };
 }
@@ -788,6 +844,61 @@ enum {
 };
 }
 
+// helper function to get parent scope of debug instruction, to be used
+// to determine with which compile unit the particular instruction relates
+inline bool hasDbgInstParentScopeIdx(const uint32_t Kind,
+                                     uint32_t &ParentScopeIdx) {
+  switch (Kind) {
+  case SPIRVDebug::Typedef:
+    ParentScopeIdx = Typedef::ParentIdx;
+    return true;
+  case SPIRVDebug::TypeEnum:
+    ParentScopeIdx = TypeEnum::ParentIdx;
+    return true;
+  case SPIRVDebug::TypeComposite:
+    ParentScopeIdx = TypeMember::ParentIdx;
+    return true;
+  case SPIRVDebug::TypeInheritance:
+    if (Kind == SPIRV::SPIRVEIS_OpenCL_DebugInfo_100)
+      ParentScopeIdx = TypeInheritance::OpenCL::ParentIdx;
+    else
+      ParentScopeIdx = TypeInheritance::NonSemantic::ParentIdx;
+    return true;
+  case SPIRVDebug::TypePtrToMember:
+    ParentScopeIdx = TypePtrToMember::ParentIdx;
+    return true;
+  case SPIRVDebug::Function:
+    ParentScopeIdx = Function::ParentIdx;
+    return true;
+  case SPIRVDebug::LexicalBlock:
+    ParentScopeIdx = LexicalBlock::ParentIdx;
+    return true;
+  case SPIRVDebug::LexicalBlockDiscriminator:
+    ParentScopeIdx = LexicalBlockDiscriminator::ParentIdx;
+    return true;
+  case SPIRVDebug::Scope:
+    ParentScopeIdx = Scope::ScopeIdx;
+    return true;
+  case SPIRVDebug::InlinedAt:
+    ParentScopeIdx = InlinedAt::ScopeIdx;
+    return true;
+  case SPIRVDebug::LocalVariable:
+    ParentScopeIdx = LocalVariable::ParentIdx;
+    return true;
+  case SPIRVDebug::ImportedEntity:
+    ParentScopeIdx = ImportedEntity::ParentIdx;
+    return true;
+  case SPIRVDebug::ModuleINTEL:
+    ParentScopeIdx = ModuleINTEL::ParentIdx;
+    return true;
+  case SPIRVDebug::Module:
+    ParentScopeIdx = ModuleINTEL::ParentIdx;
+    return true;
+  default:
+    return false;
+  }
+}
+
 } // namespace Operand
 } // namespace SPIRVDebug
 
@@ -797,9 +908,6 @@ inline spv::SourceLanguage convertDWARFSourceLangToSPIRV(dwarf::SourceLanguage D
   switch (DwarfLang) {
   // When updating this function, make sure to also
   // update convertSPIRVSourceLangToDWARF()
-
-  // LLVM does not yet define DW_LANG_C_plus_plus_17
-  // case dwarf::SourceLanguage::DW_LANG_C_plus_plus_17:
   case dwarf::SourceLanguage::DW_LANG_C_plus_plus_14:
   case dwarf::SourceLanguage::DW_LANG_C_plus_plus:
     return spv::SourceLanguage::SourceLanguageCPP_for_OpenCL;
@@ -811,6 +919,23 @@ inline spv::SourceLanguage convertDWARFSourceLangToSPIRV(dwarf::SourceLanguage D
   }
 }
 
+inline bool isSPIRVSourceLangValid(unsigned SourceLang) {
+  switch (SourceLang) {
+  // When updating this function, make sure to also
+  // update convertSPIRVSourceLangToDWARF()
+  case spv::SourceLanguage::SourceLanguageOpenCL_CPP:
+  case spv::SourceLanguage::SourceLanguageCPP_for_OpenCL:
+  case spv::SourceLanguage::SourceLanguageOpenCL_C:
+  case spv::SourceLanguage::SourceLanguageESSL:
+  case spv::SourceLanguage::SourceLanguageGLSL:
+  case spv::SourceLanguage::SourceLanguageHLSL:
+  case spv::SourceLanguage::SourceLanguageUnknown:
+    return true;
+  default:
+    return false;
+  }
+}
+
 inline dwarf::SourceLanguage convertSPIRVSourceLangToDWARF(unsigned SourceLang) {
   switch (SourceLang) {
   // When updating this function, make sure to also
@@ -818,9 +943,111 @@ inline dwarf::SourceLanguage convertSPIRVSourceLangToDWARF(unsigned SourceLang) 
   case spv::SourceLanguage::SourceLanguageOpenCL_CPP:
     return dwarf::SourceLanguage::DW_LANG_C_plus_plus_14;
   case spv::SourceLanguage::SourceLanguageCPP_for_OpenCL:
-    // LLVM does not yet define DW_LANG_C_plus_plus_17
-    // SourceLang = dwarf::SourceLanguage::DW_LANG_C_plus_plus_17;
     return dwarf::SourceLanguage::DW_LANG_C_plus_plus_14;
+  case spv::SourceLanguage::SourceLanguageOpenCL_C:
+  case spv::SourceLanguage::SourceLanguageESSL:
+  case spv::SourceLanguage::SourceLanguageGLSL:
+  case spv::SourceLanguage::SourceLanguageHLSL:
+  case spv::SourceLanguage::SourceLanguageUnknown:
+  default:
+    return dwarf::DW_LANG_OpenCL;
+  }
+}
+
+inline spv::SourceLanguage convertDWARFSourceLangToSPIRVNonSemanticDbgInfo(
+    dwarf::SourceLanguage DwarfLang) {
+  switch (DwarfLang) {
+  // When updating this function, make sure to also
+  // update convertSPIRVSourceLangToDWARFNonSemanticDbgInfo()
+  case dwarf::SourceLanguage::DW_LANG_OpenCL:
+    return spv::SourceLanguage::SourceLanguageOpenCL_C;
+
+  case dwarf::SourceLanguage::DW_LANG_C_plus_plus_14:
+    return spv::internal::SourceLanguageCPP14;
+  case dwarf::SourceLanguage::DW_LANG_C_plus_plus_11:
+    return spv::internal::SourceLanguageCPP11;
+  case dwarf::SourceLanguage::DW_LANG_C_plus_plus_03:
+    return spv::internal::SourceLanguageCPP03;
+  case dwarf::SourceLanguage::DW_LANG_C_plus_plus:
+    return spv::internal::SourceLanguageCPP;
+
+  case dwarf::SourceLanguage::DW_LANG_C:
+    return spv::internal::SourceLanguageC;
+  case dwarf::SourceLanguage::DW_LANG_C99:
+    return spv::internal::SourceLanguageC99;
+  case dwarf::SourceLanguage::DW_LANG_C11:
+    return spv::internal::SourceLanguageC11;
+
+  case dwarf::SourceLanguage::DW_LANG_Python:
+    return spv::internal::SourceLanguagePython;
+  case dwarf::SourceLanguage::DW_LANG_Julia:
+    return spv::internal::SourceLanguageJulia;
+  case dwarf::SourceLanguage::DW_LANG_Rust:
+    return spv::internal::SourceLanguageRust;
+  case dwarf::SourceLanguage::DW_LANG_D:
+    return spv::internal::SourceLanguageD;
+
+  case dwarf::SourceLanguage::DW_LANG_Fortran77:
+    return spv::internal::SourceLanguageFortran77;
+  case dwarf::SourceLanguage::DW_LANG_Fortran90:
+    return spv::internal::SourceLanguageFortran90;
+  case dwarf::SourceLanguage::DW_LANG_Fortran95:
+    return spv::internal::SourceLanguageFortran95;
+  case dwarf::SourceLanguage::DW_LANG_Fortran03:
+    return spv::internal::SourceLanguageFortran2003;
+  case dwarf::SourceLanguage::DW_LANG_Fortran08:
+    return spv::internal::SourceLanguageFortran2008;
+  default:
+    return spv::SourceLanguage::SourceLanguageUnknown;
+  }
+}
+
+inline dwarf::SourceLanguage
+convertSPIRVSourceLangToDWARFNonSemanticDbgInfo(unsigned SourceLang) {
+  switch (SourceLang) {
+  // When updating this function, make sure to also
+  // update convertDWARFSourceLangToSPIRVNonSemanticDbgInfo()
+  case spv::SourceLanguage::SourceLanguageOpenCL_CPP:
+    return dwarf::SourceLanguage::DW_LANG_C_plus_plus_14;
+  case spv::SourceLanguage::SourceLanguageCPP_for_OpenCL:
+    return dwarf::SourceLanguage::DW_LANG_C_plus_plus_14;
+
+  case spv::internal::SourceLanguageCPP14:
+    return dwarf::SourceLanguage::DW_LANG_C_plus_plus_14;
+  case spv::internal::SourceLanguageCPP11:
+    return dwarf::SourceLanguage::DW_LANG_C_plus_plus_11;
+  case spv::internal::SourceLanguageCPP03:
+    return dwarf::SourceLanguage::DW_LANG_C_plus_plus_03;
+  case spv::internal::SourceLanguageCPP:
+    return dwarf::SourceLanguage::DW_LANG_C_plus_plus;
+
+  case spv::internal::SourceLanguageC:
+    return dwarf::SourceLanguage::DW_LANG_C;
+  case spv::internal::SourceLanguageC99:
+    return dwarf::SourceLanguage::DW_LANG_C99;
+  case spv::internal::SourceLanguageC11:
+    return dwarf::SourceLanguage::DW_LANG_C11;
+
+  case spv::internal::SourceLanguagePython:
+    return dwarf::SourceLanguage::DW_LANG_Python;
+  case spv::internal::SourceLanguageJulia:
+    return dwarf::SourceLanguage::DW_LANG_Julia;
+  case spv::internal::SourceLanguageRust:
+    return dwarf::SourceLanguage::DW_LANG_Rust;
+  case spv::internal::SourceLanguageD:
+    return dwarf::SourceLanguage::DW_LANG_D;
+
+  case spv::internal::SourceLanguageFortran77:
+    return dwarf::SourceLanguage::DW_LANG_Fortran77;
+  case spv::internal::SourceLanguageFortran90:
+    return dwarf::SourceLanguage::DW_LANG_Fortran90;
+  case spv::internal::SourceLanguageFortran95:
+    return dwarf::SourceLanguage::DW_LANG_Fortran95;
+  case spv::internal::SourceLanguageFortran2003:
+    return dwarf::SourceLanguage::DW_LANG_Fortran03;
+  case spv::internal::SourceLanguageFortran2008:
+    return dwarf::SourceLanguage::DW_LANG_Fortran08;
+
   case spv::SourceLanguage::SourceLanguageOpenCL_C:
   case spv::SourceLanguage::SourceLanguageESSL:
   case spv::SourceLanguage::SourceLanguageGLSL:

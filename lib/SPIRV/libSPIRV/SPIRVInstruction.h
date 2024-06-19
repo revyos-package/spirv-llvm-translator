@@ -42,6 +42,7 @@
 
 #include "SPIRVBasicBlock.h"
 #include "SPIRVEnum.h"
+#include "SPIRVFunction.h"
 #include "SPIRVIsValidEnum.h"
 #include "SPIRVOpCode.h"
 #include "SPIRVStream.h"
@@ -50,6 +51,7 @@
 #include <cassert>
 #include <functional>
 #include <iostream>
+#include <optional>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -274,6 +276,9 @@ public:
     } else
       SPIRVEntry::setWordCount(WC);
     Ops = TheOps;
+    // The required SPIR-V version depends on the operands for some
+    // instructions.
+    updateModuleVersion();
   }
   void setWordCount(SPIRVWord TheWordCount) override {
     SPIRVEntry::setWordCount(TheWordCount);
@@ -293,6 +298,11 @@ public:
 
   /// Get operand as value.
   /// If the operand is a literal, return it as a uint32 constant.
+  const SPIRVValue *getOpValue(int I) const {
+    return isOperandLiteral(I) ? Module->getLiteralAsConstant(Ops[I])
+                               : getValue(Ops[I]);
+  }
+
   SPIRVValue *getOpValue(int I) {
     return isOperandLiteral(I) ? Module->getLiteralAsConstant(Ops[I])
                                : getValue(Ops[I]);
@@ -311,6 +321,10 @@ public:
       if (!isOperandLiteral(I))
         Operands.push_back(getEntry(Ops[I]));
     return Operands;
+  }
+
+  virtual const SPIRVValue *getOperand(unsigned I) const {
+    return getOpValue(I);
   }
 
   virtual SPIRVValue *getOperand(unsigned I) {
@@ -377,14 +391,14 @@ public:
 class SPIRVMemoryAccess {
 public:
   SPIRVMemoryAccess(const std::vector<SPIRVWord> &TheMemoryAccess)
-      : TheMemoryAccessMask(0), Alignment(0), AliasScopeInstID(0),
-        NoAliasInstID(0) {
+      : TheMemoryAccessMask(0), Alignment(0), SrcAlignment(0),
+        AliasScopeInstID(0), NoAliasInstID(0) {
     memoryAccessUpdate(TheMemoryAccess);
   }
 
   SPIRVMemoryAccess()
-      : TheMemoryAccessMask(0), Alignment(0), AliasScopeInstID(0),
-        NoAliasInstID(0) {}
+      : TheMemoryAccessMask(0), Alignment(0), SrcAlignment(0),
+        AliasScopeInstID(0), NoAliasInstID(0) {}
 
   void memoryAccessUpdate(const std::vector<SPIRVWord> &MemoryAccess) {
     if (!MemoryAccess.size())
@@ -405,7 +419,18 @@ public:
     if (MemoryAccess[0] & MemoryAccessNoAliasINTELMaskMask) {
       assert(MemoryAccess.size() > MemAccessNumParam &&
           "Aliasing operand is missing");
-      NoAliasInstID = MemoryAccess[MemAccessNumParam];
+      NoAliasInstID = MemoryAccess[MemAccessNumParam++];
+    }
+
+    // Exit if there is no second memory operand mask
+    if (MemoryAccess.size() == MemAccessNumParam)
+      return;
+
+    size_t SecondMaskId = MemAccessNumParam++;
+    if (MemoryAccess[SecondMaskId] & MemoryAccessAlignedMask) {
+      assert(MemoryAccess.size() > MemAccessNumParam &&
+             "Alignment operand is missing");
+      SrcAlignment = MemoryAccess[MemAccessNumParam];
     }
   }
   SPIRVWord isVolatile() const {
@@ -422,12 +447,14 @@ public:
   }
   SPIRVWord getMemoryAccessMask() const { return TheMemoryAccessMask; }
   SPIRVWord getAlignment() const { return Alignment; }
+  SPIRVWord getSrcAlignment() const { return SrcAlignment; }
   SPIRVWord getAliasScopeInstID() const { return AliasScopeInstID; }
   SPIRVWord getNoAliasInstID() const { return NoAliasInstID; }
 
 protected:
   SPIRVWord TheMemoryAccessMask;
   SPIRVWord Alignment;
+  SPIRVWord SrcAlignment;
   SPIRVId AliasScopeInstID;
   SPIRVId NoAliasInstID;
 };
@@ -660,8 +687,10 @@ class SPIRVBinaryInst
 
 #define _SPIRV_OP(x) typedef SPIRVBinaryInst<Op##x> SPIRV##x;
 _SPIRV_OP(IAdd)
+_SPIRV_OP(IAddCarry)
 _SPIRV_OP(FAdd)
 _SPIRV_OP(ISub)
+_SPIRV_OP(ISubBorrow)
 _SPIRV_OP(FSub)
 _SPIRV_OP(IMul)
 _SPIRV_OP(FMul)
@@ -1761,7 +1790,10 @@ public:
     assert(Module && "Invalid module");
     ExtSetKind = Module->getBuiltinSet(ExtSetId);
     assert((ExtSetKind == SPIRVEIS_OpenCL || ExtSetKind == SPIRVEIS_Debug ||
-            ExtSetKind == SPIRVEIS_OpenCL_DebugInfo_100) &&
+            ExtSetKind == SPIRVEIS_OpenCL_DebugInfo_100 ||
+            ExtSetKind == SPIRVEIS_NonSemantic_Shader_DebugInfo_100 ||
+            ExtSetKind == SPIRVEIS_NonSemantic_Shader_DebugInfo_200 ||
+            ExtSetKind == SPIRVEIS_NonSemantic_AuxData) &&
            "not supported");
   }
   void encode(spv_ostream &O) const override {
@@ -1772,7 +1804,12 @@ public:
       break;
     case SPIRVEIS_Debug:
     case SPIRVEIS_OpenCL_DebugInfo_100:
+    case SPIRVEIS_NonSemantic_Shader_DebugInfo_100:
+    case SPIRVEIS_NonSemantic_Shader_DebugInfo_200:
       getEncoder(O) << ExtOpDebug;
+      break;
+    case SPIRVEIS_NonSemantic_AuxData:
+      getEncoder(O) << ExtOpNonSemanticAuxData;
       break;
     default:
       assert(0 && "not supported");
@@ -1789,7 +1826,12 @@ public:
       break;
     case SPIRVEIS_Debug:
     case SPIRVEIS_OpenCL_DebugInfo_100:
+    case SPIRVEIS_NonSemantic_Shader_DebugInfo_100:
+    case SPIRVEIS_NonSemantic_Shader_DebugInfo_200:
       getDecoder(I) >> ExtOpDebug;
+      break;
+    case SPIRVEIS_NonSemantic_AuxData:
+      getDecoder(I) >> ExtOpNonSemanticAuxData;
       break;
     default:
       assert(0 && "not supported");
@@ -1836,6 +1878,12 @@ public:
     return ArgTypes;
   }
 
+  std::optional<ExtensionID> getRequiredExtension() const override {
+    if (SPIRVBuiltinSetNameMap::map(ExtSetKind).find("NonSemantic.") == 0)
+      return ExtensionID::SPV_KHR_non_semantic_info;
+    return {};
+  }
+
 protected:
   SPIRVExtInstSetKind ExtSetKind;
   SPIRVId ExtSetId;
@@ -1843,6 +1891,7 @@ protected:
     SPIRVWord ExtOp;
     OCLExtOpKind ExtOpOCL;
     SPIRVDebugExtOpKind ExtOpDebug;
+    NonSemanticAuxDataOpKind ExtOpNonSemanticAuxData;
   };
 };
 
@@ -1884,6 +1933,7 @@ protected:
     case OpTypeArray:
     case OpTypeStruct:
     case internal::OpTypeJointMatrixINTEL:
+    case OpTypeCooperativeMatrixKHR:
       break;
     default:
       assert(false && "Invalid type");
@@ -2037,6 +2087,7 @@ public:
         Size(TheSize->getId()) {
     validate();
     assert(TheBB && "Invalid BB");
+    updateModuleVersion();
   }
   // Incomplete constructor
   SPIRVCopyMemorySized()
@@ -2044,6 +2095,13 @@ public:
         Source(SPIRVID_INVALID), Size(0) {
     setHasNoId();
     setHasNoType();
+    updateModuleVersion();
+  }
+
+  SPIRVWord getRequiredSPIRVVersion() const override {
+    if (getSrcAlignment())
+      return static_cast<SPIRVWord>(VersionNumber::SPIRV_1_4);
+    return static_cast<SPIRVWord>(VersionNumber::SPIRV_1_0);
   }
 
   SPIRVValue *getSource() { return getValue(Source); }
@@ -2159,15 +2217,11 @@ public:
 protected:
   void validate() const override {
     SPIRVInstruction::validate();
-    SPIRVId Vector1 = Ops[0];
-    SPIRVId Vector2 = Ops[1];
+    [[maybe_unused]] SPIRVId Vector1 = Ops[0];
     assert(OpCode == OpVectorShuffle);
     assert(Type->isTypeVector());
     assert(Type->getVectorComponentType() ==
            getValueType(Vector1)->getVectorComponentType());
-    if (getValue(Vector1)->isForward() || getValue(Vector2)->isForward())
-      return;
-    assert(getValueType(Vector1) == getValueType(Vector2));
     assert(Ops.size() - 2 == Type->getVectorComponentCount());
   }
 };
@@ -2449,6 +2503,22 @@ public:
   SPIRVCapVec getRequiredCapability() const override {
     return getVec(CapabilityGroupNonUniformBallot);
   }
+
+  SPIRVWord getRequiredSPIRVVersion() const override {
+    switch (OpCode) {
+    case OpGroupNonUniformBroadcast: {
+      assert(Ops.size() == 3 && "Expecting (Execution, Value, Id) operands");
+      if (!isConstantOpCode(getOperand(2)->getOpCode())) {
+        // Before version 1.5, Id must come from a constant instruction.
+        return static_cast<SPIRVWord>(VersionNumber::SPIRV_1_5);
+      }
+      break;
+    }
+    default:
+      break;
+    }
+    return static_cast<SPIRVWord>(VersionNumber::SPIRV_1_3);
+  }
 };
 
 #define _SPIRV_OP(x, ...)                                                      \
@@ -2695,16 +2765,22 @@ public:
 class SPIRVAtomicFAddEXTInst : public SPIRVAtomicInstBase {
 public:
   std::optional<ExtensionID> getRequiredExtension() const override {
+    assert(hasType());
+    if (getType()->isTypeFloat(16))
+      return ExtensionID::SPV_EXT_shader_atomic_float16_add;
     return ExtensionID::SPV_EXT_shader_atomic_float_add;
   }
 
   SPIRVCapVec getRequiredCapability() const override {
     assert(hasType());
+    if (getType()->isTypeFloat(16))
+      return {CapabilityAtomicFloat16AddEXT};
     if (getType()->isTypeFloat(32))
       return {CapabilityAtomicFloat32AddEXT};
-    assert(getType()->isTypeFloat(64) &&
-           "AtomicFAddEXT can only be generated for f32 or f64 types");
-    return {CapabilityAtomicFloat64AddEXT};
+    if (getType()->isTypeFloat(64))
+      return {CapabilityAtomicFloat64AddEXT};
+    llvm_unreachable(
+        "AtomicFAddEXT can only be generated for f16, f32, f64 types");
   }
 };
 
@@ -2766,9 +2842,6 @@ public:
 
 protected:
   void setOpWords(const std::vector<SPIRVWord> &OpsArg) override;
-
-private:
-  size_t getImageOperandsIndex() const;
 };
 
 #define _SPIRV_OP(x, ...)                                                      \
@@ -3324,7 +3397,52 @@ class SPIRVJointMatrixINTELInst : public SPIRVJointMatrixINTELInstBase {
 _SPIRV_OP(JointMatrixLoad, true, 6, true)
 _SPIRV_OP(JointMatrixStore, false, 5, true)
 _SPIRV_OP(JointMatrixMad, true, 7)
+_SPIRV_OP(JointMatrixSUMad, true, 7)
+_SPIRV_OP(JointMatrixUSMad, true, 7)
+_SPIRV_OP(JointMatrixUUMad, true, 7)
 _SPIRV_OP(JointMatrixWorkItemLength, true, 4)
+#undef _SPIRV_OP
+
+class SPIRVCooperativeMatrixCheckedInstructionsINTELInstBase
+    : public SPIRVInstTemplateBase {
+protected:
+  std::optional<ExtensionID> getRequiredExtension() const override {
+    return ExtensionID::SPV_INTEL_joint_matrix;
+  }
+  SPIRVCapVec getRequiredCapability() const override {
+    return getVec(
+        internal::CapabilityCooperativeMatrixCheckedInstructionsINTEL);
+  }
+};
+
+#define _SPIRV_OP(x, ...)                                                      \
+  typedef SPIRVInstTemplate<                                                   \
+      SPIRVCooperativeMatrixCheckedInstructionsINTELInstBase,                  \
+      internal::Op##x##INTEL, __VA_ARGS__>                                     \
+      SPIRV##x##INTEL;
+_SPIRV_OP(CooperativeMatrixLoadChecked, true, 9, true, 7)
+_SPIRV_OP(CooperativeMatrixStoreChecked, false, 8, true, 8)
+_SPIRV_OP(CooperativeMatrixConstructChecked, true, 8)
+#undef _SPIRV_OP
+
+class SPIRVCooperativeMatrixKHRInstBase : public SPIRVInstTemplateBase {
+protected:
+  std::optional<ExtensionID> getRequiredExtension() const override {
+    return ExtensionID::SPV_KHR_cooperative_matrix;
+  }
+  SPIRVCapVec getRequiredCapability() const override {
+    return getVec(CapabilityCooperativeMatrixKHR);
+  }
+};
+
+#define _SPIRV_OP(x, ...)                                                      \
+  typedef SPIRVInstTemplate<SPIRVCooperativeMatrixKHRInstBase, Op##x,          \
+                            __VA_ARGS__>                                       \
+      SPIRV##x;
+_SPIRV_OP(CooperativeMatrixLoadKHR, true, 5, true, 3)
+_SPIRV_OP(CooperativeMatrixStoreKHR, false, 4, true, 4)
+_SPIRV_OP(CooperativeMatrixLengthKHR, true, 4, false)
+_SPIRV_OP(CooperativeMatrixMulAddKHR, true, 6, true, 3)
 #undef _SPIRV_OP
 
 class SPIRVSplitBarrierINTELBase : public SPIRVInstTemplateBase {
@@ -3563,10 +3681,10 @@ _SPIRV_OP(MaskedScatter, false, 5)
 #undef _SPIRV_OP
 
 template <Op OC>
-class SPIRVTensorFloat32ConversionINTELInstBase : public SPIRVUnaryInst<OC> {
+class SPIRVTensorFloat32RoundingINTELInstBase : public SPIRVUnaryInst<OC> {
 protected:
   SPIRVCapVec getRequiredCapability() const override {
-    return getVec(internal::CapabilityTensorFloat32ConversionINTEL);
+    return getVec(internal::CapabilityTensorFloat32RoundingINTEL);
   }
 
   std::optional<ExtensionID> getRequiredExtension() const override {
@@ -3587,8 +3705,8 @@ protected:
     // because it may call a method of class Module that may modify LiteralMap
     // of Module field. That modification is not impacting validate method for
     // these instructions, so const_cast is safe here.
-    using SPVTF32ConvTy = SPIRVTensorFloat32ConversionINTELInstBase<OC>;
-    SPIRVValue *Input = const_cast<SPVTF32ConvTy *>(this)->getOperand(0);
+    using SPVTF32RoundTy = SPIRVTensorFloat32RoundingINTELInstBase<OC>;
+    SPIRVValue *Input = const_cast<SPVTF32RoundTy *>(this)->getOperand(0);
 
     SPIRVType *InCompTy = Input->getType();
     SPIRVWord InCompCount = 1;
@@ -3616,9 +3734,45 @@ protected:
 };
 
 #define _SPIRV_OP(x)                                                           \
-  typedef SPIRVTensorFloat32ConversionINTELInstBase<internal::Op##x> SPIRV##x;
-_SPIRV_OP(ConvertFToTF32INTEL)
+  typedef SPIRVTensorFloat32RoundingINTELInstBase<internal::Op##x> SPIRV##x;
+_SPIRV_OP(RoundFToTF32INTEL)
 #undef _SPIRV_OP
-} // namespace SPIRV
 
+template <Op OC> class SPIRVReadClockKHRInstBase : public SPIRVUnaryInst<OC> {
+protected:
+  SPIRVCapVec getRequiredCapability() const override {
+    return getVec(CapabilityShaderClockKHR);
+  }
+
+  std::optional<ExtensionID> getRequiredExtension() const override {
+    return ExtensionID::SPV_KHR_shader_clock;
+  }
+
+  void validate() const override {
+    SPIRVUnaryInst<OC>::validate();
+
+    SPIRVType *ResCompTy = this->getType();
+    SPIRVWord ResCompCount = 1;
+    if (ResCompTy->isTypeVector()) {
+      ResCompCount = ResCompTy->getVectorComponentCount();
+      ResCompTy = ResCompTy->getVectorComponentType();
+    }
+    auto InstName = OpCodeNameMap::map(OC);
+    SPIRVErrorLog &SPVErrLog = this->getModule()->getErrorLog();
+
+    // check for either 64 bit int type or two element vector of 32 bit int
+    // types.
+    SPVErrLog.checkError(
+        ResCompTy->isTypeInt(64) ||
+            (ResCompCount == 2 && ResCompTy->isTypeInt(32)),
+        SPIRVEC_InvalidInstruction,
+        InstName + "\nResult value must be a scalar of integer"
+                   " 64-bit type or two element vector of 32-bit type\n");
+  }
+};
+#define _SPIRV_OP(x, ...) typedef SPIRVReadClockKHRInstBase<Op##x> SPIRV##x;
+_SPIRV_OP(ReadClockKHR)
+#undef _SPIRV_OP
+
+} // namespace SPIRV
 #endif // SPIRV_LIBSPIRV_SPIRVINSTRUCTION_H

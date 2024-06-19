@@ -1,44 +1,34 @@
 ; RUN: llvm-as %s -o %t.bc
-; RUN: llvm-spirv -spirv-text %t.bc -o %t.spt
+; RUN: llvm-spirv -spirv-text %t.bc -o %t.spt --spirv-debug-info-version=nonsemantic-shader-200
 ; RUN: FileCheck < %t.spt %s -check-prefix=CHECK-SPIRV
-
 ; RUN: llvm-spirv -to-binary %t.spt -o %t.spv
-; RUN: llvm-spirv -r -emit-opaque-pointers %t.spv -o %t.rev.bc
+
+; RUN: llvm-spirv -r %t.spv -o %t.rev.bc
 ; RUN: llvm-dis %t.rev.bc -o %t.rev.ll
 ; RUN: FileCheck < %t.rev.ll %s -check-prefix=CHECK-LLVM
 
-; CHECK-SPIRV: String [[#VarNameId:]] "A$1$upperbound"
-; CHECK-SPIRV: [[#FuncNameId:]] "random_fill_sp"
-; CHECK-SPIRV: TypeInt [[#TypeInt64Id:]] 64 0
-; CHECK-SPIRV: Constant [[#TypeInt64Id]] [[#LowerBoundId:]] 1 0
-; CHECK-SPIRV: Constant [[#TypeInt64Id]] [[#NegativeCount:]] 4294967295 4294967295
+; CHECK-SPIRV: ExtInstImport [[#EISId:]] "NonSemantic.Shader.DebugInfo.200"
 
-; CHECK-SPIRV: [[#DbgFuncId:]] [[#]] DebugFunction [[#FuncNameId]]
-; CHECK-SPIRV: [[#DbgTemplateId:]] [[#]] DebugTemplate [[#DbgFuncId]]
-; CHECK-SPIRV: [[#]] [[#DbgLocVarId:]] [[#]] DebugLocalVariable [[#VarNameId]] [[#]] [[#]] [[#]] [[#]] [[#DbgTemplateId]]
-; CHECK-SPIRV: DebugTypeArray [[#]] [[#DbgLocVarId]] [[#LowerBoundId]]
+; CHECK-SPIRV: String [[#LocalVarNameId:]] "A$1$upperbound"
+; CHECK-SPIRV: TypeInt [[#TyInt64Id:]] 64 0
+; CHECK-SPIRV-DAG: Constant [[#TyInt64Id]] [[#Constant1Id:]] 1 0
+; CHECK-SPIRV-DAG: Constant [[#TyInt64Id]] [[#Constant1000Id:]] 1000 0
+; CHECK-SPIRV: [[#DINoneId:]] [[#EISId]] DebugInfoNone
 
-; CHECK-SPIRV: [[#DbgExprId:]] [[#]] DebugExpression
-; CHECK-SPIRV: DebugTypeArray [[#]] [[#DbgExprId]] [[#DbgExprId]]
+; CHECK-SPIRV: [[#DebugFuncId:]] [[#EISId]] DebugFunction
+; CHECK-SPIRV: [[#DebugTypeTemplate:]] [[#EISId]] DebugTypeTemplate [[#DebugFuncId]]
+; CHECK-SPIRV: [[#LocalVarId:]] [[#EISId]] DebugLocalVariable [[#LocalVarNameId]] [[#]] [[#]] [[#]] [[#]] [[#DebugTypeTemplate]]
+; CHECK-SPIRV: [[#EISId]] DebugTypeSubrange [[#DINoneId]] [[#Constant1Id]] [[#LocalVarId]]  [[#DINoneId]]
 
-; CHECK-SPIRV: DebugTypeArray [[#]] [[#NegativeCount]] [[#]]
+; CHECK-SPIRV: [[#DIExprId:]] [[#EISId]] DebugExpression
+; CHECK-SPIRV: [[#EISId]] DebugTypeSubrange [[#DINoneId]] [[#DIExprId]] [[#DIExprId]] [[#DINoneId]]
 
-; CHECK-LLVM: !DICompositeType(tag: DW_TAG_array_type, baseType: ![[#BaseType:]], size: 32, elements: ![[#Subrange1:]])
-; CHECK-LLVM: [[#BaseType]] = !DIBasicType(name: "REAL*4", size: 32, encoding: DW_ATE_float)
-; CHECK-LLVM: [[#Subrange1]] = !{![[#Subrange2:]]}
-; CHECK-LLVM: [[#Subrange2:]] = !DISubrange(lowerBound: 1, upperBound: ![[#UpperBound:]])
+; CHECK-SPIRV: [[#EISId]] DebugTypeSubrange [[#Constant1000Id]] [[#Constant1Id]] [[#DINoneId]] [[#DINoneId]]
+
+; CHECK-LLVM: [[#Subrange1:]] = !DISubrange(lowerBound: 1, upperBound: ![[#UpperBound:]])
 ; CHECK-LLVM: [[#UpperBound]] = !DILocalVariable(name: "A$1$upperbound"
-
-; CHECK-LLVM: !DICompositeType(tag: DW_TAG_array_type, baseType: ![[#]], size: 32, elements: ![[#SubrangeExpr1:]])
-; CHECK-LLVM: [[#SubrangeExpr1]] = !{![[#SubrangeExpr2:]]}
-; CHECK-LLVM: ![[#SubrangeExpr2]] = !DISubrange(lowerBound: !DIExpression(), upperBound: !DIExpression())
-
+; CHECK-LLVM: !DISubrange(lowerBound: !DIExpression(), upperBound: !DIExpression())
 ; CHECK-LLVM: !DISubrange(count: 1000, lowerBound: 1)
-
-; CHECK-LLVM: !DICompositeType(tag: DW_TAG_array_type, baseType: ![[#BaseType:]], elements: ![[#Subrage:]])
-; CHECK-LLVM: ![[#BaseType]] = !DIBasicType(name: "int", size: 32, encoding: DW_ATE_signed)
-; CHECK-LLVM: ![[#Subrage]] = !{![[#Subrage:]]}
-; CHECK-LLVM: ![[#Subrage]] = !DISubrange(count: -1
 
 ; ModuleID = 'DebugInfoSubrangeUpperBound.bc'
 target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024"
