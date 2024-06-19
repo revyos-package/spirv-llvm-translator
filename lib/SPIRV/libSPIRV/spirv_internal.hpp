@@ -53,8 +53,8 @@ enum InternalSourceLanguageNonSemanticDI {
 };
 
 enum InternalLinkageType {
-  ILTPrev = LinkageTypeMax - 2,
-  ILTInternal
+    ILTPrev = LinkageTypeMax - 2,
+    ILTInternal
 };
 
 enum InternalOp {
@@ -70,6 +70,9 @@ enum InternalOp {
   IOpJointMatrixUUMadINTEL = 6130,
   IOpArithmeticFenceINTEL = 6145,
   IOpTypeJointMatrixINTELv2 = 6184,
+  IOpCooperativeMatrixLoadCheckedINTEL = 6193,
+  IOpCooperativeMatrixStoreCheckedINTEL = 6194,
+  IOpCooperativeMatrixConstructCheckedINTEL = 6195,
   IOpJointMatrixWorkItemLengthINTEL = 6410,
   IOpComplexFMulINTEL = 6415,
   IOpComplexFDivINTEL = 6416,
@@ -77,6 +80,7 @@ enum InternalOp {
   IOpMaskedGatherINTEL = 6428,
   IOpMaskedScatterINTEL = 6429,
   IOpJointMatrixGetElementCoordINTEL = 6440,
+  IOpCooperativeMatrixPrefetchINTEL = 6449,
   IOpPrev = OpMax - 2,
   IOpForward
 };
@@ -101,6 +105,8 @@ enum InternalCapability {
   ICapabilityHWThreadQueryINTEL = 6134,
   ICapFPArithmeticFenceINTEL = 6144,
   ICapGlobalVariableDecorationsINTEL = 6146,
+  ICapabilityCooperativeMatrixCheckedInstructionsINTEL = 6192,
+  ICapabilityCooperativeMatrixPrefetchINTEL = 6411,
   ICapabilityComplexFloatMulDivINTEL = 6414,
   ICapabilityTensorFloat32RoundingINTEL = 6425,
   ICapabilityMaskedGatherScatterINTEL = 6427,
@@ -109,13 +115,17 @@ enum InternalCapability {
   ICapabilityJointMatrixBF16ComponentTypeINTEL = 6437,
   ICapabilityJointMatrixPackedInt2ComponentTypeINTEL = 6438,
   ICapabilityJointMatrixPackedInt4ComponentTypeINTEL = 6439,
-  ICapabilityCacheControlsINTEL = 6441
+  ICapabilityCacheControlsINTEL = 6441,
+  ICapRegisterLimitsINTEL = 6460
 };
 
 enum InternalFunctionControlMask { IFunctionControlOptNoneINTELMask = 0x10000 };
 
 enum InternalExecutionMode {
   IExecModeFastCompositeKernelINTEL = 6088,
+  IExecModeMaximumRegistersINTEL = 6461,
+  IExecModeMaximumRegistersIdINTEL = 6462,
+  IExecModeNamedMaximumRegistersINTEL = 6463
 };
 
 constexpr LinkageType LinkageTypeInternal =
@@ -158,6 +168,10 @@ enum class StoreCacheControlINTEL {
   Streaming = 3
 };
 
+enum InternalNamedMaximumNumberOfRegisters {
+  NamedMaximumNumberOfRegistersAutoINTEL = 0,
+};
+
 #define _SPIRV_OP(x, y) constexpr x x##y = static_cast<x>(I##x##y);
 _SPIRV_OP(Capability, JointMatrixINTEL)
 _SPIRV_OP(Capability, JointMatrixWIInstructionsINTEL)
@@ -175,6 +189,14 @@ _SPIRV_OP(Op, JointMatrixUSMadINTEL)
 _SPIRV_OP(Op, JointMatrixUUMadINTEL)
 _SPIRV_OP(Op, JointMatrixWorkItemLengthINTEL)
 _SPIRV_OP(Op, JointMatrixGetElementCoordINTEL)
+
+_SPIRV_OP(Capability, CooperativeMatrixPrefetchINTEL)
+_SPIRV_OP(Op, CooperativeMatrixPrefetchINTEL)
+
+_SPIRV_OP(Capability, CooperativeMatrixCheckedInstructionsINTEL)
+_SPIRV_OP(Op, CooperativeMatrixLoadCheckedINTEL)
+_SPIRV_OP(Op, CooperativeMatrixStoreCheckedINTEL)
+_SPIRV_OP(Op, CooperativeMatrixConstructCheckedINTEL)
 
 _SPIRV_OP(Capability, HWThreadQueryINTEL)
 _SPIRV_OP(BuiltIn, SubDeviceIDINTEL)
@@ -270,12 +292,20 @@ constexpr Capability CapabilityBfloat16ConversionINTEL =
     static_cast<Capability>(ICapBfloat16ConversionINTEL);
 constexpr Capability CapabilityGlobalVariableDecorationsINTEL =
     static_cast<Capability>(ICapGlobalVariableDecorationsINTEL);
+constexpr Capability CapabilityRegisterLimitsINTEL =
+    static_cast<Capability>(ICapRegisterLimitsINTEL);
 
 constexpr FunctionControlMask FunctionControlOptNoneINTELMask =
     static_cast<FunctionControlMask>(IFunctionControlOptNoneINTELMask);
 
 constexpr ExecutionMode ExecutionModeFastCompositeKernelINTEL =
     static_cast<ExecutionMode>(IExecModeFastCompositeKernelINTEL);
+constexpr ExecutionMode ExecutionModeMaximumRegistersINTEL =
+    static_cast<ExecutionMode>(IExecModeMaximumRegistersINTEL);
+constexpr ExecutionMode ExecutionModeMaximumRegistersIdINTEL =
+    static_cast<ExecutionMode>(IExecModeMaximumRegistersIdINTEL);
+constexpr ExecutionMode ExecutionModeNamedMaximumRegistersINTEL =
+    static_cast<ExecutionMode>(IExecModeNamedMaximumRegistersINTEL);
 
 } // namespace internal
 } // namespace spv
