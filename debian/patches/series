@@ -1,13 +1,1 @@
-0001-do-not-rely-on-version-of-compiler-being-VER.0.0-219.patch
-0002-Backport-to-17-Update-LongConstantCompositeINTEL-to-.patch
-0003-Backport-to-17-add-initial-f16-type-support-for-atom.patch
-0004-SPV-SPV-IR-Fix-image-builtin-mangling-of-unsigned-ty.patch
-0005-Backport-to-17-DebugInfo-Preserve-DIExpression-in-DI.patch
-0006-Backport-to-17-Fix-allowed-types-for-OpConstantNull-.patch
-0007-Add-support-for-IAddCarry-SPIRV-instruction-2167.patch
-0008-Add-support-for-ISubBorrow-SPIRV-instruction-2168.patch
-0009-Backport-to-17-Fix-function-with-unused-sret-paramet.patch
-0010-Backport-to-17-Support-SPV_INTEL_maximum_registers-e.patch
-0011-Backport-to-17-Handle-OpVectorShuffle-with-differing.patch
-0012-LLVM-17-Remove-dependency-on-SPIRV-Headers-for-SPV_I.patch
 visibility-hidden.patch

@@ -1,8 +1,9 @@
-spirv-llvm-translator-17 (17.0.0-6) UNRELEASED; urgency=medium
+spirv-llvm-translator-17 (17.0.1-1) UNRELEASED; urgency=medium
 
+  * New upstream release.  (Closes: #1073402)
   * Bump Standards-Version to 4.7.0, no changes needed.
 
- -- Andreas Beckmann <anbe@debian.org>  Wed, 19 Jun 2024 16:19:35 +0200
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 19 Jun 2024 16:41:56 +0200
 
 spirv-llvm-translator-17 (17.0.0-5) unstable; urgency=medium
 
