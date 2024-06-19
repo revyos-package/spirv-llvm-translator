@@ -74,7 +74,7 @@ Description: reduce the amount of symbols exposed by the library
  
 --- a/lib/SPIRV/libSPIRV/SPIRVModule.cpp
 +++ b/lib/SPIRV/libSPIRV/SPIRVModule.cpp
-@@ -2256,6 +2256,7 @@ bool isSpirvBinary(const std::string &Im
+@@ -2270,6 +2270,7 @@ bool isSpirvBinary(const std::string &Im
  
  #ifdef _SPIRV_SUPPORT_TEXT_FMT
  
@@ -82,7 +82,7 @@ Description: reduce the amount of symbols exposed by the library
  bool convertSpirv(std::istream &IS, std::ostream &OS, std::string &ErrMsg,
                    bool FromText, bool ToText) {
    auto SaveOpt = SPIRVUseTextFormat;
-@@ -2292,6 +2293,7 @@ bool isSpirvText(const std::string &Img)
+@@ -2306,6 +2307,7 @@ bool isSpirvText(const std::string &Img)
    return Magic == MagicNumber;
  }
  
