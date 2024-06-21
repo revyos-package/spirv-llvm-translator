@@ -1840,6 +1840,8 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
     CallInst *CI = nullptr;
     llvm::Value *Dst = transValue(BC->getTarget(), F, BB);
     MaybeAlign Align(BC->getAlignment());
+    MaybeAlign SrcAlign =
+        BC->getSrcAlignment() ? MaybeAlign(BC->getSrcAlignment()) : Align;
     llvm::Value *Size = transValue(BC->getSize(), F, BB);
     bool IsVolatile = BC->SPIRVMemoryAccess::isVolatile();
     IRBuilder<> Builder(BB);
@@ -1852,7 +1854,7 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
 
       // A ptr.annotation may have been generated for the source variable.
       replaceOperandWithAnnotationIntrinsicCallResult(F, Src);
-      CI = Builder.CreateMemCpy(Dst, Align, Src, Align, Size, IsVolatile);
+      CI = Builder.CreateMemCpy(Dst, Align, Src, SrcAlign, Size, IsVolatile);
     }
     if (isFuncNoUnwind())
       CI->getFunction()->addFnAttr(Attribute::NoUnwind);
@@ -2221,6 +2223,28 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
       auto *CT = cast<Constant>(Base);
       V = ConstantExpr::getGetElementPtr(BaseTy, CT, Index, IsInbound);
     }
+    return mapValue(BV, V);
+  }
+
+  case OpPtrEqual:
+  case OpPtrNotEqual: {
+    auto *BC = static_cast<SPIRVBinary *>(BV);
+    auto Ops = transValue(BC->getOperands(), F, BB);
+
+    IRBuilder<> Builder(BB);
+    Value *Op1 = Builder.CreatePtrToInt(Ops[0], Type::getInt64Ty(*Context));
+    Value *Op2 = Builder.CreatePtrToInt(Ops[1], Type::getInt64Ty(*Context));
+    CmpInst::Predicate P =
+        OC == OpPtrEqual ? ICmpInst::ICMP_EQ : ICmpInst::ICMP_NE;
+    Value *V = Builder.CreateICmp(P, Op1, Op2);
+    return mapValue(BV, V);
+  }
+
+  case OpPtrDiff: {
+    auto *BC = static_cast<SPIRVBinary *>(BV);
+    auto Ops = transValue(BC->getOperands(), F, BB);
+    IRBuilder<> Builder(BB);
+    Value *V = Builder.CreatePtrDiff(transType(BC->getType()), Ops[0], Ops[1]);
     return mapValue(BV, V);
   }
 
@@ -3419,6 +3443,7 @@ Instruction *SPIRVToLLVM::transSPIRVBuiltinFromInst(SPIRVInstruction *BI,
   case OpSUDotAccSatKHR:
   case internal::OpJointMatrixLoadINTEL:
   case OpCooperativeMatrixLoadKHR:
+  case internal::OpCooperativeMatrixLoadCheckedINTEL:
     AddRetTypePostfix = true;
     break;
   default: {
@@ -4333,7 +4358,8 @@ bool SPIRVToLLVM::transMetadata() {
       F->setMetadata(kSPIR2MD::IntelFPGAIPInterface,
                      MDNode::get(*Context, InterfaceMDVec));
     }
-    if (auto *EM = BF->getExecutionMode(ExecutionModeMaximumRegistersINTEL)) {
+    if (auto *EM = BF->getExecutionMode(
+            internal::ExecutionModeMaximumRegistersINTEL)) {
       NamedMDNode *ExecModeMD =
           M->getOrInsertNamedMetadata(kSPIRVMD::ExecutionMode);
 
@@ -4345,7 +4371,8 @@ bool SPIRVToLLVM::transMetadata() {
           ConstantAsMetadata::get(getUInt32(M, EM->getLiterals()[0])));
       ExecModeMD->addOperand(MDNode::get(*Context, ValueVec));
     }
-    if (auto *EM = BF->getExecutionMode(ExecutionModeMaximumRegistersIdINTEL)) {
+    if (auto *EM = BF->getExecutionMode(
+            internal::ExecutionModeMaximumRegistersIdINTEL)) {
       NamedMDNode *ExecModeMD =
           M->getOrInsertNamedMetadata(kSPIRVMD::ExecutionMode);
 
@@ -4360,8 +4387,8 @@ bool SPIRVToLLVM::transMetadata() {
                                     transValue(ExecOp, nullptr, nullptr)))));
       ExecModeMD->addOperand(MDNode::get(*Context, ValueVec));
     }
-    if (auto *EM =
-            BF->getExecutionMode(ExecutionModeNamedMaximumRegistersINTEL)) {
+    if (auto *EM = BF->getExecutionMode(
+            internal::ExecutionModeNamedMaximumRegistersINTEL)) {
       NamedMDNode *ExecModeMD =
           M->getOrInsertNamedMetadata(kSPIRVMD::ExecutionMode);
 
