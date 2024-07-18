@@ -678,9 +678,20 @@ protected:
              "Invalid type for bitwise instruction");
       assert((Op1Ty->getIntegerBitWidth() == Op2Ty->getIntegerBitWidth()) &&
              "Inconsistent BitWidth");
+    } else if (isBinaryPtrOpCode(OpCode)) {
+      assert((Op1Ty->isTypePointer() && Op2Ty->isTypePointer()) &&
+             "Invalid types for PtrEqual, PtrNotEqual, or PtrDiff instruction");
+      assert(static_cast<SPIRVTypePointer *>(Op1Ty)->getElementType() ==
+                 static_cast<SPIRVTypePointer *>(Op2Ty)->getElementType() &&
+             "Invalid types for PtrEqual, PtrNotEqual, or PtrDiff instruction");
     } else {
       assert(0 && "Invalid op code!");
     }
+  }
+  SPIRVWord getRequiredSPIRVVersion() const override {
+    if (isBinaryPtrOpCode(OpCode))
+      return static_cast<SPIRVWord>(VersionNumber::SPIRV_1_4);
+    return static_cast<SPIRVWord>(VersionNumber::SPIRV_1_0);
   }
 };
 
@@ -716,6 +727,9 @@ _SPIRV_OP(BitwiseAnd)
 _SPIRV_OP(BitwiseOr)
 _SPIRV_OP(BitwiseXor)
 _SPIRV_OP(Dot)
+_SPIRV_OP(PtrEqual)
+_SPIRV_OP(PtrNotEqual)
+_SPIRV_OP(PtrDiff)
 #undef _SPIRV_OP
 
 template <Op TheOpCode> class SPIRVInstNoOperand : public SPIRVInstruction {
@@ -842,6 +856,8 @@ protected:
            getCondition()->getType()->isTypeBool());
     assert(getTrueLabel()->isForward() || getTrueLabel()->isLabel());
     assert(getFalseLabel()->isForward() || getFalseLabel()->isLabel());
+    if (Module->isAllowedToUseVersion(VersionNumber::SPIRV_1_6))
+      assert(TrueLabelId != FalseLabelId);
   }
   SPIRVId ConditionId;
   SPIRVId TrueLabelId;
@@ -965,6 +981,10 @@ protected:
       ResTy = Type;
     }
     assert(isCmpOpCode(OpCode) && "Invalid op code for cmp inst");
+    if (OpCode == OpLessOrGreater)
+      assert(this->getModule()->getSPIRVVersion() <=
+                 static_cast<SPIRVWord>(VersionNumber::SPIRV_1_5) &&
+             "OpLessOrGreater is removed starting from SPIR-V 1.6");
     assert((ResTy->isTypeBool() || ResTy->isTypeInt()) &&
            "Invalid type for compare instruction");
     assert(Op1Ty == Op2Ty && "Inconsistent types");
@@ -1903,7 +1923,8 @@ public:
   }
 
   llvm::Optional<ExtensionID> getRequiredExtension() const override {
-    if (SPIRVBuiltinSetNameMap::map(ExtSetKind).find("NonSemantic.") == 0)
+    if (SPIRVBuiltinSetNameMap::map(ExtSetKind).find("NonSemantic.") == 0 &&
+        !Module->isAllowedToUseVersion(VersionNumber::SPIRV_1_6))
       return ExtensionID::SPV_KHR_non_semantic_info;
     return {};
   }
@@ -2976,7 +2997,9 @@ protected:
   }
 
   llvm::Optional<ExtensionID> getRequiredExtension() const override {
-    return ExtensionID::SPV_KHR_integer_dot_product;
+    if (!Module->isAllowedToUseVersion(VersionNumber::SPIRV_1_6))
+      return ExtensionID::SPV_KHR_integer_dot_product;
+    return {};
   }
 
   void validate() const override {
@@ -3035,6 +3058,12 @@ private:
     }
 
     llvm_unreachable("No mapping for argument type to capability.");
+  }
+
+  SPIRVWord getRequiredSPIRVVersion() const override {
+    if (Module->isAllowedToUseVersion(VersionNumber::SPIRV_1_6))
+      return static_cast<SPIRVWord>(VersionNumber::SPIRV_1_6);
+    return static_cast<SPIRVWord>(VersionNumber::SPIRV_1_0);
   }
 };
 
@@ -3444,7 +3473,7 @@ protected:
   typedef SPIRVInstTemplate<SPIRVCooperativeMatrixPrefetchINTELInstBase,       \
                             internal::Op##x##INTEL, __VA_ARGS__>               \
       SPIRV##x##INTEL;
-_SPIRV_OP(CooperativeMatrixPrefetch, false, 8, true, 5)
+_SPIRV_OP(CooperativeMatrixPrefetch, false, 6, true, 3)
 #undef _SPIRV_OP
 
 class SPIRVCooperativeMatrixCheckedInstructionsINTELInstBase
