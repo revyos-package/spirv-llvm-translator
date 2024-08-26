@@ -874,12 +874,19 @@ SPIRVFunction *LLVMToSPIRVBase::transFunctionDecl(Function *F) {
       // Order of integer numbers in MD node follows the order of function
       // parameters on which we shall attach the appropriate decoration. Add
       // decoration only if MD value is 1.
-      int LocID = 0;
+      int IsRuntimeAligned = 0;
       if (!isa<MDString>(RuntimeAligned->getOperand(ArgNo)) &&
           !isa<MDNode>(RuntimeAligned->getOperand(ArgNo)))
-        LocID = getMDOperandAsInt(RuntimeAligned, ArgNo);
-      if (LocID == 1)
-        BA->addDecorate(internal::DecorationRuntimeAlignedINTEL, LocID);
+        IsRuntimeAligned = getMDOperandAsInt(RuntimeAligned, ArgNo);
+      if (IsRuntimeAligned == 1) {
+        // TODO: to replace non-conformant to the spec decoration generation
+        // with:
+        // BM->addExtension(ExtensionID::SPV_INTEL_runtime_aligned);
+        // BM->addCapability(CapabilityRuntimeAlignedAttributeINTEL);
+        // BA->addAttr(FunctionParameterAttributeRuntimeAlignedINTEL);
+        BA->addDecorate(internal::DecorationRuntimeAlignedINTEL,
+                        IsRuntimeAligned);
+      }
     }
   }
   if (Attrs.hasRetAttr(Attribute::ZExt))
@@ -1112,7 +1119,10 @@ void LLVMToSPIRVBase::transAuxDataInst(SPIRVFunction *BF, Function *F) {
   auto *BM = BF->getModule();
   if (!BM->preserveAuxData())
     return;
-  BM->addExtension(SPIRV::ExtensionID::SPV_KHR_non_semantic_info);
+  if (!BM->isAllowedToUseVersion(VersionNumber::SPIRV_1_6))
+    BM->addExtension(SPIRV::ExtensionID::SPV_KHR_non_semantic_info);
+  else
+    BM->setMinSPIRVVersion(VersionNumber::SPIRV_1_6);
   const auto &FnAttrs = F->getAttributes().getFnAttrs();
   for (const auto &Attr : FnAttrs) {
     std::vector<SPIRVWord> Ops;
@@ -1408,9 +1418,14 @@ SPIRVInstruction *LLVMToSPIRVBase::transCmpInst(CmpInst *Cmp,
   auto *Op0 = Cmp->getOperand(0);
   SPIRVValue *TOp0 = transValue(Op0, BB);
   SPIRVValue *TOp1 = transValue(Cmp->getOperand(1), BB);
-  // TODO: once the translator supports SPIR-V 1.4, update the condition below:
-  // if (/* */->isPointerTy() && /* it is not allowed to use SPIR-V 1.4 */)
   if (Op0->getType()->isPointerTy()) {
+    auto P = Cmp->getPredicate();
+    if (BM->isAllowedToUseVersion(VersionNumber::SPIRV_1_4) &&
+        (P == ICmpInst::ICMP_EQ || P == ICmpInst::ICMP_NE) &&
+        Cmp->getOperand(1)->getType()->isPointerTy()) {
+      Op OC = P == ICmpInst::ICMP_EQ ? OpPtrEqual : OpPtrNotEqual;
+      return BM->addBinaryInst(OC, transType(Cmp->getType()), TOp0, TOp1, BB);
+    }
     unsigned AS = cast<PointerType>(Op0->getType())->getAddressSpace();
     SPIRVType *Ty = transType(getSizetType(AS));
     TOp0 = BM->addUnaryInst(OpConvertPtrToU, Ty, TOp0, BB);
@@ -2808,7 +2823,9 @@ bool LLVMToSPIRVBase::transDecoration(Value *V, SPIRVValue *BV) {
     auto Opcode = BVF->getOpcode();
     if (Opcode == Instruction::FAdd || Opcode == Instruction::FSub ||
         Opcode == Instruction::FMul || Opcode == Instruction::FDiv ||
-        Opcode == Instruction::FRem) {
+        Opcode == Instruction::FRem ||
+        ((Opcode == Instruction::FNeg || Opcode == Instruction::FCmp) &&
+         BM->isAllowedToUseVersion(VersionNumber::SPIRV_1_6))) {
       FastMathFlags FMF = BVF->getFastMathFlags();
       SPIRVWord M{0};
       if (FMF.isFast())
