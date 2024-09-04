@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 
-commit=${1:-upstream/llvm_release_180}
-version=${2:-18}
+commit=${1:-upstream/llvm_release_190}
+version=${2:-19}
 
 stamp=$(git show -s --format="%ct" ${commit})
 datestamp=$(date -d @${stamp} +"%Y%m%d")
