@@ -35,7 +35,6 @@
 // This file implements regularization of LLVM module for SPIR-V.
 //
 //===----------------------------------------------------------------------===//
-#define DEBUG_TYPE "spvregular"
 
 #include "SPIRVRegularizeLLVM.h"
 #include "OCLUtil.h"
@@ -54,6 +53,8 @@
 
 #include <set>
 #include <vector>
+
+#define DEBUG_TYPE "spvregular"
 
 using namespace llvm;
 using namespace SPIRV;
@@ -322,6 +323,104 @@ void SPIRVRegularizeLLVMBase::expandSYCLTypeUsing(Module *M) {
     expandVIDWithSYCLTypeByValComp(F);
 }
 
+// In this function, we handle two conversion operations
+// 1. fptoui.sat.iX.fY (X is not 8,16,32,64; Y is 32 or 64)
+// 2. fptosi.sat.iX.fY (X is not 8,16,32,64; Y is 32 or 64)
+// Such non-standard integer types cannot be handled in SPIR-V. Hence, they
+// will be promoted to
+// 1. fptoui.sat.i64.fY (Y is 32 or 64)
+// 2. fptosi.sat.i64.fY (Y is 32 or 64)
+// However, LLVM documentation requires the following rules to be obeyed.
+// Rule 1: If the argument is any NaN, zero is returned.
+// Rule 2: If the argument is smaller than the smallest representable
+// (un)signed integer of the result type, the smallest representable
+// (un)signed integer is returned.
+// Rule 3: If the argument is larger than the largest representable (un)signed
+// integer of the result type, the largest representable (un)signed integer is
+// returned.
+// Rule 4: Otherwise, the result of rounding the argument towards zero is
+// returned.
+// Rules 1 & 4 are preserved when promoting iX to i64. For preserving Rule 2
+// and Rule 3, we saturate the result of the promoted instruction based on
+// original integer type (iX)
+// Example:
+// Input:
+// %0 = call i2 @llvm.fptosi.sat.i2.f32(float %input)
+// %1 = sext i32 %0
+// Output:
+// %0 = call i32 @_Z17convert_long_satf(float %input)
+// %1 = icmp sge i32 %0, 1 <Largest 2-bit signed integer>
+// %2 = icmp sle i32 %0, -2 <Smallest 2-bit signed integer>
+// %3 = select i1 %1, i32 1, i32 %0
+// %4 = select i1 %2, i32 -2, i32 %3
+// Replace uses of %1 in Input with %4 in Output
+void SPIRVRegularizeLLVMBase::cleanupConversionToNonStdIntegers(Module *M) {
+  for (auto FI = M->begin(), FE = M->end(); FI != FE;) {
+    Function *F = &(*FI++);
+    std::vector<Instruction *> ToErase;
+    auto IID = F->getIntrinsicID();
+    if (IID != Intrinsic::fptosi_sat && IID != Intrinsic::fptoui_sat)
+      continue;
+    for (auto *I : F->users()) {
+      if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(I)) {
+        // TODO: Vector type not supported yet.
+        if (isa<VectorType>(II->getType()))
+          continue;
+        auto IID = II->getIntrinsicID();
+        auto IntBitWidth = II->getType()->getScalarSizeInBits();
+        if (IntBitWidth == 8 || IntBitWidth == 16 || IntBitWidth == 32 ||
+            IntBitWidth == 64)
+          continue;
+        if (IID == Intrinsic::fptosi_sat) {
+          // Identify sext (user of II). Make sure that's the only use of II.
+          auto *User = II->getUniqueUndroppableUser();
+          if (!User || !isa<SExtInst>(User))
+            continue;
+          auto *SExtI = dyn_cast<SExtInst>(User);
+          auto *NewIType = SExtI->getType();
+          IRBuilder<> IRB(II);
+          auto *NewII = IRB.CreateIntrinsic(
+              IID, {NewIType, II->getOperand(0)->getType()}, II->getOperand(0));
+          Constant *MaxVal = ConstantInt::get(
+              NewIType, APInt::getSignedMaxValue(IntBitWidth).getSExtValue());
+          Constant *MinVal = ConstantInt::get(
+              NewIType, APInt::getSignedMinValue(IntBitWidth).getSExtValue());
+          auto *GTMax = IRB.CreateICmp(CmpInst::ICMP_SGE, NewII, MaxVal);
+          auto *LTMin = IRB.CreateICmp(CmpInst::ICMP_SLE, NewII, MinVal);
+          auto *SatMax = IRB.CreateSelect(GTMax, MaxVal, NewII);
+          auto *SatMin = IRB.CreateSelect(LTMin, MinVal, SatMax);
+          SExtI->replaceAllUsesWith(SatMin);
+          ToErase.push_back(SExtI);
+          ToErase.push_back(II);
+        }
+        if (IID == Intrinsic::fptoui_sat) {
+          // Identify zext (user of II). Make sure that's the only use of II.
+          auto *User = II->getUniqueUndroppableUser();
+          if (!User || !isa<ZExtInst>(User))
+            continue;
+          auto *ZExtI = dyn_cast<ZExtInst>(User);
+          auto *NewIType = ZExtI->getType();
+          IRBuilder<> IRB(II);
+          auto *NewII = IRB.CreateIntrinsic(
+              IID, {NewIType, II->getOperand(0)->getType()}, II->getOperand(0));
+          Constant *MaxVal = ConstantInt::get(
+              NewIType, APInt::getMaxValue(IntBitWidth).getZExtValue());
+          auto *GTMax = IRB.CreateICmp(CmpInst::ICMP_UGE, NewII, MaxVal);
+          auto *SatMax = IRB.CreateSelect(GTMax, MaxVal, NewII);
+          ZExtI->replaceAllUsesWith(SatMax);
+          ToErase.push_back(ZExtI);
+          ToErase.push_back(II);
+        }
+      }
+    }
+    for (Instruction *V : ToErase) {
+      assert(V->user_empty());
+      V->dropAllReferences();
+      V->eraseFromParent();
+    }
+  }
+}
+
 bool SPIRVRegularizeLLVMBase::runRegularizeLLVM(Module &Module) {
   M = &Module;
   Ctx = &M->getContext();
@@ -335,11 +434,153 @@ bool SPIRVRegularizeLLVMBase::runRegularizeLLVM(Module &Module) {
   return true;
 }
 
+namespace {
+void regularizeWithOverflowInstrinsics(StringRef MangledName, CallInst *Call,
+                                       Module *M,
+                                       std::vector<Instruction *> &ToErase) {
+  IRBuilder Builder(Call);
+  Function *Builtin = Call->getModule()->getFunction(MangledName);
+  AllocaInst *A;
+  StructType *StructBuiltinTy;
+  if (Builtin) {
+    StructBuiltinTy = cast<StructType>(Builtin->getParamStructRetType(0));
+    {
+      IRBuilderBase::InsertPointGuard Guard(Builder);
+      Builder.SetInsertPointPastAllocas(Call->getParent()->getParent());
+      A = Builder.CreateAlloca(StructBuiltinTy);
+    }
+    CallInst *C = Builder.CreateCall(
+        Builtin, {A, Call->getArgOperand(0), Call->getArgOperand(1)});
+    auto SretAttr = Attribute::get(
+        Builder.getContext(), Attribute::AttrKind::StructRet, StructBuiltinTy);
+    C->addParamAttr(0, SretAttr);
+  } else {
+    StructBuiltinTy = StructType::create(
+        Call->getContext(),
+        {Call->getArgOperand(0)->getType(), Call->getArgOperand(1)->getType()});
+    {
+      IRBuilderBase::InsertPointGuard Guard(Builder);
+      Builder.SetInsertPointPastAllocas(Call->getParent()->getParent());
+      A = Builder.CreateAlloca(StructBuiltinTy);
+    }
+    FunctionType *FT =
+        FunctionType::get(Builder.getVoidTy(),
+                          {A->getType(), Call->getArgOperand(0)->getType(),
+                           Call->getArgOperand(1)->getType()},
+                          false);
+    Builtin =
+        Function::Create(FT, GlobalValue::ExternalLinkage, MangledName, M);
+    Builtin->setCallingConv(CallingConv::SPIR_FUNC);
+    Builtin->addFnAttr(Attribute::NoUnwind);
+    auto SretAttr = Attribute::get(
+        Builder.getContext(), Attribute::AttrKind::StructRet, StructBuiltinTy);
+    Builtin->addParamAttr(0, SretAttr);
+    CallInst *C = Builder.CreateCall(
+        Builtin, {A, Call->getArgOperand(0), Call->getArgOperand(1)});
+    C->addParamAttr(0, SretAttr);
+  }
+  Type *RetTy = Call->getArgOperand(0)->getType();
+  Constant *ConstZero = ConstantInt::get(RetTy, 0);
+  Value *L = Builder.CreateLoad(StructBuiltinTy, A);
+  Value *V0 = Builder.CreateExtractValue(L, {0});
+  Value *V1 = Builder.CreateExtractValue(L, {1});
+  Value *V2 = Builder.CreateICmpNE(V1, ConstZero);
+  Type *StructI32I1Ty =
+      StructType::create(Call->getContext(), {RetTy, V2->getType()});
+  Value *Undef = UndefValue::get(StructI32I1Ty);
+  Value *V3 = Builder.CreateInsertValue(Undef, V0, {0});
+  Value *V4 = Builder.CreateInsertValue(V3, V2, {1});
+  SmallVector<User *> Users(Call->users());
+  for (User *U : Users) {
+    U->replaceUsesOfWith(Call, V4);
+  }
+  ToErase.push_back(Call);
+}
+
+// CacheControls(Load/Store)INTEL decorations can be represented as metadata
+// placed on memory accessing instruction with the following form:
+// !spirv.DecorationCacheControlINTEL !X
+// !X = !{i32 %decoration_kind%, i32 %level%, i32 %control%,
+//        i32 %operand of the instruction to decorate%}
+// This function creates a dummy GEP accessing pointer operand of the
+// instruction and creates !spirv.Decorations metadata attached to it.
+void prepareCacheControlsTranslation(Metadata *MD, Instruction *Inst) {
+  if (!Inst->mayReadOrWriteMemory())
+    return;
+  auto *ArgDecoMD = dyn_cast<MDNode>(MD);
+  assert(ArgDecoMD && "Decoration list must be a metadata node");
+  std::vector<Instruction *> CreatedGeps;
+  for (unsigned I = 0, E = ArgDecoMD->getNumOperands(); I != E; ++I) {
+    auto *DecoMD = dyn_cast<MDNode>(ArgDecoMD->getOperand(I));
+    if (!DecoMD) {
+      assert(!"Decoration does not name metadata");
+      return;
+    }
+
+    constexpr size_t CacheControlsNumOps = 4;
+    if (DecoMD->getNumOperands() != CacheControlsNumOps) {
+      assert(!"Cache controls metadata on instruction must have 4 operands");
+      return;
+    }
+
+    auto *const KindMD = cast<ConstantAsMetadata>(DecoMD->getOperand(0));
+    auto *const LevelMD = cast<ConstantAsMetadata>(DecoMD->getOperand(1));
+    auto *const ControlMD = cast<ConstantAsMetadata>(DecoMD->getOperand(2));
+
+    const size_t TargetArgNo =
+        mdconst::dyn_extract<ConstantInt>(DecoMD->getOperand(3))
+            ->getZExtValue();
+    Value *PtrInstOp = Inst->getOperand(TargetArgNo);
+    if (!PtrInstOp->getType()->isPointerTy()) {
+      assert(!"Cache controls must decorate a pointer");
+      return;
+    }
+
+    // Create dummy GEP for SSA copy of the pointer operand. Lets do our best
+    // to guess pointee type here, but if we won't - just pointer is also fine,
+    // if necessary TypeScavenger will adjust types and create bitcasts. If
+    // memory instruction operand is already created zero GEP - create nothing
+    // and use the old GEP.
+    SmallVector<Metadata *, 4> MDs;
+    std::vector<Metadata *> OPs = {KindMD, LevelMD, ControlMD};
+    if (auto *const GEP = dyn_cast<GetElementPtrInst>(PtrInstOp)) {
+      if (GEP->hasAllZeroIndices() &&
+          (std::find(CreatedGeps.begin(), CreatedGeps.end(), GEP) !=
+           std::end(CreatedGeps))) {
+        MDs.push_back(MDNode::get(Inst->getContext(), OPs));
+        // If the existing GEP has SPIRV_MD_DECORATIONS metadata - copy it
+        if (auto *OldMD = GEP->getMetadata(SPIRV_MD_DECORATIONS))
+          for (unsigned I = 0, E = OldMD->getNumOperands(); I != E; ++I)
+            if (auto *DecoMD = dyn_cast<MDNode>(OldMD->getOperand(I)))
+              MDs.push_back(DecoMD);
+        MDNode *MDList = MDNode::get(Inst->getContext(), MDs);
+        GEP->setMetadata(SPIRV_MD_DECORATIONS, MDList);
+        return;
+      }
+    }
+    IRBuilder Builder(Inst);
+    Type *GEPTy = Builder.getInt8Ty();
+    if (auto *LI = dyn_cast<LoadInst>(Inst))
+      GEPTy = LI->getType();
+    else if (auto *SI = dyn_cast<StoreInst>(Inst))
+      GEPTy = SI->getValueOperand()->getType();
+    auto *GEP =
+        cast<Instruction>(Builder.CreateConstGEP1_32(GEPTy, PtrInstOp, 0));
+    CreatedGeps.push_back(GEP);
+    Inst->setOperand(TargetArgNo, GEP);
+    MDs.push_back(MDNode::get(Inst->getContext(), OPs));
+    MDNode *MDList = MDNode::get(Inst->getContext(), MDs);
+    GEP->setMetadata(SPIRV_MD_DECORATIONS, MDList);
+  }
+}
+} // namespace
+
 /// Remove entities not representable by SPIR-V
 bool SPIRVRegularizeLLVMBase::regularize() {
   eraseUselessFunctions(M);
   addKernelEntryPoint(M);
   expandSYCLTypeUsing(M);
+  cleanupConversionToNonStdIntegers(M);
 
   for (auto I = M->begin(), E = M->end(); I != E;) {
     Function *F = &(*I++);
@@ -348,9 +589,12 @@ bool SPIRVRegularizeLLVMBase::regularize() {
       continue;
     }
 
+    // TODO: query intrinsic calls from their declarations
     std::vector<Instruction *> ToErase;
     for (BasicBlock &BB : *F) {
       for (Instruction &II : BB) {
+        if (auto *MD = II.getMetadata(SPIRV_MD_INTEL_CACHE_DECORATIONS))
+          prepareCacheControlsTranslation(MD, &II);
         if (auto *Call = dyn_cast<CallInst>(&II)) {
           Call->setTailCall(false);
           Function *CF = Call->getCalledFunction();
@@ -365,6 +609,23 @@ bool SPIRVRegularizeLLVMBase::regularize() {
               lowerFunnelShift(II);
             else if (II->getIntrinsicID() == Intrinsic::umul_with_overflow)
               lowerUMulWithOverflow(II);
+            else if (II->getIntrinsicID() == Intrinsic::uadd_with_overflow) {
+              BuiltinFuncMangleInfo Info;
+              std::string MangledName =
+                  mangleBuiltin("__spirv_IAddCarry",
+                                {Call->getArgOperand(0)->getType(),
+                                 Call->getArgOperand(1)->getType()},
+                                &Info);
+              regularizeWithOverflowInstrinsics(MangledName, Call, M, ToErase);
+            } else if (II->getIntrinsicID() == Intrinsic::usub_with_overflow) {
+              BuiltinFuncMangleInfo Info;
+              std::string MangledName =
+                  mangleBuiltin("__spirv_ISubBorrow",
+                                {Call->getArgOperand(0)->getType(),
+                                 Call->getArgOperand(1)->getType()},
+                                &Info);
+              regularizeWithOverflowInstrinsics(MangledName, Call, M, ToErase);
+            }
           }
         }
 

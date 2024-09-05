@@ -76,7 +76,7 @@ class SPIRVExtInst;
   void decode(std::istream &I) override;
 
 #define _REQ_SPIRV_VER(Version)                                                \
-  SPIRVWord getRequiredSPIRVVersion() const override { return Version; }
+  VersionNumber getRequiredSPIRVVersion() const override { return Version; }
 
 // Add implementation of encode/decode functions to a class.
 // Used out side of class definition.
@@ -371,6 +371,7 @@ public:
   void takeDecorates(SPIRVEntry *);
   void takeDecorateIds(SPIRVEntry *);
   void takeMemberDecorates(SPIRVEntry *);
+  void replaceTargetIdInDecorates(SPIRVId);
 
   /// After a SPIRV entry is created during reading SPIRV binary by default
   /// constructor, this function is called to allow the SPIRV entry to resize
@@ -417,8 +418,8 @@ public:
   void validateBuiltin(SPIRVWord, SPIRVWord) const;
 
   // By default assume SPIRV 1.0 as required version
-  virtual SPIRVWord getRequiredSPIRVVersion() const {
-    return static_cast<SPIRVWord>(VersionNumber::SPIRV_1_0);
+  virtual VersionNumber getRequiredSPIRVVersion() const {
+    return VersionNumber::SPIRV_1_0;
   }
 
   virtual std::vector<SPIRVEntry *> getNonLiteralOperands() const {
@@ -683,24 +684,24 @@ public:
     return getCapability(ExecMode);
   }
 
-  SPIRVWord getRequiredSPIRVVersion() const override {
+  VersionNumber getRequiredSPIRVVersion() const override {
     switch (ExecMode) {
     case ExecutionModeFinalizer:
     case ExecutionModeInitializer:
     case ExecutionModeSubgroupSize:
     case ExecutionModeSubgroupsPerWorkgroup:
-      return static_cast<SPIRVWord>(VersionNumber::SPIRV_1_1);
+      return VersionNumber::SPIRV_1_1;
 
     default:
-      return static_cast<SPIRVWord>(VersionNumber::SPIRV_1_0);
+      return VersionNumber::SPIRV_1_0;
     }
   }
 
   std::optional<ExtensionID> getRequiredExtension() const override {
     switch (static_cast<unsigned>(ExecMode)) {
-    case internal::ExecutionModeMaximumRegistersINTEL:
-    case internal::ExecutionModeMaximumRegistersIdINTEL:
-    case internal::ExecutionModeNamedMaximumRegistersINTEL:
+    case ExecutionModeMaximumRegistersINTEL:
+    case ExecutionModeMaximumRegistersIdINTEL:
+    case ExecutionModeNamedMaximumRegistersINTEL:
       return ExtensionID::SPV_INTEL_maximum_registers;
     default:
       return {};
@@ -730,8 +731,8 @@ public:
   }
   // Incomplete constructor
   SPIRVExecutionModeId() : SPIRVExecutionMode() {}
-  SPIRVWord getRequiredSPIRVVersion() const override {
-    return static_cast<SPIRVWord>(VersionNumber::SPIRV_1_2);
+  VersionNumber getRequiredSPIRVVersion() const override {
+    return VersionNumber::SPIRV_1_2;
   }
 };
 
@@ -769,9 +770,9 @@ public:
              IsOtherFP(EMK);
     };
     auto IsMaxRegisters = [&](auto EMK) {
-      return EMK == internal::ExecutionModeMaximumRegistersINTEL ||
-             EMK == internal::ExecutionModeMaximumRegistersIdINTEL ||
-             EMK == internal::ExecutionModeNamedMaximumRegistersINTEL;
+      return EMK == ExecutionModeMaximumRegistersINTEL ||
+             EMK == ExecutionModeMaximumRegistersIdINTEL ||
+             EMK == ExecutionModeNamedMaximumRegistersINTEL;
     };
     auto IsCompatible = [&](SPIRVExecutionMode *EM0, SPIRVExecutionMode *EM1) {
       if (EM0->getTargetId() != EM1->getTargetId())
@@ -870,7 +871,7 @@ public:
   SPIRVCapability() : Kind(CapabilityMatrix) {}
   _SPIRV_DCL_ENCDEC
 
-  SPIRVWord getRequiredSPIRVVersion() const override {
+  VersionNumber getRequiredSPIRVVersion() const override {
     switch (Kind) {
     case CapabilityGroupNonUniform:
     case CapabilityGroupNonUniformVote:
@@ -879,15 +880,15 @@ public:
     case CapabilityGroupNonUniformShuffle:
     case CapabilityGroupNonUniformShuffleRelative:
     case CapabilityGroupNonUniformClustered:
-      return static_cast<SPIRVWord>(VersionNumber::SPIRV_1_3);
+      return VersionNumber::SPIRV_1_3;
 
     case CapabilityNamedBarrier:
     case CapabilitySubgroupDispatch:
     case CapabilityPipeStorage:
-      return static_cast<SPIRVWord>(VersionNumber::SPIRV_1_1);
+      return VersionNumber::SPIRV_1_1;
 
     default:
-      return static_cast<SPIRVWord>(VersionNumber::SPIRV_1_0);
+      return VersionNumber::SPIRV_1_0;
     }
   }
 
@@ -902,6 +903,10 @@ public:
       return ExtensionID::SPV_INTEL_vector_compute;
     case internal::CapabilityFastCompositeINTEL:
       return ExtensionID::SPV_INTEL_fast_composite;
+    case internal::CapabilitySubgroupRequirementsINTEL:
+      return ExtensionID::SPV_INTEL_subgroup_requirements;
+    case CapabilityFPFastMathModeINTEL:
+      return ExtensionID::SPV_INTEL_fp_fast_math_mode;
     default:
       return {};
     }
@@ -1018,8 +1023,8 @@ public:
   SPIRVModuleProcessed() { updateModuleVersion(); }
   _SPIRV_DCL_ENCDEC
   void validate() const override;
-  SPIRVWord getRequiredSPIRVVersion() const override {
-    return static_cast<SPIRVWord>(VersionNumber::SPIRV_1_1);
+  VersionNumber getRequiredSPIRVVersion() const override {
+    return VersionNumber::SPIRV_1_1;
   }
 
   std::string getProcessStr();
@@ -1051,8 +1056,6 @@ _SPIRV_OP(ImageDrefGather)
 _SPIRV_OP(QuantizeToF16)
 _SPIRV_OP(ArrayLength)
 _SPIRV_OP(OuterProduct)
-_SPIRV_OP(SMulExtended)
-_SPIRV_OP(UMulExtended)
 _SPIRV_OP(DPdx)
 _SPIRV_OP(DPdy)
 _SPIRV_OP(Fwidth)

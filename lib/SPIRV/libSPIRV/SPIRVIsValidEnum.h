@@ -73,9 +73,9 @@ inline bool isValid(spv::ExecutionModel V) {
   case ExecutionModelCallableKHR:
   case ExecutionModeRegisterMapInterfaceINTEL:
   case ExecutionModeStreamingInterfaceINTEL:
-  case internal::ExecutionModeMaximumRegistersINTEL:
-  case internal::ExecutionModeMaximumRegistersIdINTEL:
-  case internal::ExecutionModeNamedMaximumRegistersINTEL:
+  case ExecutionModeMaximumRegistersINTEL:
+  case ExecutionModeMaximumRegistersIdINTEL:
+  case ExecutionModeNamedMaximumRegistersINTEL:
     return true;
   default:
     return false;
@@ -171,6 +171,7 @@ inline bool isValid(spv::FunctionParameterAttribute V) {
   case FunctionParameterAttributeNoCapture:
   case FunctionParameterAttributeNoWrite:
   case FunctionParameterAttributeNoReadWrite:
+  case FunctionParameterAttributeRuntimeAlignedINTEL:
     return true;
   default:
     return false;
