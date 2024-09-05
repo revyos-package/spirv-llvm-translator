@@ -1,4 +1,4 @@
-spirv-llvm-translator-19 (19.~~+git20240826-1) UNRELEASED; urgency=medium
+spirv-llvm-translator-19 (19.~~+git20240826-1) unstable; urgency=medium
 
   * New upstream snapshot. (Closes: #1079854)
   * Fork source package as spirv-llvm-translator-19.
@@ -6,7 +6,7 @@ spirv-llvm-translator-19 (19.~~+git20240826-1) UNRELEASED; urgency=medium
   * Update snapshot.sh.
   * symbols: Updated.
 
- -- Timo Aaltonen <tjaalton@debian.org>  Wed, 04 Sep 2024 10:19:26 +0300
+ -- Timo Aaltonen <tjaalton@debian.org>  Thu, 05 Sep 2024 16:53:12 +0300
 
 spirv-llvm-translator-18 (18.1.1-1) unstable; urgency=medium
 
