@@ -1,2 +1,0 @@
-# for marking symbols introduced by newer gcc versions
-symbols-file-contains-debian-revision on symbol * and * others (libLLVMSPIRVLib.so.*) [symbols]
