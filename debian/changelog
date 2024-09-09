@@ -1,8 +1,8 @@
-spirv-llvm-translator-19 (19.~~+git20240826-3) UNRELEASED; urgency=medium
+spirv-llvm-translator-19 (19.~~+git20240826-3) unstable; urgency=medium
 
   * rules: Don't fail if symbols do not match.
 
- -- Timo Aaltonen <tjaalton@debian.org>  Mon, 09 Sep 2024 13:53:29 +0300
+ -- Timo Aaltonen <tjaalton@debian.org>  Mon, 09 Sep 2024 13:54:46 +0300
 
 spirv-llvm-translator-19 (19.~~+git20240826-2) unstable; urgency=medium
 
