@@ -8,8 +8,8 @@ Depends:
  pkgconf,
  spirv-headers,
  spirv-tools,
- clang-18,
- llvm-18-dev,
+ clang-19,
+ llvm-19-dev,
 Restrictions:
  allow-stderr,
 
@@ -24,8 +24,8 @@ Depends:
  pkgconf,
  spirv-headers,
  spirv-tools,
- clang-18,
- llvm-18-dev,
+ clang-19,
+ llvm-19-dev,
 Restrictions:
  allow-stderr,
  flaky,
