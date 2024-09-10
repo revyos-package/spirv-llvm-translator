@@ -1,6 +1,15 @@
+spirv-llvm-translator-16 (16.0.1-2) UNRELEASED; urgency=medium
+
+  * Merge changes from spirv-llvm-translator-15 15.0.4-2.
+  * Update .symbols control file.
+  * Update copyright file.
+
+ -- Andreas Beckmann <anbe@debian.org>  Tue, 10 Sep 2024 10:06:24 +0200
+
 spirv-llvm-translator-16 (16.0.1-1) unstable; urgency=medium
 
   * New upstream release.  (Closes: #1073405)
+  * Merge changes from spirv-llvm-translator-15 15.0.1-1.
   * Bump Standards-Version to 4.7.0, no changes needed.
 
  -- Andreas Beckmann <anbe@debian.org>  Wed, 19 Jun 2024 11:54:43 +0200
@@ -69,9 +78,33 @@ spirv-llvm-translator-16 (16.0.0-1) experimental; urgency=medium
 
  -- Andreas Beckmann <anbe@debian.org>  Thu, 20 Apr 2023 18:57:02 +0200
 
+spirv-llvm-translator-15 (15.0.4-2) unstable; urgency=medium
+
+  * Merge changes from spirv-llvm-translator-14 14.0.4-2.
+  * Update .symbols control file.
+  * Update copyright file.
+
+ -- Andreas Beckmann <anbe@debian.org>  Tue, 10 Sep 2024 09:43:06 +0200
+
+spirv-llvm-translator-15 (15.0.4-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Merge changes from spirv-llvm-translator-14 14.0.4-1.
+  * Update .symbols control file.
+
+ -- Andreas Beckmann <anbe@debian.org>  Sat, 07 Sep 2024 20:57:52 +0200
+
+spirv-llvm-translator-15 (15.0.3-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Merge changes from spirv-llvm-translator-14 14.0.3-2.
+
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 29 Aug 2024 09:54:22 +0200
+
 spirv-llvm-translator-15 (15.0.1-1) unstable; urgency=medium
 
   * New upstream release.  (Closes: #1073426)
+  * Merge changes from spirv-llvm-translator-14 14.0.1-2.
   * Bump Standards-Version to 4.7.0, no changes needed.
 
  -- Andreas Beckmann <anbe@debian.org>  Tue, 18 Jun 2024 14:51:41 +0200
@@ -133,6 +166,32 @@ spirv-llvm-translator-15 (15.0.0-1) unstable; urgency=medium
   * Build with llvm 15.
 
  -- Andreas Beckmann <anbe@debian.org>  Mon, 03 Oct 2022 02:09:37 +0200
+
+spirv-llvm-translator-14 (14.0.4-2) unstable; urgency=medium
+
+  * Update .symbols control file.
+  * Update copyright file.
+
+ -- Andreas Beckmann <anbe@debian.org>  Mon, 09 Sep 2024 21:29:45 +0200
+
+spirv-llvm-translator-14 (14.0.4-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Andreas Beckmann <anbe@debian.org>  Sat, 07 Sep 2024 02:55:08 +0200
+
+spirv-llvm-translator-14 (14.0.3-2) unstable; urgency=medium
+
+  * Update .symbols control file.
+
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 22 Aug 2024 18:07:54 +0200
+
+spirv-llvm-translator-14 (14.0.3-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Update .symbols control file for gcc-14 builds.
+
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 22 Aug 2024 12:08:12 +0200
 
 spirv-llvm-translator-14 (14.0.1-2) unstable; urgency=medium
 
