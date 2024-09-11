@@ -1,11 +1,11 @@
-spirv-llvm-translator-16 (16.0.4-1) UNRELEASED; urgency=medium
+spirv-llvm-translator-16 (16.0.4-1) unstable; urgency=medium
 
   * New upstream release.
   * Merge changes from spirv-llvm-translator-15 15.0.4-2.
   * Update .symbols control file.
   * Update copyright file.
 
- -- Andreas Beckmann <anbe@debian.org>  Wed, 11 Sep 2024 08:48:58 +0200
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 11 Sep 2024 10:49:59 +0200
 
 spirv-llvm-translator-16 (16.0.1-1) unstable; urgency=medium
 
