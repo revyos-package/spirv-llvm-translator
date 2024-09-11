@@ -1,5 +1,6 @@
 Author: Andreas Beckmann <anbe@debian.org>
 Description: reduce the amount of symbols exposed by the library
+Forwarded: https://github.com/KhronosGroup/SPIRV-LLVM-Translator/issues/1963
 
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
