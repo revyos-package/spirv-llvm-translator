@@ -1,9 +1,10 @@
-spirv-llvm-translator-17 (17.0.1-2) UNRELEASED; urgency=medium
+spirv-llvm-translator-17 (17.0.4-1) UNRELEASED; urgency=medium
 
+  * New upstream release.
   * Merge changes from spirv-llvm-translator-16 16.0.4-1.
   * Update .symbols control file.
 
- -- Andreas Beckmann <anbe@debian.org>  Wed, 11 Sep 2024 11:22:37 +0200
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 12 Sep 2024 21:23:49 +0200
 
 spirv-llvm-translator-17 (17.0.1-1) unstable; urgency=medium
 
