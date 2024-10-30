@@ -585,6 +585,11 @@ SPIRVType *LLVMToSPIRVBase::transPointerType(Type *ET, unsigned AddrSpc) {
       ((AddrSpc == SPIRAS_GlobalDevice) || (AddrSpc == SPIRAS_GlobalHost))) {
     return transPointerType(ET, SPIRAS_Global);
   }
+  // Lower function pointer address space to private if
+  // spirv-emit-function-ptr-addr-space is not passed
+  if (AddrSpc == SPIRAS_CodeSectionINTEL &&
+      !BM->shouldEmitFunctionPtrAddrSpace())
+    return transPointerType(ET, SPIRAS_Private);
   if (ST && !ST->isSized()) {
     Op OpCode;
     StringRef STName = ST->getName();
@@ -684,6 +689,10 @@ SPIRVType *LLVMToSPIRVBase::transPointerType(SPIRVType *ET, unsigned AddrSpc) {
   auto Loc = PointeeTypeMap.find(TypeKey);
   if (Loc != PointeeTypeMap.end())
     return Loc->second;
+
+  if (AddrSpc == SPIRAS_CodeSectionINTEL &&
+      !BM->shouldEmitFunctionPtrAddrSpace())
+    return transPointerType(ET, SPIRAS_Private);
 
   SPIRVType *TranslatedTy = BM->addPointerType(
       SPIRSPIRVAddrSpaceMap::map(static_cast<SPIRAddressSpace>(AddrSpc)), ET);
@@ -5063,7 +5072,7 @@ static auto stablePreDominatorTraversal(Function &F, const DominatorTree &DT) {
                                     std::forward_iterator_tag, BasicBlock> {
 
     // The passed DominatorTree; may be unset for end iterators.
-    const DominatorTree *DT;
+    const DominatorTree *DT = nullptr;
 
     // The set of basic blocks already visited in this traversal.
     SmallPtrSet<const BasicBlock *, 4> VisitedBBs;

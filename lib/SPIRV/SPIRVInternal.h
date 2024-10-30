@@ -189,6 +189,7 @@ enum SPIRAddressSpace {
   SPIRAS_GlobalHost,
   SPIRAS_Input,
   SPIRAS_Output,
+  SPIRAS_CodeSectionINTEL,
   SPIRAS_Count,
 };
 
@@ -199,6 +200,8 @@ template <> inline void SPIRVMap<SPIRAddressSpace, std::string>::init() {
   add(SPIRAS_Local, "Local");
   add(SPIRAS_Generic, "Generic");
   add(SPIRAS_Input, "Input");
+  add(SPIRAS_CodeSectionINTEL, "CodeSectionINTEL");
+
   add(SPIRAS_GlobalDevice, "GlobalDevice");
   add(SPIRAS_GlobalHost, "GlobalHost");
 }
@@ -215,6 +218,7 @@ inline void SPIRVMap<SPIRAddressSpace, SPIRVStorageClassKind>::init() {
   add(SPIRAS_Input, StorageClassInput);
   add(SPIRAS_GlobalDevice, StorageClassDeviceOnlyINTEL);
   add(SPIRAS_GlobalHost, StorageClassHostOnlyINTEL);
+  add(SPIRAS_CodeSectionINTEL, StorageClassCodeSectionINTEL);
 }
 typedef SPIRVMap<SPIRAddressSpace, SPIRVStorageClassKind> SPIRSPIRVAddrSpaceMap;
 
@@ -291,6 +295,8 @@ const static char Float[] = "float";
 const static char Half[] = "half";
 const static char Int[] = "int";
 const static char UInt[] = "uint";
+const static char Long[] = "long";
+const static char ULong[] = "ulong";
 const static char Void[] = "void";
 } // namespace kSPIRVImageSampledTypeName
 
