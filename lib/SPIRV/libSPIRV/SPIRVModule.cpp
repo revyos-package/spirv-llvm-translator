@@ -168,6 +168,13 @@ public:
   SPIRVConstant *getLiteralAsConstant(unsigned Literal) override;
   unsigned getNumFunctions() const override { return FuncVec.size(); }
   unsigned getNumVariables() const override { return VariableVec.size(); }
+  std::vector<SPIRVValue *> getFunctionPointers() const override {
+    std::vector<SPIRVValue *> Res;
+    for (auto *C : ConstVec)
+      if (C->getOpCode() == OpConstantFunctionPointerINTEL)
+        Res.emplace_back(C);
+    return Res;
+  }
   SourceLanguage getSourceLanguage(SPIRVWord *Ver = nullptr) const override {
     if (Ver)
       *Ver = SrcLangVer;
@@ -2138,9 +2145,7 @@ std::istream &operator>>(std::istream &I, SPIRVModule &M) {
   }
 
   Decoder >> MI.SPIRVVersion;
-  bool SPIRVVersionIsKnown =
-      static_cast<uint32_t>(VersionNumber::MinimumVersion) <= MI.SPIRVVersion &&
-      MI.SPIRVVersion <= static_cast<uint32_t>(VersionNumber::MaximumVersion);
+  const bool SPIRVVersionIsKnown = isSPIRVVersionKnown(MI.SPIRVVersion);
   if (!M.getErrorLog().checkError(
           SPIRVVersionIsKnown, SPIRVEC_InvalidModule,
           "unsupported SPIR-V version number '" + to_string(MI.SPIRVVersion) +
