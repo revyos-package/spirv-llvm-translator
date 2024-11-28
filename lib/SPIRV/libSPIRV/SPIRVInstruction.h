@@ -1548,6 +1548,16 @@ private:
   SPIRVId Matrix;
 };
 
+class SPIRVSizeOfInstBase : public SPIRVInstTemplateBase {
+protected:
+  VersionNumber getRequiredSPIRVVersion() const override {
+    return VersionNumber::SPIRV_1_1;
+  }
+};
+
+typedef SPIRVInstTemplate<SPIRVSizeOfInstBase, OpSizeOf, true, 4, false>
+    SPIRVSizeOf;
+
 class SPIRVUnary : public SPIRVInstTemplateBase {
 protected:
   void validate() const override {
@@ -2136,10 +2146,15 @@ protected:
   }
 
   void validate() const override {
-    assert((getValueType(Id) == getValueType(Source)) && "Inconsistent type");
-    assert(getValueType(Id)->isTypePointer() && "Invalid type");
-    assert(!(getValueType(Id)->getPointerElementType()->isTypeVoid()) &&
-           "Invalid type");
+    assert(getValueType(Target)->isTypePointer() && "Invalid Target type");
+    assert(getValueType(Source)->isTypePointer() && "Invalid Source type");
+    assert(!(getValueType(Target)->getPointerElementType()->isTypeVoid()) &&
+           "Invalid Target element type");
+    assert(!(getValueType(Source)->getPointerElementType()->isTypeVoid()) &&
+           "Invalid Source element type");
+    assert(getValueType(Target)->getPointerElementType() ==
+               getValueType(Source)->getPointerElementType() &&
+           "Mismatching Target and Source element types");
     SPIRVInstruction::validate();
   }
 
