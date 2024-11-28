@@ -38,7 +38,7 @@ Forwarded: https://github.com/KhronosGroup/SPIRV-LLVM-Translator/issues/1963
  namespace SPIRV {
  
  class SPIRVModule;
-@@ -220,4 +226,6 @@ FunctionPass *createSPIRVLowerBitCastToN
+@@ -250,4 +256,6 @@ FunctionPass *createSPIRVLowerBitCastToN
  
  } // namespace llvm
  
@@ -56,7 +56,7 @@ Forwarded: https://github.com/KhronosGroup/SPIRV-LLVM-Translator/issues/1963
  namespace llvm {
  class IntrinsicInst;
  } // namespace llvm
-@@ -246,4 +248,6 @@ private:
+@@ -279,4 +281,6 @@ private:
  
  } // namespace SPIRV
  
@@ -75,7 +75,7 @@ Forwarded: https://github.com/KhronosGroup/SPIRV-LLVM-Translator/issues/1963
  
 --- a/lib/SPIRV/libSPIRV/SPIRVModule.cpp
 +++ b/lib/SPIRV/libSPIRV/SPIRVModule.cpp
-@@ -2279,6 +2279,7 @@ bool isSpirvBinary(const std::string &Im
+@@ -2284,6 +2284,7 @@ bool isSpirvBinary(const std::string &Im
  
  #ifdef _SPIRV_SUPPORT_TEXT_FMT
  
@@ -83,7 +83,7 @@ Forwarded: https://github.com/KhronosGroup/SPIRV-LLVM-Translator/issues/1963
  bool convertSpirv(std::istream &IS, std::ostream &OS, std::string &ErrMsg,
                    bool FromText, bool ToText) {
    auto SaveOpt = SPIRVUseTextFormat;
-@@ -2315,6 +2316,7 @@ bool isSpirvText(const std::string &Img)
+@@ -2320,6 +2321,7 @@ bool isSpirvText(const std::string &Img)
    return Magic == MagicNumber;
  }
  
