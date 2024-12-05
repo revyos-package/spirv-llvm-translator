@@ -1,3 +1,9 @@
+spirv-llvm-translator-19 (19.1.0-2) UNRELEASED; urgency=medium
+
+  * control: Fix a typo in llvm-spirv-19 description.
+
+ -- Timo Aaltonen <tjaalton@debian.org>  Thu, 05 Dec 2024 10:59:27 +0200
+
 spirv-llvm-translator-19 (19.1.0-1) unstable; urgency=medium
 
   * New upstream release.

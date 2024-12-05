@@ -69,4 +69,4 @@ Description: bi-directional translator for LLVM/SPIRV
  package includes a library and a tool for translation between LLVM IR
  and SPIR-V.
  .
- This package includes the llvm-spirv-18 binary.
+ This package includes the llvm-spirv-19 binary.
