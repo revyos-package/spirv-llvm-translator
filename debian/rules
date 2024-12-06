@@ -28,6 +28,8 @@ ifeq ($(DEB_HOST_ARCH_ENDIAN),little)
 	$(ignore_test_failures)env LD_LIBRARY_PATH=$(LD_LIBRARY_PATH):$(CURDIR)/build/lib/SPIRV dh_auto_test
 endif
 
+override_dh_gencontrol:
+	dh_gencontrol -- -V'llvm:major=$(LLVM_VERSION)'
 
 update-symbols:
 	pkgkde-getbuildlogs
