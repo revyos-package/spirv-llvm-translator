@@ -1,3 +1,9 @@
+spirv-llvm-translator-17 (17.0.7-1) UNRELEASED; urgency=medium
+
+  * New upstream release.
+
+ -- Andreas Beckmann <anbe@debian.org>  Sat, 07 Dec 2024 22:11:43 +0100
+
 spirv-llvm-translator-17 (17.0.4-1) unstable; urgency=medium
 
   * New upstream release.
