@@ -1,6 +1,8 @@
 spirv-llvm-translator-15 (15.0.7-1) UNRELEASED; urgency=medium
 
   * New upstream release.
+  * Merge changes from spirv-llvm-translator-14 14.0.7-1.
+  * Update .symbols control file.
 
  -- Andreas Beckmann <anbe@debian.org>  Sat, 07 Dec 2024 20:59:18 +0100
 
@@ -93,6 +95,20 @@ spirv-llvm-translator-15 (15.0.0-1) unstable; urgency=medium
   * Build with llvm 15.
 
  -- Andreas Beckmann <anbe@debian.org>  Mon, 03 Oct 2022 02:09:37 +0200
+
+spirv-llvm-translator-14 (14.0.7-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Add substvar for the llvm major version.
+
+ -- Andreas Beckmann <anbe@debian.org>  Sat, 07 Dec 2024 00:31:38 +0100
+
+spirv-llvm-translator-14 (14.0.6-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Update .symbols control file.
+
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 28 Nov 2024 22:26:06 +0100
 
 spirv-llvm-translator-14 (14.0.4-2) unstable; urgency=medium
 
