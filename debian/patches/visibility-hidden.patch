@@ -38,7 +38,7 @@ Forwarded: https://github.com/KhronosGroup/SPIRV-LLVM-Translator/issues/1963
  namespace SPIRV {
  
  class SPIRVModule;
-@@ -227,4 +233,6 @@ FunctionPass *createSPIRVLowerBitCastToN
+@@ -256,4 +262,6 @@ FunctionPass *createSPIRVLowerBitCastToN
  
  } // namespace llvm
  

@@ -40,7 +40,7 @@ Package: libllvmspirvlib-17-dev
 Architecture: any
 Multi-Arch: same
 Depends:
- libllvmspirvlib17 (= ${binary:Version}),
+ libllvmspirvlib${llvm:major} (= ${binary:Version}),
  ${misc:Depends}
 Conflicts:
  libllvmspirvlib-x.y-dev,
@@ -61,7 +61,7 @@ Description: bi-directional translator for LLVM/SPIRV -- development files
 Package: llvm-spirv-17
 Architecture: any
 Depends:
- libllvmspirvlib17 (= ${binary:Version}),
+ libllvmspirvlib${llvm:major} (= ${binary:Version}),
  ${shlibs:Depends},
  ${misc:Depends}
 Description: bi-directional translator for LLVM/SPIRV
@@ -69,4 +69,4 @@ Description: bi-directional translator for LLVM/SPIRV
  package includes a library and a tool for translation between LLVM IR
  and SPIR-V.
  .
- This package includes the llvm-spirv-17 binary.
+ This package includes the llvm-spirv-${llvm:major} binary.
