@@ -56,7 +56,7 @@ Forwarded: https://github.com/KhronosGroup/SPIRV-LLVM-Translator/issues/1963
  namespace llvm {
  class IntrinsicInst;
  } // namespace llvm
-@@ -255,4 +257,6 @@ private:
+@@ -288,4 +290,6 @@ private:
  
  } // namespace SPIRV
  
@@ -75,7 +75,7 @@ Forwarded: https://github.com/KhronosGroup/SPIRV-LLVM-Translator/issues/1963
  
 --- a/lib/SPIRV/libSPIRV/SPIRVModule.cpp
 +++ b/lib/SPIRV/libSPIRV/SPIRVModule.cpp
-@@ -2275,6 +2275,7 @@ bool isSpirvBinary(const std::string &Im
+@@ -2280,6 +2280,7 @@ bool isSpirvBinary(const std::string &Im
  
  #ifdef _SPIRV_SUPPORT_TEXT_FMT
  
@@ -83,7 +83,7 @@ Forwarded: https://github.com/KhronosGroup/SPIRV-LLVM-Translator/issues/1963
  bool convertSpirv(std::istream &IS, std::ostream &OS, std::string &ErrMsg,
                    bool FromText, bool ToText) {
    auto SaveOpt = SPIRVUseTextFormat;
-@@ -2311,6 +2312,7 @@ bool isSpirvText(const std::string &Img)
+@@ -2316,6 +2317,7 @@ bool isSpirvText(const std::string &Img)
    return Magic == MagicNumber;
  }
  
