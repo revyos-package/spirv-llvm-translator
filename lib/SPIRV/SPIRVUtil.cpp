@@ -813,6 +813,9 @@ CallInst *mutateCallInst(
   NewCI->copyMetadata(*CI);
   NewCI->setAttributes(CI->getAttributes());
   NewCI->setTailCall(CI->isTailCall());
+  if (isa<FPMathOperator>(CI))
+    NewCI->setFastMathFlags(CI->getFastMathFlags());
+
   if (CI->hasFnAttr("fpbuiltin-max-error")) {
     auto Attr = CI->getFnAttr("fpbuiltin-max-error");
     NewCI->addFnAttr(Attr);
@@ -1497,6 +1500,11 @@ std::string getSPIRVImageSampledTypeName(SPIRVType *Ty) {
       else
         return kSPIRVImageSampledTypeName::UInt;
     }
+    if (Ty->getIntegerBitWidth() == 64) {
+      if (static_cast<SPIRVTypeInt *>(Ty)->isSigned())
+        return kSPIRVImageSampledTypeName::Long;
+      return kSPIRVImageSampledTypeName::ULong;
+    }
     break;
   case OpTypeFloat:
     switch (Ty->getFloatBitWidth()) {
@@ -1528,6 +1536,9 @@ Type *getLLVMTypeForSPIRVImageSampledTypePostfix(StringRef Postfix,
   if (Postfix == kSPIRVImageSampledTypeName::Int ||
       Postfix == kSPIRVImageSampledTypeName::UInt)
     return Type::getInt32Ty(Ctx);
+  if (Postfix == kSPIRVImageSampledTypeName::Long ||
+      Postfix == kSPIRVImageSampledTypeName::ULong)
+    return Type::getInt64Ty(Ctx);
   llvm_unreachable("Invalid sampled type postfix");
   return nullptr;
 }
@@ -2219,7 +2230,7 @@ public:
 
   void init(StringRef UniqUnmangledName) override {
     UnmangledName = UniqUnmangledName.str();
-    switch (OC) {
+    switch (static_cast<unsigned>(OC)) {
     case OpConvertUToF:
     case OpUConvert:
     case OpSatConvertUToS:
@@ -2384,6 +2395,10 @@ public:
       }
       break;
     }
+    case internal::OpConvertHandleToImageINTEL:
+    case internal::OpConvertHandleToSamplerINTEL:
+      addUnsignedArg(0);
+      break;
     default:;
       // No special handling is needed
     }
