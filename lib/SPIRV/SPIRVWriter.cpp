@@ -578,6 +578,11 @@ SPIRVType *LLVMToSPIRVBase::transPointerType(Type *ET, unsigned AddrSpc) {
       ((AddrSpc == SPIRAS_GlobalDevice) || (AddrSpc == SPIRAS_GlobalHost))) {
     return transPointerType(ET, SPIRAS_Global);
   }
+  // Lower function pointer address space to private if
+  // spirv-emit-function-ptr-addr-space is not passed
+  if (AddrSpc == SPIRAS_CodeSectionINTEL &&
+      !BM->shouldEmitFunctionPtrAddrSpace())
+    return transPointerType(ET, SPIRAS_Private);
   if (ST && !ST->isSized()) {
     Op OpCode;
     StringRef STName = ST->getName();
@@ -662,6 +667,10 @@ SPIRVType *LLVMToSPIRVBase::transPointerType(SPIRVType *ET, unsigned AddrSpc) {
   auto Loc = PointeeTypeMap.find(TypeKey);
   if (Loc != PointeeTypeMap.end())
     return Loc->second;
+
+  if (AddrSpc == SPIRAS_CodeSectionINTEL &&
+      !BM->shouldEmitFunctionPtrAddrSpace())
+    return transPointerType(ET, SPIRAS_Private);
 
   SPIRVType *TranslatedTy = BM->addPointerType(
       SPIRSPIRVAddrSpaceMap::map(static_cast<SPIRAddressSpace>(AddrSpc)), ET);
@@ -2824,7 +2833,8 @@ bool LLVMToSPIRVBase::transDecoration(Value *V, SPIRVValue *BV) {
     if (Opcode == Instruction::FAdd || Opcode == Instruction::FSub ||
         Opcode == Instruction::FMul || Opcode == Instruction::FDiv ||
         Opcode == Instruction::FRem ||
-        ((Opcode == Instruction::FNeg || Opcode == Instruction::FCmp) &&
+        ((Opcode == Instruction::FNeg || Opcode == Instruction::FCmp ||
+          BV->isExtInst()) &&
          BM->isAllowedToUseVersion(VersionNumber::SPIRV_1_6))) {
       FastMathFlags FMF = BVF->getFastMathFlags();
       SPIRVWord M{0};
@@ -2851,8 +2861,52 @@ bool LLVMToSPIRVBase::transDecoration(Value *V, SPIRVValue *BV) {
           }
         }
       }
-      if (M != 0)
+      // Handle nofpclass attribute. Nothing to do if fast math flag is already
+      // set.
+      if ((BV->isExtInst() &&
+           static_cast<SPIRVExtInst *>(BV)->getExtSetKind() ==
+               SPIRVEIS_OpenCL) &&
+          BM->isAllowedToUseVersion(VersionNumber::SPIRV_1_6) &&
+          !(M & FPFastMathModeFastMask)) {
+        auto *F = cast<CallInst>(V)->getCalledFunction();
+        auto FAttrs = F->getAttributes();
+        AttributeSet RetAttrs = FAttrs.getRetAttrs();
+        if (RetAttrs.hasAttribute(Attribute::NoFPClass)) {
+          FPClassTest RetTest =
+              RetAttrs.getAttribute(Attribute::NoFPClass).getNoFPClass();
+          AttributeSet RetAttrs = FAttrs.getRetAttrs();
+          // Only Nan and Inf tests are representable in SPIR-V now.
+          bool ToAddNoNan = RetTest & fcNan;
+          bool ToAddNoInf = RetTest & fcInf;
+          if (ToAddNoNan || ToAddNoInf) {
+            const auto *FT = F->getFunctionType();
+            const size_t NumParams = FT->getNumParams();
+            for (size_t I = 0; I != NumParams; ++I) {
+              if (!FT->getParamType(I)->isFloatTy())
+                continue;
+              if (!F->hasParamAttribute(I, Attribute::NoFPClass)) {
+                ToAddNoNan = false;
+                ToAddNoInf = false;
+                break;
+              }
+              FPClassTest ArgTest =
+                  FAttrs.getParamAttr(I, Attribute::NoFPClass).getNoFPClass();
+              ToAddNoNan = ToAddNoNan && static_cast<bool>(ArgTest & fcNan);
+              ToAddNoInf = ToAddNoInf && static_cast<bool>(ArgTest & fcInf);
+            }
+          }
+          if (ToAddNoNan)
+            M |= FPFastMathModeNotNaNMask;
+          if (ToAddNoInf)
+            M |= FPFastMathModeNotInfMask;
+        }
+      }
+      if (M != 0) {
         BV->setFPFastMathMode(M);
+        if (Opcode == Instruction::FNeg || Opcode == Instruction::FCmp ||
+            BV->isExtInst())
+          BM->setMinSPIRVVersion(VersionNumber::SPIRV_1_6);
+      }
     }
   }
   if (Instruction *Inst = dyn_cast<Instruction>(V)) {
