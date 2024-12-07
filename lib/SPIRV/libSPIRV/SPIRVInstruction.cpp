@@ -146,6 +146,8 @@ SPIRVInstruction::getOperandTypes(const std::vector<SPIRVValue *> &Ops) {
     SPIRVType *Ty = nullptr;
     if (I->getOpCode() == OpFunction)
       Ty = reinterpret_cast<SPIRVFunction *>(I)->getFunctionType();
+    else if (I->getOpCode() == OpTypeCooperativeMatrixKHR)
+      Ty = reinterpret_cast<SPIRVType *>(I);
     else
       Ty = I->getType();
 
@@ -284,6 +286,11 @@ SPIRVInstruction *createInstFromSpecConstantOp(SPIRVSpecConstantOp *Inst) {
   auto OC = static_cast<Op>(Ops[0]);
   assert(isSpecConstantOpAllowedOp(OC) &&
          "Op code not allowed for OpSpecConstantOp");
+  auto *Const = Inst->getOperand(1);
+  // LLVM would eliminate a bitcast from a function pointer in a constexpr
+  // context. Cut this short here to avoid necessity to align address spaces
+  if (OC == OpBitcast && Const->getOpCode() == OpConstantFunctionPointerINTEL)
+    return static_cast<SPIRVInstruction *>(Const);
   Ops.erase(Ops.begin(), Ops.begin() + 1);
   auto *BM = Inst->getModule();
   auto *RetInst = SPIRVInstTemplateBase::create(

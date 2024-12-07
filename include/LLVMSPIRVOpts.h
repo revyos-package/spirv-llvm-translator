@@ -69,6 +69,27 @@ enum class VersionNumber : uint32_t {
   MaximumVersion = SPIRV_1_6
 };
 
+inline constexpr std::string_view formatVersionNumber(uint32_t Version) {
+  switch (Version) {
+  case static_cast<uint32_t>(VersionNumber::SPIRV_1_0):
+    return "1.0";
+  case static_cast<uint32_t>(VersionNumber::SPIRV_1_1):
+    return "1.1";
+  case static_cast<uint32_t>(VersionNumber::SPIRV_1_2):
+    return "1.2";
+  case static_cast<uint32_t>(VersionNumber::SPIRV_1_3):
+    return "1.3";
+  case static_cast<uint32_t>(VersionNumber::SPIRV_1_4):
+    return "1.4";
+  }
+  return "unknown";
+}
+
+inline bool isSPIRVVersionKnown(uint32_t Ver) {
+  return Ver >= static_cast<uint32_t>(VersionNumber::MinimumVersion) &&
+         Ver <= static_cast<uint32_t>(VersionNumber::MaximumVersion);
+}
+
 enum class ExtensionID : uint32_t {
   First,
 #define EXT(X) X,
@@ -200,6 +221,14 @@ public:
     PreserveOCLKernelArgTypeMetadataThroughString = Value;
   }
 
+  bool shouldEmitFunctionPtrAddrSpace() const noexcept {
+    return EmitFunctionPtrAddrSpace;
+  }
+
+  void setEmitFunctionPtrAddrSpace(bool Value) noexcept {
+    EmitFunctionPtrAddrSpace = Value;
+  }
+
 private:
   // Common translation options
   VersionNumber MaxVersion = VersionNumber::MaximumVersion;
@@ -240,6 +269,10 @@ private:
   // Add a workaround to preserve OpenCL kernel_arg_type and
   // kernel_arg_type_qual metadata through OpString
   bool PreserveOCLKernelArgTypeMetadataThroughString = false;
+
+  // Controls if CodeSectionINTEL can be emitted and consumed with a dedicated
+  // address space
+  bool EmitFunctionPtrAddrSpace = false;
 
   bool PreserveAuxData = false;
 };

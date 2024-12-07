@@ -1541,6 +1541,16 @@ private:
   SPIRVId Matrix;
 };
 
+class SPIRVSizeOfInstBase : public SPIRVInstTemplateBase {
+protected:
+  SPIRVWord getRequiredSPIRVVersion() const override {
+    return static_cast<SPIRVWord>(VersionNumber::SPIRV_1_1);
+  }
+};
+
+typedef SPIRVInstTemplate<SPIRVSizeOfInstBase, OpSizeOf, true, 4, false>
+    SPIRVSizeOf;
+
 class SPIRVUnary : public SPIRVInstTemplateBase {
 protected:
   void validate() const override {
@@ -2039,6 +2049,31 @@ protected:
   SPIRVId Operand;
 };
 
+class SPIRVCopyLogical : public SPIRVInstruction {
+public:
+  const static Op OC = OpCopyLogical;
+
+  // Complete constructor
+  SPIRVCopyLogical(SPIRVType *TheType, SPIRVId TheId, SPIRVValue *TheOperand,
+                   SPIRVBasicBlock *TheBB)
+      : SPIRVInstruction(4, OC, TheType, TheId, TheBB),
+        Operand(TheOperand->getId()) {
+    validate();
+    assert(TheBB && "Invalid BB");
+  }
+  // Incomplete constructor
+  SPIRVCopyLogical() : SPIRVInstruction(OC), Operand(SPIRVID_INVALID) {}
+
+  SPIRVValue *getOperand() { return getValue(Operand); }
+  std::vector<SPIRVValue *> getOperands() override { return {getOperand()}; }
+
+protected:
+  _SPIRV_DEF_ENCDEC3(Type, Id, Operand)
+
+  void validate() const override { SPIRVInstruction::validate(); }
+  SPIRVId Operand;
+};
+
 class SPIRVCopyMemory : public SPIRVInstruction, public SPIRVMemoryAccess {
 public:
   const static Op OC = OpCopyMemory;
@@ -2081,10 +2116,15 @@ protected:
   }
 
   void validate() const override {
-    assert((getValueType(Id) == getValueType(Source)) && "Inconsistent type");
-    assert(getValueType(Id)->isTypePointer() && "Invalid type");
-    assert(!(getValueType(Id)->getPointerElementType()->isTypeVoid()) &&
-           "Invalid type");
+    assert(getValueType(Target)->isTypePointer() && "Invalid Target type");
+    assert(getValueType(Source)->isTypePointer() && "Invalid Source type");
+    assert(!(getValueType(Target)->getPointerElementType()->isTypeVoid()) &&
+           "Invalid Target element type");
+    assert(!(getValueType(Source)->getPointerElementType()->isTypeVoid()) &&
+           "Invalid Source element type");
+    assert(getValueType(Target)->getPointerElementType() ==
+               getValueType(Source)->getPointerElementType() &&
+           "Mismatching Target and Source element types");
     SPIRVInstruction::validate();
   }
 
@@ -3801,6 +3841,67 @@ protected:
 };
 #define _SPIRV_OP(x, ...) typedef SPIRVReadClockKHRInstBase<Op##x> SPIRV##x;
 _SPIRV_OP(ReadClockKHR)
+#undef _SPIRV_OP
+
+template <Op OC> class SPIRVBindlessImagesInstBase : public SPIRVUnaryInst<OC> {
+protected:
+  SPIRVCapVec getRequiredCapability() const override {
+    return getVec(internal::CapabilityBindlessImagesINTEL);
+  }
+
+  std::optional<ExtensionID> getRequiredExtension() const override {
+    return ExtensionID::SPV_INTEL_bindless_images;
+  }
+
+  void validate() const override {
+    SPIRVUnary::validate();
+
+    // validate is a const method, whilst getOperand is non-const method
+    // because it may call a method of class Module that may modify LiteralMap
+    // of Module field. That modification is not impacting validate method for
+    // these instructions, so const_cast is safe here.
+    using SPVBindlessImagesInst = SPIRVBindlessImagesInstBase<OC>;
+    SPIRVValue *Input =
+        const_cast<SPVBindlessImagesInst *>(this)->getOperand(0);
+    SPIRVType *InCompTy = Input->getType();
+
+    auto StringAddrMod = [](SPIRVAddressingModelKind Kind) -> std::string {
+      if (Kind == AddressingModelPhysical32)
+        return std::string("Physical32");
+      if (Kind == AddressingModelPhysical64)
+        return std::string("Physical64");
+      return std::string("AddressingModel: ") + std::to_string(Kind);
+    };
+
+    auto InstName = OpCodeNameMap::map(OC);
+    auto AddrMod = this->getModule()->getAddressingModel();
+    SPIRVErrorLog &SPVErrLog = this->getModule()->getErrorLog();
+    SPVErrLog.checkError(
+        (InCompTy->isTypeInt(32) && AddrMod == AddressingModelPhysical32) ||
+            (InCompTy->isTypeInt(64) && AddrMod == AddressingModelPhysical64),
+        SPIRVEC_InvalidInstruction,
+        InstName +
+            "\nParameter value must be a 32-bit scalar in case of "
+            "Physical32 addressing model or a 64-bit scalar in case of "
+            "Physical64 addressing model\n"
+            "Type size: " +
+            std::to_string(InCompTy->getBitWidth()) +
+            "\nAddressing model: " + StringAddrMod(AddrMod) + "\n");
+
+    SPIRVType *ResTy = this->getType();
+    SPVErrLog.checkError(
+        (ResTy->isTypeImage() && OC == internal::OpConvertHandleToImageINTEL) ||
+            (ResTy->isTypeSampler() &&
+             OC == internal::OpConvertHandleToSamplerINTEL),
+        SPIRVEC_InvalidInstruction,
+        InstName + "\nIncorrect return type of the instruction must be "
+                   "image/sampler\n");
+  }
+};
+#define _SPIRV_OP(x)                                                           \
+  typedef SPIRVBindlessImagesInstBase<internal::Op##x> SPIRV##x;
+_SPIRV_OP(ConvertHandleToImageINTEL)
+_SPIRV_OP(ConvertHandleToSamplerINTEL)
 #undef _SPIRV_OP
 
 } // namespace SPIRV
