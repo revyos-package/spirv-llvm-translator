@@ -615,7 +615,9 @@ void SPIRVExecutionMode::decode(std::istream &I) {
   getDecoder(I) >> Target >> ExecMode;
   switch (static_cast<uint32_t>(ExecMode)) {
   case ExecutionModeLocalSize:
+  case ExecutionModeLocalSizeId:
   case ExecutionModeLocalSizeHint:
+  case ExecutionModeLocalSizeHintId:
   case ExecutionModeMaxWorkgroupSizeINTEL:
     WordLiterals.resize(3);
     break;
@@ -634,6 +636,8 @@ void SPIRVExecutionMode::decode(std::istream &I) {
   case ExecutionModeSharedLocalMemorySizeINTEL:
   case ExecutionModeNamedBarrierCountINTEL:
   case ExecutionModeSubgroupSize:
+  case ExecutionModeSubgroupsPerWorkgroup:
+  case ExecutionModeSubgroupsPerWorkgroupId:
   case ExecutionModeMaxWorkDimINTEL:
   case ExecutionModeNumSIMDWorkitemsINTEL:
   case ExecutionModeSchedulerTargetFmaxMhzINTEL:
