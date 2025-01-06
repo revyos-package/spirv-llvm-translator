@@ -5,6 +5,7 @@ export DEB_BUILD_MAINT_OPTIONS	 = hardening=+all
 include /usr/share/dpkg/pkg-info.mk
 
 LLVM_VERSION	 = $(shell sed -n -r '/^Build/,/^$$/s/.*llvm-([0-9]+)-dev.*/\1/p' debian/control)
+LLVM_SOVERSION	 = $(LLVM_VERSION)
 
 %:
 	dh $@ --builddir build/
@@ -29,7 +30,9 @@ ifeq ($(DEB_HOST_ARCH_ENDIAN),little)
 endif
 
 override_dh_gencontrol:
-	dh_gencontrol -- -V'llvm:major=$(LLVM_VERSION)'
+	dh_gencontrol -- \
+		-V'llvm:major=$(LLVM_VERSION)' \
+		-V'llvm:soversion=$(LLVM_SOVERSION)' \
 
 update-symbols:
 	pkgkde-getbuildlogs

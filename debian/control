@@ -40,7 +40,7 @@ Package: libllvmspirvlib-17-dev
 Architecture: any
 Multi-Arch: same
 Depends:
- libllvmspirvlib${llvm:major} (= ${binary:Version}),
+ libllvmspirvlib${llvm:soversion} (= ${binary:Version}),
  ${misc:Depends}
 Conflicts:
  libllvmspirvlib-x.y-dev,
@@ -61,7 +61,7 @@ Description: bi-directional translator for LLVM/SPIRV -- development files
 Package: llvm-spirv-17
 Architecture: any
 Depends:
- libllvmspirvlib${llvm:major} (= ${binary:Version}),
+ libllvmspirvlib${llvm:soversion} (= ${binary:Version}),
  ${shlibs:Depends},
  ${misc:Depends}
 Description: bi-directional translator for LLVM/SPIRV
