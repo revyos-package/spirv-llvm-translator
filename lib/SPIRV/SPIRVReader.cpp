@@ -3109,6 +3109,14 @@ void SPIRVToLLVM::transFunctionAttrs(SPIRVFunction *BF, Function *F) {
     SPIRVWord MaxOffset = 0;
     if (BA->hasDecorate(DecorationMaxByteOffset, 0, &MaxOffset))
       Builder.addDereferenceableAttr(MaxOffset);
+    else {
+      SPIRVId MaxOffsetId;
+      if (BA->hasDecorateId(DecorationMaxByteOffsetId, 0, &MaxOffsetId)) {
+        if (auto MaxOffsetVal = transIdAsConstant(MaxOffsetId)) {
+          Builder.addDereferenceableAttr(*MaxOffsetVal);
+        }
+      }
+    }
     if (auto Alignment = getAlignment(BA)) {
       Builder.addAlignmentAttr(*Alignment);
     }
@@ -4370,11 +4378,29 @@ bool SPIRVToLLVM::transMetadata() {
     if (auto EM = BF->getExecutionMode(ExecutionModeLocalSize)) {
       F->setMetadata(kSPIR2MD::WGSize,
                      getMDNodeStringIntVec(Context, EM->getLiterals()));
+    } else if (auto *EM = BF->getExecutionModeId(ExecutionModeLocalSizeId)) {
+      std::vector<SPIRVWord> Values;
+      for (const auto Id : EM->getLiterals()) {
+        if (auto Val = transIdAsConstant(Id)) {
+          Values.emplace_back(static_cast<SPIRVWord>(*Val));
+        }
+      }
+      F->setMetadata(kSPIR2MD::WGSize, getMDNodeStringIntVec(Context, Values));
     }
     // Generate metadata for work_group_size_hint
     if (auto EM = BF->getExecutionMode(ExecutionModeLocalSizeHint)) {
       F->setMetadata(kSPIR2MD::WGSizeHint,
                      getMDNodeStringIntVec(Context, EM->getLiterals()));
+    } else if (auto *EM =
+                   BF->getExecutionModeId(ExecutionModeLocalSizeHintId)) {
+      std::vector<SPIRVWord> Values;
+      for (const auto Id : EM->getLiterals()) {
+        if (auto Val = transIdAsConstant(Id)) {
+          Values.emplace_back(static_cast<SPIRVWord>(*Val));
+        }
+      }
+      F->setMetadata(kSPIR2MD::WGSizeHint,
+                     getMDNodeStringIntVec(Context, Values));
     }
     // Generate metadata for vec_type_hint
     if (auto EM = BF->getExecutionMode(ExecutionModeVecTypeHint)) {
@@ -4394,6 +4420,25 @@ bool SPIRVToLLVM::transMetadata() {
     if (auto *EM = BF->getExecutionMode(ExecutionModeSubgroupSize)) {
       auto SizeMD = ConstantAsMetadata::get(getUInt32(M, EM->getLiterals()[0]));
       F->setMetadata(kSPIR2MD::SubgroupSize, MDNode::get(*Context, SizeMD));
+    }
+    // Generate metadata for SubgroupsPerWorkgroup/SubgroupsPerWorkgroupId.
+    auto EmitSubgroupsPerWorkgroupMD = [this, F](SPIRVExecutionModeKind EMK,
+                                                 uint64_t Value) {
+      NamedMDNode *ExecModeMD =
+          M->getOrInsertNamedMetadata(kSPIRVMD::ExecutionMode);
+      SmallVector<Metadata *, 2> OperandVec;
+      OperandVec.push_back(ConstantAsMetadata::get(F));
+      OperandVec.push_back(ConstantAsMetadata::get(getUInt32(M, EMK)));
+      OperandVec.push_back(ConstantAsMetadata::get(getUInt32(M, Value)));
+      ExecModeMD->addOperand(MDNode::get(*Context, OperandVec));
+    };
+    if (auto *EM = BF->getExecutionMode(ExecutionModeSubgroupsPerWorkgroup)) {
+      EmitSubgroupsPerWorkgroupMD(EM->getExecutionMode(), EM->getLiterals()[0]);
+    } else if (auto *EM = BF->getExecutionModeId(
+                   ExecutionModeSubgroupsPerWorkgroupId)) {
+      if (auto Val = transIdAsConstant(EM->getLiterals()[0])) {
+        EmitSubgroupsPerWorkgroupMD(EM->getExecutionMode(), *Val);
+      }
     }
     // Generate metadata for max_work_group_size
     if (auto EM = BF->getExecutionMode(ExecutionModeMaxWorkgroupSizeINTEL)) {
