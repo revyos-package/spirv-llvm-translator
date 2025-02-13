@@ -275,6 +275,13 @@ static cl::opt<SPIRV::BuiltinFormat> SPIRVBuiltinFormat(
         clEnumValN(SPIRV::BuiltinFormat::Global, "global",
                    "Use globals to represent SPIR-V builtin variables")));
 
+static cl::opt<bool> SPIRVUseLLVMSPIRVBackendTarget(
+    "spirv-use-llvm-backend-target",
+    cl::desc("Convert LLVM to SPIR-V using the LLVM SPIR-V Backend target if "
+             "it's available. Otherwise has no effect. Default behavior is to "
+             "don't use the LLVM SPIR-V Backend target."),
+    cl::init(false));
+
 static std::string removeExt(const std::string &FileName) {
   size_t Pos = FileName.find_last_of(".");
   if (Pos != std::string::npos)
@@ -703,7 +710,8 @@ int main(int Ac, char **Av) {
   sys::PrintStackTraceOnErrorSignal(Av[0]);
   PrettyStackTraceProgram X(Ac, Av);
 
-  // SPIR-V Backend might be available, and so we have a clash of command line
+#if defined(LLVM_SPIRV_BACKEND_TARGET_PRESENT)
+  // SPIR-V Backend is available, and so we have a clash of command line
   // argument names, because both products use "spirv-ext" name. Let's rename
   // the command line option coming from SPIR-V Backend, as it's not supposed to
   // be used by a user anyway. After that we may safely add the instance of
@@ -716,6 +724,7 @@ int main(int Ac, char **Av) {
     OptToDisable->setArgStr("spirv-ext-coming-from-spirv-backend");
     OptToDisable->setHiddenFlag(cl::Hidden);
   }
+#endif
   cl::list<std::string> SPVExt(
       "spirv-ext", cl::CommaSeparated,
       cl::desc("Specify list of allowed/disallowed extensions"),
@@ -737,6 +746,9 @@ int main(int Ac, char **Av) {
     return Ret;
 
   SPIRV::TranslatorOpts Opts(MaxSPIRVVersion, ExtensionsStatus);
+#if defined(LLVM_SPIRV_BACKEND_TARGET_PRESENT)
+  Opts.setUseLLVMTarget(SPIRVUseLLVMSPIRVBackendTarget);
+#endif
 
   if (ExtInst.getNumOccurrences() != 0) {
     if (ExtInst.getNumOccurrences() > 1) {

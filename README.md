@@ -1,7 +1,7 @@
 # LLVM/SPIR-V Bi-Directional Translator
 
-[![Out-of-tree build & tests](https://github.com/KhronosGroup/SPIRV-LLVM-Translator/actions/workflows/check-out-of-tree-build.yml/badge.svg?branch=llvm_release_190&event=schedule)](https://github.com/KhronosGroup/SPIRV-LLVM-Translator/actions?query=workflow%3A%22Out-of-tree+build+%26+tests%22+event%3Aschedule)
-[![In-tree build & tests](https://github.com/KhronosGroup/SPIRV-LLVM-Translator/actions/workflows/check-in-tree-build.yml/badge.svg?branch=llvm_release_190&event=schedule)](https://github.com/KhronosGroup/SPIRV-LLVM-Translator/actions?query=workflow%3A%22In-tree+build+%26+tests%22+event%3Aschedule)
+[![Out-of-tree build & tests](https://github.com/KhronosGroup/SPIRV-LLVM-Translator/actions/workflows/check-out-of-tree-build.yml/badge.svg?branch=llvm_release_200&event=schedule)](https://github.com/KhronosGroup/SPIRV-LLVM-Translator/actions?query=workflow%3A%22Out-of-tree+build+%26+tests%22+event%3Aschedule)
+[![In-tree build & tests](https://github.com/KhronosGroup/SPIRV-LLVM-Translator/actions/workflows/check-in-tree-build.yml/badge.svg?branch=llvm_release_200&event=schedule)](https://github.com/KhronosGroup/SPIRV-LLVM-Translator/actions?query=workflow%3A%22In-tree+build+%26+tests%22+event%3Aschedule)
 
 This repository contains source code for the LLVM/SPIR-V Bi-Directional Translator, a library and tool for translation between LLVM IR and [SPIR-V](https://www.khronos.org/registry/spir-v/).
 This project currently only supports the OpenCL/compute "flavour" of SPIR-V: it consumes and produces SPIR-V modules that declare the `Kernel` capability.
@@ -30,7 +30,7 @@ The translator can be built with the latest(nightly) package of LLVM. For Ubuntu
 wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
 sudo add-apt-repository "deb http://apt.llvm.org/xenial/ llvm-toolchain-xenial main"
 sudo apt-get update
-sudo apt-get install llvm-19-dev llvm-19-tools clang-19 libclang-19-dev
+sudo apt-get install llvm-20-dev llvm-20-tools clang-20 libclang-20-dev
 ```
 The installed version of LLVM will be used by default for out-of-tree build of the translator.
 ```
@@ -97,6 +97,7 @@ Building clang from sources takes time and resources and it can be avoided:
 ### Build with SPIRV-Tools
 
 The translator can use [SPIRV-Tools](https://github.com/KhronosGroup/SPIRV-Tools) to generate assembly with widely adopted syntax.
+This feature can be enabled by passing `-DLLVM_SPIRV_ENABLE_LIBSPIRV_DIS=ON` option.
 If SPIRV-Tools have been installed prior to the build it will be detected and
 used automatically. However it is also possible to enable use of SPIRV-Tools
 from a custom location using the following instructions:
@@ -156,7 +157,7 @@ make test
 ```
 This requires that the `-DLLVM_SPIRV_INCLUDE_TESTS=ON` argument is
 passed to CMake during the build step. Additionally,
-`-DLLVM_EXTERNAL_LIT="/usr/lib/llvm-19/build/utils/lit/lit.py"` is
+`-DLLVM_EXTERNAL_LIT="/usr/lib/llvm-20/build/utils/lit/lit.py"` is
 needed when building with a pre-installed version of LLVM.
 
 The translator test suite can be disabled by passing

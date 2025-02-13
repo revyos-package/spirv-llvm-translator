@@ -51,7 +51,6 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
 
-using namespace std;
 using namespace SPIRVDebug::Operand;
 
 namespace SPIRV {
@@ -331,7 +330,7 @@ DIType *SPIRVToLLVMDbgTran::transTypePointer(const SPIRVExtInst *DebugInst) {
         PointeeTy, BM->getAddressingModel() * 32, 0, AS);
 
   if (Flags & SPIRVDebug::FlagIsObjectPointer)
-    Ty = getDIBuilder(DebugInst).createObjectPointerType(Ty);
+    Ty = getDIBuilder(DebugInst).createObjectPointerType(Ty, /*Implicit=*/true);
   else if (Flags & SPIRVDebug::FlagIsArtificial)
     Ty = getDIBuilder(DebugInst).createArtificialType(Ty);
 
@@ -422,7 +421,7 @@ SPIRVToLLVMDbgTran::transTypeArrayNonSemantic(const SPIRVExtInst *DebugInst) {
   if (DebugInst->getExtOp() == SPIRVDebug::TypeArray) {
     for (size_t I = SubrangesIdx; I < Ops.size(); ++I) {
       auto *SR = transDebugInst<DISubrange>(BM->get<SPIRVExtInst>(Ops[I]));
-      if (auto *Count = SR->getCount().get<ConstantInt *>())
+      if (auto *Count = cast<ConstantInt *>(SR->getCount()))
         TotalCount *= Count->getSExtValue() > 0 ? Count->getSExtValue() : 0;
       Subscripts.push_back(SR);
     }
@@ -445,7 +444,7 @@ SPIRVToLLVMDbgTran::transTypeArrayDynamic(const SPIRVExtInst *DebugInst) {
   SmallVector<llvm::Metadata *, 8> Subscripts;
   for (size_t I = SubrangesIdx; I < Ops.size(); ++I) {
     auto *SR = transDebugInst<DISubrange>(BM->get<SPIRVExtInst>(Ops[I]));
-    if (auto *Count = SR->getCount().get<ConstantInt *>())
+    if (auto *Count = cast<ConstantInt *>(SR->getCount()))
       TotalCount *= Count->getSExtValue() > 0 ? Count->getSExtValue() : 0;
     Subscripts.push_back(SR);
   }
@@ -1608,10 +1607,10 @@ SPIRVToLLVMDbgTran::transDebugIntrinsic(const SPIRVExtInst *DebugInst,
     if (!MDs.empty()) {
       DIArgList *AL = DIArgList::get(M->getContext(), MDs);
       if (M->IsNewDbgInfoFormat) {
-        cast<DbgVariableRecord>(DbgValIntr.get<DbgRecord *>())
+        cast<DbgVariableRecord>(cast<DbgRecord *>(DbgValIntr))
             ->setRawLocation(AL);
       } else {
-        cast<DbgVariableIntrinsic>(DbgValIntr.get<Instruction *>())
+        cast<DbgVariableIntrinsic>(cast<Instruction *>(DbgValIntr))
             ->setRawLocation(AL);
       }
     }
@@ -1808,7 +1807,7 @@ DIBuilder &SPIRVToLLVMDbgTran::getDIBuilder(const SPIRVExtInst *DebugInst) {
   return *BuilderMap[DebugInst->getId()];
 }
 
-SPIRVToLLVMDbgTran::SplitFileName::SplitFileName(const string &FileName) {
+SPIRVToLLVMDbgTran::SplitFileName::SplitFileName(const std::string &FileName) {
   auto Loc = FileName.find_last_of("/\\");
   if (Loc != std::string::npos) {
     BaseName = FileName.substr(Loc + 1);
@@ -1837,7 +1836,7 @@ SPIRVToLLVMDbgTran::ParseChecksum(StringRef Text) {
   auto KindPos = Text.find(SPIRVDebug::ChecksumKindPrefx);
   if (KindPos != StringRef::npos) {
     auto ColonPos = Text.find(":", KindPos);
-    KindPos += string("//__").size();
+    KindPos += std::string("//__").size();
     auto KindStr = Text.substr(KindPos, ColonPos - KindPos);
     auto Checksum = Text.substr(ColonPos).ltrim(':');
     if (auto Kind = DIFile::getChecksumKind(KindStr)) {

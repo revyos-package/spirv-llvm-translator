@@ -231,7 +231,7 @@ void SPIRVRegularizeLLVMBase::buildUMulWithOverflowFunc(Function *UMulFunc) {
   // umul.with.overflow intrinsic return a structure, where the first element
   // is the multiplication result, and the second is an overflow bit.
   auto *StructTy = UMulFunc->getReturnType();
-  auto *Agg = Builder.CreateInsertValue(UndefValue::get(StructTy), Mul, {0});
+  auto *Agg = Builder.CreateInsertValue(PoisonValue::get(StructTy), Mul, {0});
   auto *Res = Builder.CreateInsertValue(Agg, Overflow, {1});
   Builder.CreateRet(Res);
 }
@@ -487,7 +487,7 @@ void regularizeWithOverflowInstrinsics(StringRef MangledName, CallInst *Call,
   Value *V2 = Builder.CreateICmpNE(V1, ConstZero);
   Type *StructI32I1Ty =
       StructType::create(Call->getContext(), {RetTy, V2->getType()});
-  Value *Undef = UndefValue::get(StructI32I1Ty);
+  Value *Undef = PoisonValue::get(StructI32I1Ty);
   Value *V3 = Builder.CreateInsertValue(Undef, V0, {0});
   Value *V4 = Builder.CreateInsertValue(V3, V2, {1});
   SmallVector<User *> Users(Call->users());
@@ -513,13 +513,14 @@ void prepareCacheControlsTranslation(Metadata *MD, Instruction *Inst) {
   for (unsigned I = 0, E = ArgDecoMD->getNumOperands(); I != E; ++I) {
     auto *DecoMD = dyn_cast<MDNode>(ArgDecoMD->getOperand(I));
     if (!DecoMD) {
-      assert(!"Decoration does not name metadata");
+      assert(false && "Decoration does not name metadata");
       return;
     }
 
     constexpr size_t CacheControlsNumOps = 4;
     if (DecoMD->getNumOperands() != CacheControlsNumOps) {
-      assert(!"Cache controls metadata on instruction must have 4 operands");
+      assert(false &&
+             "Cache controls metadata on instruction must have 4 operands");
       return;
     }
 
@@ -532,7 +533,7 @@ void prepareCacheControlsTranslation(Metadata *MD, Instruction *Inst) {
             ->getZExtValue();
     Value *PtrInstOp = Inst->getOperand(TargetArgNo);
     if (!PtrInstOp->getType()->isPointerTy()) {
-      assert(!"Cache controls must decorate a pointer");
+      assert(false && "Cache controls must decorate a pointer");
       return;
     }
 
@@ -715,14 +716,6 @@ bool SPIRVRegularizeLLVMBase::regularize() {
           // %1 = insertvalue { i32, i1 } undef, i32 %cmpxchg.res, 0
           // %2 = insertvalue { i32, i1 } %1, i1 %cmpxchg.success, 1
 
-          // To get memory scope argument we use Cmpxchg->getSyncScopeID()
-          // but LLVM's cmpxchg instruction is not aware of OpenCL(or SPIR-V)
-          // memory scope enumeration. If the scope is not set and assuming the
-          // produced SPIR-V module will be consumed in an OpenCL environment,
-          // we can use the same memory scope as OpenCL atomic functions that do
-          // not have memory_scope argument, i.e. memory_scope_device. See the
-          // OpenCL C specification p6.13.11. Atomic Functions
-
           // cmpxchg LLVM instruction returns a pair {i32, i1}: the original
           // value and a flag indicating success (true) or failure (false).
           // OpAtomicCompareExchange SPIR-V instruction returns only the
@@ -733,15 +726,9 @@ bool SPIRVRegularizeLLVMBase::regularize() {
           // comparator, which matches with semantics of the flag returned by
           // cmpxchg.
           Value *Ptr = Cmpxchg->getPointerOperand();
-          SmallVector<StringRef> SSIDs;
-          Cmpxchg->getContext().getSyncScopeNames(SSIDs);
 
-          spv::Scope S;
-          // Fill unknown syncscope value to default Device scope.
-          if (!OCLStrMemScopeMap::find(SSIDs[Cmpxchg->getSyncScopeID()].str(),
-                                       &S)) {
-            S = ScopeDevice;
-          }
+          spv::Scope S =
+              toSPIRVScope(Cmpxchg->getContext(), Cmpxchg->getSyncScopeID());
           Value *MemoryScope = getInt32(M, S);
           auto SuccessOrder = static_cast<OCLMemOrderKind>(
               llvm::toCABI(Cmpxchg->getSuccessOrdering()));
@@ -762,7 +749,7 @@ bool SPIRVRegularizeLLVMBase::regularize() {
           IRBuilder<> Builder(Cmpxchg);
           auto *Cmp = Builder.CreateICmpEQ(Res, Comparator, "cmpxchg.success");
           auto *V1 = Builder.CreateInsertValue(
-              UndefValue::get(Cmpxchg->getType()), Res, 0);
+              PoisonValue::get(Cmpxchg->getType()), Res, 0);
           auto *V2 = Builder.CreateInsertValue(V1, Cmp, 1, Cmpxchg->getName());
           Cmpxchg->replaceAllUsesWith(V2);
           ToErase.push_back(Cmpxchg);

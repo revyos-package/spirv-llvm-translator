@@ -944,7 +944,7 @@ CallInst *mutateCallInst(
     CI->setName(InstName + ".old");
   }
   auto *NewCI = addCallInst(M, NewName, CI->getType(), Args, Attrs, CI, Mangle,
-                           InstName, TakeFuncName);
+                            InstName, TakeFuncName);
   NewCI->setDebugLoc(CI->getDebugLoc());
   LLVM_DEBUG(dbgs() << " => " << *NewCI << '\n');
   CI->replaceAllUsesWith(NewCI);
@@ -964,8 +964,8 @@ Instruction *mutateCallInst(
   Type *RetTy = CI->getType();
   auto NewName = ArgMutate(CI, Args, RetTy);
   StringRef InstName = CI->getName();
-  auto *NewCI = addCallInst(M, NewName, RetTy, Args, Attrs, CI, Mangle, InstName,
-                           TakeFuncName);
+  auto *NewCI = addCallInst(M, NewName, RetTy, Args, Attrs, CI, Mangle,
+                            InstName, TakeFuncName);
   auto *NewI = RetMutate(NewCI);
   NewI->takeName(CI);
   NewI->setDebugLoc(CI->getDebugLoc());
@@ -1010,9 +1010,13 @@ CallInst *addCallInst(Module *M, StringRef FuncName, Type *RetTy,
                       StringRef InstName, bool TakeFuncName) {
 
   auto *F = getOrCreateFunction(M, RetTy, getTypes(Args), FuncName, Mangle,
-                               Attrs, TakeFuncName);
+                                Attrs, TakeFuncName);
+  InsertPosition InsertPos(nullptr);
+  if (Pos)
+    InsertPos = Pos->getIterator();
   // Cannot assign a Name to void typed values
-  auto *CI = CallInst::Create(F, Args, RetTy->isVoidTy() ? "" : InstName, Pos);
+  auto *CI =
+      CallInst::Create(F, Args, RetTy->isVoidTy() ? "" : InstName, InsertPos);
   CI->setCallingConv(F->getCallingConv());
   CI->setAttributes(F->getAttributes());
   return CI;
@@ -1061,7 +1065,7 @@ PointerType *getInt8PtrTy(PointerType *T) {
   return PointerType::get(T->getContext(), T->getAddressSpace());
 }
 
-Value *castToInt8Ptr(Value *V, Instruction *Pos) {
+Value *castToInt8Ptr(Value *V, BasicBlock::iterator Pos) {
   return CastInst::CreatePointerCast(
       V, getInt8PtrTy(cast<PointerType>(V->getType())), "", Pos);
 }
@@ -1453,7 +1457,7 @@ static SPIR::RefParamType transTypeDesc(Type *Ty,
   return SPIR::RefParamType(new SPIR::PrimitiveType(SPIR::PRIMITIVE_INT));
 }
 
-Value *getScalarOrArray(Value *V, unsigned Size, Instruction *Pos) {
+Value *getScalarOrArray(Value *V, unsigned Size, BasicBlock::iterator Pos) {
   if (!V->getType()->isPointerTy())
     return V;
   Type *SourceTy;
@@ -1492,8 +1496,8 @@ Constant *getScalarOrVectorConstantInt(Type *T, uint64_t V, bool IsSigned) {
   return nullptr;
 }
 
-Value *getScalarOrArrayConstantInt(Instruction *Pos, Type *T, unsigned Len,
-                                   uint64_t V, bool IsSigned) {
+Value *getScalarOrArrayConstantInt(BasicBlock::iterator Pos, Type *T,
+                                   unsigned Len, uint64_t V, bool IsSigned) {
   if (auto *IT = dyn_cast<IntegerType>(T)) {
     assert(Len == 1 && "Invalid length");
     return ConstantInt::get(IT, V, IsSigned);
@@ -1849,6 +1853,7 @@ bool checkTypeForSPIRVExtendedInstLowering(IntrinsicInst *II, SPIRVModule *BM) {
   case Intrinsic::acos:
   case Intrinsic::asin:
   case Intrinsic::atan:
+  case Intrinsic::atan2:
   case Intrinsic::ceil:
   case Intrinsic::copysign:
   case Intrinsic::cos:
@@ -1892,8 +1897,8 @@ bool checkTypeForSPIRVExtendedInstLowering(IntrinsicInst *II, SPIRVModule *BM) {
     if ((!Ty->isFloatTy() && !Ty->isDoubleTy() && !Ty->isHalfTy()) ||
         (!BM->hasCapability(CapabilityVectorAnyINTEL) &&
          ((NumElems > 4) && (NumElems != 8) && (NumElems != 16)))) {
-      BM->SPIRVCK(
-          false, InvalidFunctionCall, II->getCalledOperand()->getName().str());
+      BM->SPIRVCK(false, InvalidFunctionCall,
+                  II->getCalledOperand()->getName().str());
       return false;
     }
     break;
@@ -1908,8 +1913,8 @@ bool checkTypeForSPIRVExtendedInstLowering(IntrinsicInst *II, SPIRVModule *BM) {
     if ((!Ty->isIntegerTy()) ||
         (!BM->hasCapability(CapabilityVectorAnyINTEL) &&
          ((NumElems > 4) && (NumElems != 8) && (NumElems != 16)))) {
-      BM->SPIRVCK(
-          false, InvalidFunctionCall, II->getCalledOperand()->getName().str());
+      BM->SPIRVCK(false, InvalidFunctionCall,
+                  II->getCalledOperand()->getName().str());
     }
     break;
   }
@@ -1956,7 +1961,7 @@ bool isSPIRVBuiltinVariable(GlobalVariable *GV,
 // %d = extractelement <3 x i64> %b, i32 idx
 // With:
 // %0 = call spir_func i64 @_Z13get_global_idj(i32 0) #1
-// %1 = insertelement <3 x i64> undef, i64 %0, i32 0
+// %1 = insertelement <3 x i64> poison, i64 %0, i32 0
 // %2 = call spir_func i64 @_Z13get_global_idj(i32 1) #1
 // %3 = insertelement <3 x i64> %1, i64 %2, i32 1
 // %4 = call spir_func i64 @_Z13get_global_idj(i32 2) #1
@@ -1971,7 +1976,7 @@ bool isSPIRVBuiltinVariable(GlobalVariable *GV,
 // %2 = load i64, i64 addrspace(4)* %1, align 32
 // With:
 // %0 = call spir_func i64 @_Z13get_global_idj(i32 0) #1
-// %1 = insertelement <3 x i64> undef, i64 %0, i32 0
+// %1 = insertelement <3 x i64> poison, i64 %0, i32 0
 // %2 = call spir_func i64 @_Z13get_global_idj(i32 1) #1
 // %3 = insertelement <3 x i64> %1, i64 %2, i32 1
 // %4 = call spir_func i64 @_Z13get_global_idj(i32 2) #1
@@ -2027,7 +2032,7 @@ static void replaceUsesOfBuiltinVar(Value *V, const APInt &AccumulatedOffset,
           if (!Index.isZero() || DL.getTypeSizeInBits(VecTy) !=
                                      DL.getTypeSizeInBits(Load->getType()))
             llvm_unreachable("Illegal use of a SPIR-V builtin variable");
-          Replacement = UndefValue::get(VecTy);
+          Replacement = PoisonValue::get(VecTy);
           for (unsigned I = 0; I < VecTy->getNumElements(); I++) {
             Replacement = Builder.CreateInsertElement(
                 Replacement,
@@ -2249,8 +2254,7 @@ bool postProcessBuiltinReturningStruct(Function *F) {
       NewF->setCallingConv(F->getCallingConv());
       auto Args = getArguments(CI);
       Args.insert(Args.begin(), A);
-      CallInst *NewCI = Builder.CreateCall(
-          NewF, Args, NewF->getReturnType()->isVoidTy() ? "" : CI->getName());
+      CallInst *NewCI = Builder.CreateCall(NewF, Args, CI->getName());
       NewCI->addParamAttr(0, SretAttr);
       NewCI->setCallingConv(CI->getCallingConv());
       SmallVector<User *, 32> UsersToReplace;
