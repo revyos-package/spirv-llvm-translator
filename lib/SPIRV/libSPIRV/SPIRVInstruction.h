@@ -3892,7 +3892,9 @@ protected:
     SPVErrLog.checkError(
         (ResTy->isTypeImage() && OC == internal::OpConvertHandleToImageINTEL) ||
             (ResTy->isTypeSampler() &&
-             OC == internal::OpConvertHandleToSamplerINTEL),
+             OC == internal::OpConvertHandleToSamplerINTEL) ||
+            (ResTy->isTypeSampledImage() &&
+             OC == internal::OpConvertHandleToSampledImageINTEL),
         SPIRVEC_InvalidInstruction,
         InstName + "\nIncorrect return type of the instruction must be "
                    "image/sampler\n");
@@ -3902,6 +3904,70 @@ protected:
   typedef SPIRVBindlessImagesInstBase<internal::Op##x> SPIRV##x;
 _SPIRV_OP(ConvertHandleToImageINTEL)
 _SPIRV_OP(ConvertHandleToSamplerINTEL)
+_SPIRV_OP(ConvertHandleToSampledImageINTEL)
+#undef _SPIRV_OP
+
+class SPIRVSubgroup2DBlockIOINTELInst : public SPIRVInstTemplateBase {
+public:
+  std::optional<ExtensionID> getRequiredExtension() const override {
+    return ExtensionID::SPV_INTEL_2d_block_io;
+  }
+  SPIRVCapVec getRequiredCapability() const override {
+    return getVec(CapabilitySubgroup2DBlockIOINTEL);
+  }
+};
+
+class SPIRVSubgroup2DBlockLoadTransposeINTELInst
+    : public SPIRVSubgroup2DBlockIOINTELInst {
+  SPIRVCapVec getRequiredCapability() const override {
+    return getVec(CapabilitySubgroup2DBlockTransposeINTEL);
+  }
+};
+
+class SPIRVSubgroup2DBlockLoadTransformINTELInst
+    : public SPIRVSubgroup2DBlockIOINTELInst {
+  SPIRVCapVec getRequiredCapability() const override {
+    return getVec(CapabilitySubgroup2DBlockTransformINTEL);
+  }
+};
+
+#define _SPIRV_OP(x, ...)                                                      \
+  typedef SPIRVInstTemplate<SPIRVSubgroup2DBlockIOINTELInst, Op##x##INTEL,     \
+                            __VA_ARGS__>                                       \
+      SPIRV##x##INTEL;
+_SPIRV_OP(Subgroup2DBlockLoad, false, 11)
+_SPIRV_OP(Subgroup2DBlockPrefetch, false, 10)
+_SPIRV_OP(Subgroup2DBlockStore, false, 11)
+#undef _SPIRV_OP
+#define _SPIRV_OP(x, ...)                                                      \
+  typedef SPIRVInstTemplate<SPIRVSubgroup2DBlockLoadTransposeINTELInst,        \
+                            Op##x##INTEL, __VA_ARGS__>                         \
+      SPIRV##x##INTEL;
+_SPIRV_OP(Subgroup2DBlockLoadTranspose, false, 11)
+#undef _SPIRV_OP
+#define _SPIRV_OP(x, ...)                                                      \
+  typedef SPIRVInstTemplate<SPIRVSubgroup2DBlockLoadTransformINTELInst,        \
+                            Op##x##INTEL, __VA_ARGS__>                         \
+      SPIRV##x##INTEL;
+_SPIRV_OP(Subgroup2DBlockLoadTransform, false, 11)
+#undef _SPIRV_OP
+
+class SPIRVSubgroupMatrixMultiplyAccumulateINTELInst
+    : public SPIRVInstTemplateBase {
+public:
+  std::optional<ExtensionID> getRequiredExtension() const override {
+    return ExtensionID::SPV_INTEL_subgroup_matrix_multiply_accumulate;
+  }
+  SPIRVCapVec getRequiredCapability() const override {
+    return getVec(CapabilitySubgroupMatrixMultiplyAccumulateINTEL);
+  }
+};
+
+#define _SPIRV_OP(x, ...)                                                      \
+  typedef SPIRVInstTemplate<SPIRVSubgroupMatrixMultiplyAccumulateINTELInst,    \
+                            Op##x##INTEL, __VA_ARGS__>                         \
+      SPIRV##x##INTEL;
+_SPIRV_OP(SubgroupMatrixMultiplyAccumulate, true, 7, true, 4)
 #undef _SPIRV_OP
 
 } // namespace SPIRV
