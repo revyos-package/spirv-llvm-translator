@@ -75,7 +75,7 @@ Forwarded: https://github.com/KhronosGroup/SPIRV-LLVM-Translator/issues/1963
  
 --- a/lib/SPIRV/libSPIRV/SPIRVModule.cpp
 +++ b/lib/SPIRV/libSPIRV/SPIRVModule.cpp
-@@ -2280,6 +2280,7 @@ bool isSpirvBinary(const std::string &Im
+@@ -2291,6 +2291,7 @@ bool isSpirvBinary(const std::string &Im
  
  #ifdef _SPIRV_SUPPORT_TEXT_FMT
  
@@ -83,7 +83,7 @@ Forwarded: https://github.com/KhronosGroup/SPIRV-LLVM-Translator/issues/1963
  bool convertSpirv(std::istream &IS, std::ostream &OS, std::string &ErrMsg,
                    bool FromText, bool ToText) {
    auto SaveOpt = SPIRVUseTextFormat;
-@@ -2316,6 +2317,7 @@ bool isSpirvText(const std::string &Img)
+@@ -2327,6 +2328,7 @@ bool isSpirvText(const std::string &Img)
    return Magic == MagicNumber;
  }
  
