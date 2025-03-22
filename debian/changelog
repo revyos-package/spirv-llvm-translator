@@ -1,11 +1,11 @@
-spirv-llvm-translator-18 (18.1.10-1) UNRELEASED; urgency=medium
+spirv-llvm-translator-18 (18.1.10-1) unstable; urgency=medium
 
   * New upstream release.
   * Merge changes from spirv-llvm-translator-17 17.0.10-1.
   * Bump spirv-headers dependency to 1.6.1+1.4.309.0.
   * Bump Standards-Version to 4.7.2, no changes needed.
 
- -- Andreas Beckmann <anbe@debian.org>  Sat, 22 Mar 2025 03:39:19 +0100
+ -- Andreas Beckmann <anbe@debian.org>  Sat, 22 Mar 2025 21:01:36 +0100
 
 spirv-llvm-translator-18 (18.1.8-1) unstable; urgency=medium
 
