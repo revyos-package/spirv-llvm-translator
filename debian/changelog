@@ -4,6 +4,7 @@ spirv-llvm-translator-20 (20.1.0-1) UNRELEASED; urgency=medium
   * Fork source package as spirv-llvm-translator-20.
   * Rename binary packages: *19* => *20*.
   * Build with llvm 20.
+  * Update visibility-hidden.patch.
 
  -- Andreas Beckmann <anbe@debian.org>  Sun, 23 Mar 2025 23:42:28 +0100
 
