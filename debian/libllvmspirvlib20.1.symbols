@@ -1,5 +1,5 @@
 # SymbolsHelper-Confirmed: 19.1.5 amd64 arm64 armel armhf hurd-amd64 hurd-i386 i386 loong64 mips64el powerpc ppc64 ppc64el riscv64 s390x sparc64 x32
-libLLVMSPIRVLib.so.19.1 #PACKAGE# #MINVER#
+libLLVMSPIRVLib.so.20.1 #PACKAGE# #MINVER#
 * Build-Depends-Package: libllvmspirvlib-20-dev
  _ZGVZNKSt8__detail11_AnyMatcherINSt7__cxx1112regex_traitsIcEELb0ELb0ELb0EEclEcE5__nul@Base 0
  _ZGVZNKSt8__detail11_AnyMatcherINSt7__cxx1112regex_traitsIcEELb0ELb0ELb1EEclEcE5__nul@Base 0

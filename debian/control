@@ -13,9 +13,9 @@ Build-Depends: debhelper-compat (= 13),
  spirv-headers (>= 1.6.1+1.4.309.0),
  spirv-tools,
 # keep the clang/llvm version in sync, don't forget debian/tests/control
- libclang-19-dev,
- llvm-19-dev,
- clang-19 <!nocheck>,
+ libclang-20-dev,
+ llvm-20-dev,
+ clang-20 <!nocheck>,
 Rules-Requires-Root: no
 Standards-Version: 4.7.2
 Homepage: https://github.com/KhronosGroup/SPIRV-LLVM-Translator
