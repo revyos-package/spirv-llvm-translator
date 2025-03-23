@@ -22,7 +22,7 @@ Homepage: https://github.com/KhronosGroup/SPIRV-LLVM-Translator
 Vcs-Browser: https://salsa.debian.org/opencl-team/spirv-llvm-translator
 Vcs-Git: https://salsa.debian.org/opencl-team/spirv-llvm-translator.git -b llvm20/main
 
-Package: libllvmspirvlib19.1
+Package: libllvmspirvlib20.1
 Architecture: any
 Multi-Arch: same
 Section: libs
@@ -36,7 +36,7 @@ Description: bi-directional translator for LLVM/SPIRV -- shared library
  .
  This package includes the shared library.
 
-Package: libllvmspirvlib-19-dev
+Package: libllvmspirvlib-20-dev
 Architecture: any
 Multi-Arch: same
 Depends:
@@ -58,7 +58,7 @@ Description: bi-directional translator for LLVM/SPIRV -- development files
  .
  This package includes static libs and headers for development.
 
-Package: llvm-spirv-19
+Package: llvm-spirv-20
 Architecture: any
 Depends:
  libllvmspirvlib${llvm:soversion} (= ${binary:Version}),
