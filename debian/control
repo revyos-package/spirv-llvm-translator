@@ -1,4 +1,4 @@
-Source: spirv-llvm-translator-19
+Source: spirv-llvm-translator-20
 Section: libdevel
 Priority: optional
 Maintainer: Debian OpenCL team <pkg-opencl-devel@lists.alioth.debian.org>
@@ -20,7 +20,7 @@ Rules-Requires-Root: no
 Standards-Version: 4.7.2
 Homepage: https://github.com/KhronosGroup/SPIRV-LLVM-Translator
 Vcs-Browser: https://salsa.debian.org/opencl-team/spirv-llvm-translator
-Vcs-Git: https://salsa.debian.org/opencl-team/spirv-llvm-translator.git -b llvm19/main
+Vcs-Git: https://salsa.debian.org/opencl-team/spirv-llvm-translator.git -b llvm20/main
 
 Package: libllvmspirvlib19.1
 Architecture: any
