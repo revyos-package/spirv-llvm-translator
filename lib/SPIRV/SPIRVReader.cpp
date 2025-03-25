@@ -462,15 +462,20 @@ Type *SPIRVToLLVM::transType(SPIRVType *T, bool UseTPT) {
   }
   case OpTypeBufferSurfaceINTEL: {
     auto *PST = static_cast<SPIRVTypeBufferSurfaceINTEL *>(T);
-    Type *StructTy = getOrCreateOpaqueStructType(M, transVCTypeName(PST));
-    Type *PointerTy;
-    if (UseTPT)
-      PointerTy = TypedPointerType::get(StructTy, SPIRAS_Global);
-    else
-      PointerTy = PointerType::get(StructTy, SPIRAS_Global);
-    return mapType(T, PointerTy);
+    Type *Ty = nullptr;
+    if (UseTPT) {
+      Type *StructTy = getOrCreateOpaqueStructType(M, transVCTypeName(PST));
+      Ty = TypedPointerType::get(StructTy, SPIRAS_Global);
+    } else {
+      std::vector<unsigned> Params;
+      if (PST->hasAccessQualifier()) {
+        unsigned Access = static_cast<unsigned>(PST->getAccessQualifier());
+        Params.push_back(Access);
+      }
+      Ty = TargetExtType::get(*Context, "spirv.BufferSurfaceINTEL", {}, Params);
+    }
+    return mapType(T, Ty);
   }
-
   case internal::OpTypeJointMatrixINTEL: {
     auto *MT = static_cast<SPIRVTypeJointMatrixINTEL *>(T);
     auto R = static_cast<SPIRVConstant *>(MT->getRows())->getZExtIntValue();
@@ -2764,6 +2769,14 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
   case OpISubBorrow: {
     auto *BC = static_cast<SPIRVBinary *>(BV);
     return mapValue(BV, transBuiltinFromInst("__spirv_ISubBorrow", BC, BB));
+  }
+  case OpSMulExtended: {
+    auto *BC = static_cast<SPIRVBinary *>(BV);
+    return mapValue(BV, transBuiltinFromInst("__spirv_SMulExtended", BC, BB));
+  }
+  case OpUMulExtended: {
+    auto *BC = static_cast<SPIRVBinary *>(BV);
+    return mapValue(BV, transBuiltinFromInst("__spirv_UMulExtended", BC, BB));
   }
   case OpGetKernelWorkGroupSize:
   case OpGetKernelPreferredWorkGroupSizeMultiple:
