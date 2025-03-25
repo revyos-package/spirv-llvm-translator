@@ -1,4 +1,4 @@
-spirv-llvm-translator-20 (20.1.0-1) UNRELEASED; urgency=medium
+spirv-llvm-translator-20 (20.1.0-1) experimental; urgency=medium
 
   * New upstream release.
   * Fork source package as spirv-llvm-translator-20.
@@ -6,8 +6,9 @@ spirv-llvm-translator-20 (20.1.0-1) UNRELEASED; urgency=medium
   * Build with llvm 20.
   * Update visibility-hidden.patch.
   * Update .symbols control file.
+  * Upload to experimental.
 
- -- Andreas Beckmann <anbe@debian.org>  Sun, 23 Mar 2025 23:42:28 +0100
+ -- Andreas Beckmann <anbe@debian.org>  Mon, 24 Mar 2025 19:27:29 +0100
 
 spirv-llvm-translator-19 (19.1.5-1) unstable; urgency=medium
 
