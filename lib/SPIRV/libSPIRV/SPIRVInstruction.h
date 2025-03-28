@@ -649,6 +649,10 @@ protected:
       assert(getValueType(Op1)->getVectorComponentCount() ==
                  getValueType(Op2)->getVectorComponentCount() &&
              "Inconsistent Vector component width");
+    } else if (getValueType(Op1)->isTypeCooperativeMatrixKHR()) {
+      Op1Ty = getValueType(Op1)->getVectorComponentType();
+      Op2Ty = getValueType(Op2)->getVectorComponentType();
+      assert(Op1Ty == Op2Ty && "Inconsistent Cooperative matrix types");
     } else {
       Op1Ty = getValueType(Op1);
       Op2Ty = getValueType(Op2);
@@ -704,6 +708,8 @@ _SPIRV_OP(ISubBorrow)
 _SPIRV_OP(FSub)
 _SPIRV_OP(IMul)
 _SPIRV_OP(FMul)
+_SPIRV_OP(SMulExtended)
+_SPIRV_OP(UMulExtended)
 _SPIRV_OP(UDiv)
 _SPIRV_OP(SDiv)
 _SPIRV_OP(FDiv)
@@ -1559,10 +1565,13 @@ protected:
       return;
     if (isGenericNegateOpCode(OpCode)) {
       SPIRVType *ResTy =
-          Type->isTypeVector() ? Type->getVectorComponentType() : Type;
-      SPIRVType *OpTy = Type->isTypeVector()
-                            ? getValueType(Op)->getVectorComponentType()
-                            : getValueType(Op);
+          Type->isTypeVector() || Type->isTypeCooperativeMatrixKHR()
+              ? Type->getVectorComponentType()
+              : Type;
+      SPIRVType *OpTy =
+          Type->isTypeVector() || Type->isTypeCooperativeMatrixKHR()
+              ? getValueType(Op)->getVectorComponentType()
+              : getValueType(Op);
 
       (void)ResTy;
       (void)OpTy;
