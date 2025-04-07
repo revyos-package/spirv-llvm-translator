@@ -2676,6 +2676,14 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
     auto *BC = static_cast<SPIRVBinary *>(BV);
     return mapValue(BV, transBuiltinFromInst("__spirv_ISubBorrow", BC, BB));
   }
+  case OpSMulExtended: {
+    auto *BC = static_cast<SPIRVBinary *>(BV);
+    return mapValue(BV, transBuiltinFromInst("__spirv_SMulExtended", BC, BB));
+  }
+  case OpUMulExtended: {
+    auto *BC = static_cast<SPIRVBinary *>(BV);
+    return mapValue(BV, transBuiltinFromInst("__spirv_UMulExtended", BC, BB));
+  }
   case OpGetKernelWorkGroupSize:
   case OpGetKernelPreferredWorkGroupSizeMultiple:
     return mapValue(
@@ -3677,7 +3685,7 @@ bool SPIRVToLLVM::translate() {
   //   e.g. load i32, i32* @__spirv_BuiltInGlobalLinearId, align 4
   // If the desired format is global variables, we don't have to lower them
   // as calls.
-  if (!lowerBuiltinVariablesToCalls(M))
+  if (!lowerBuiltins(BM, M))
     return false;
   if (BM->getDesiredBIsRepresentation() == BIsRepresentation::SPIRVFriendlyIR) {
     SPIRVWord SrcLangVer = 0;
