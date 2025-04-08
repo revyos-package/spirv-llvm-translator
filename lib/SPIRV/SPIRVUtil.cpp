@@ -65,6 +65,21 @@
 
 #define DEBUG_TYPE "spirv"
 
+namespace {
+
+// Return the value for when the dimension index of a builtin is out of range.
+uint64_t getBuiltinOutOfRangeValue(StringRef VarName) {
+  assert(VarName.startswith("__spirv_BuiltIn"));
+  return StringSwitch<uint64_t>(VarName)
+      .EndsWith("GlobalSize", 1)
+      .EndsWith("NumWorkgroups", 1)
+      .EndsWith("WorkgroupSize", 1)
+      .EndsWith("EnqueuedWorkgroupSize", 1)
+      .Default(0);
+}
+
+} // anonymous namespace
+
 namespace SPIRV {
 
 #ifdef _SPIRV_SUPPORT_TEXT_FMT
@@ -2105,6 +2120,110 @@ bool lowerBuiltinVariablesToCalls(Module *M) {
     I->eraseFromParent();
   }
 
+  return true;
+}
+
+/// Transforms SPV-IR work-item builtin calls to SPIRV builtin variables.
+/// e.g.
+///  SPV-IR: @_Z33__spirv_BuiltInGlobalInvocationIdi(i)
+///    is transformed as:
+///  x = load GlobalInvocationId; extract x, i
+/// e.g.
+///  SPV-IR: @_Z22__spirv_BuiltInWorkDim()
+///    is transformed as:
+///  load WorkDim
+bool lowerBuiltinCallsToVariables(Module *M) {
+  LLVM_DEBUG(dbgs() << "Enter lowerBuiltinCallsToVariables\n");
+  // Store instructions and functions that need to be removed.
+  SmallVector<Value *, 16> ToRemove;
+  for (auto &F : *M) {
+    // Builtins should be declaration only.
+    if (!F.isDeclaration())
+      continue;
+    StringRef DemangledName;
+    if (!oclIsBuiltin(F.getName(), DemangledName))
+      continue;
+    LLVM_DEBUG(dbgs() << "Function demangled name: " << DemangledName << '\n');
+    SmallVector<StringRef, 2> Postfix;
+    // Deprefix "__spirv_"
+    StringRef Name = dePrefixSPIRVName(DemangledName, Postfix);
+    // Lookup SPIRV Builtin map.
+    if (!SPIRVBuiltInNameMap::rfind(Name.str(), nullptr))
+      continue;
+    std::string BuiltinVarName = DemangledName.str();
+    LLVM_DEBUG(dbgs() << "builtin variable name: " << BuiltinVarName << '\n');
+    bool IsVec = F.getFunctionType()->getNumParams() > 0;
+    Type *GVType =
+        IsVec ? FixedVectorType::get(F.getReturnType(), 3) : F.getReturnType();
+    GlobalVariable *BV = nullptr;
+    // Consider the following LLVM IR:
+    // @__spirv_BuiltInLocalInvocationId = <Global constant>
+    // .....
+    // define spir_kernel void @kernel1(....) {
+    //   %3 = tail call i64 @_Z12get_local_idj(i32 0)
+    //   .....
+    //   return void
+    // }
+    // During the OCLToSPIRV pass, the opencl call will get lowered to
+    // yet another global variable with the name
+    // '@__spirv_BuiltInLocalInvocationId'. In such a case, we would want to
+    // create only a single global variable with this name.
+    if (GlobalVariable *GV = M->getGlobalVariable(BuiltinVarName))
+      BV = GV;
+    else
+      BV = new GlobalVariable(*M, GVType, /*isConstant=*/true,
+                              GlobalValue::ExternalLinkage, nullptr,
+                              BuiltinVarName, 0, GlobalVariable::NotThreadLocal,
+                              SPIRAS_Input);
+    for (auto *U : F.users()) {
+      auto *CI = dyn_cast<CallInst>(U);
+      assert(CI && "invalid instruction");
+      IRBuilder<> Builder(CI);
+      Value *NewValue = Builder.CreateLoad(GVType, BV);
+      LLVM_DEBUG(dbgs() << "Transform: " << *CI << " => " << *NewValue << '\n');
+      if (IsVec) {
+        auto *GVVecTy = cast<FixedVectorType>(GVType);
+        ConstantInt *Bound = Builder.getInt32(GVVecTy->getNumElements());
+        // Create a select on the index first, to avoid undefined behaviour
+        // due to exceeding the vector size by the extractelement.
+        Value *IndexCmp = Builder.CreateICmpULT(CI->getArgOperand(0), Bound);
+        Constant *ZeroIndex =
+            ConstantInt::get(CI->getArgOperand(0)->getType(), 0);
+        Value *ExtractIndex =
+            Builder.CreateSelect(IndexCmp, CI->getArgOperand(0), ZeroIndex);
+
+        // Extract from builtin variable.
+        NewValue = Builder.CreateExtractElement(NewValue, ExtractIndex);
+
+        // Clamp to out-of-range value.
+        Constant *OutOfRangeVal = ConstantInt::get(
+            F.getReturnType(), getBuiltinOutOfRangeValue(BuiltinVarName));
+        NewValue = Builder.CreateSelect(IndexCmp, NewValue, OutOfRangeVal);
+        LLVM_DEBUG(dbgs() << *NewValue << '\n');
+      }
+      NewValue->takeName(CI);
+      CI->replaceAllUsesWith(NewValue);
+      ToRemove.push_back(CI);
+    }
+    ToRemove.push_back(&F);
+  }
+  for (auto *V : ToRemove) {
+    if (auto *I = dyn_cast<Instruction>(V))
+      I->eraseFromParent();
+    else if (auto *F = dyn_cast<Function>(V))
+      F->eraseFromParent();
+    else
+      llvm_unreachable("Unexpected value to remove!");
+  }
+  return true;
+}
+
+bool lowerBuiltins(SPIRVModule *BM, Module *M) {
+  auto Format = BM->getBuiltinFormat();
+  if (Format == BuiltinFormat::Function && !lowerBuiltinVariablesToCalls(M))
+    return false;
+  if (Format == BuiltinFormat::Global && !lowerBuiltinCallsToVariables(M))
+    return false;
   return true;
 }
 

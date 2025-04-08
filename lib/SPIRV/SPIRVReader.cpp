@@ -1259,6 +1259,9 @@ static void applyFPFastMathModeDecorations(const SPIRVValue *BV,
 Value *SPIRVToLLVM::transShiftLogicalBitwiseInst(SPIRVValue *BV, BasicBlock *BB,
                                                  Function *F) {
   SPIRVBinary *BBN = static_cast<SPIRVBinary *>(BV);
+  if (BV->getType()->isTypeCooperativeMatrixKHR()) {
+    return mapValue(BV, transSPIRVBuiltinFromInst(BBN, BB));
+  }
   Instruction::BinaryOps BO;
   auto OP = BBN->getOpCode();
   if (isLogicalOpCode(OP))
@@ -2367,6 +2370,10 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
     auto AC = static_cast<SPIRVAccessChainBase *>(BV);
     auto Base = transValue(AC->getBase(), F, BB);
     SPIRVType *BaseSPVTy = AC->getBase()->getType();
+    if (BaseSPVTy->isTypePointer() &&
+        BaseSPVTy->getPointerElementType()->isTypeCooperativeMatrixKHR()) {
+      return mapValue(BV, transSPIRVBuiltinFromInst(AC, BB));
+    }
     Type *BaseTy =
         BaseSPVTy->isTypeVector()
             ? transType(
@@ -2417,20 +2424,67 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
     auto CC = static_cast<SPIRVCompositeConstruct *>(BV);
     auto Constituents = transValue(CC->getOperands(), F, BB);
     std::vector<Constant *> CV;
+    bool HasRtValues = false;
     for (const auto &I : Constituents) {
-      CV.push_back(dyn_cast<Constant>(I));
+      auto *C = dyn_cast<Constant>(I);
+      CV.push_back(C);
+      if (!HasRtValues && C == nullptr)
+        HasRtValues = true;
     }
+
     switch (static_cast<size_t>(BV->getType()->getOpCode())) {
-    case OpTypeVector:
-      return mapValue(BV, ConstantVector::get(CV));
-    case OpTypeArray:
-      return mapValue(
-          BV, ConstantArray::get(dyn_cast<ArrayType>(transType(CC->getType())),
-                                 CV));
-    case OpTypeStruct:
-      return mapValue(BV,
-                      ConstantStruct::get(
-                          dyn_cast<StructType>(transType(CC->getType())), CV));
+    case OpTypeVector: {
+      if (!HasRtValues)
+        return mapValue(BV, ConstantVector::get(CV));
+
+      auto *VT = cast<FixedVectorType>(transType(CC->getType()));
+      Value *NewVec = ConstantVector::getSplat(
+          VT->getElementCount(), PoisonValue::get(VT->getElementType()));
+
+      for (size_t I = 0; I < Constituents.size(); I++) {
+        NewVec = InsertElementInst::Create(NewVec, Constituents[I],
+                                           getInt32(M, I), "", BB);
+      }
+      return mapValue(BV, NewVec);
+    }
+    case OpTypeArray: {
+      auto *AT = cast<ArrayType>(transType(CC->getType()));
+      if (!HasRtValues)
+        return mapValue(BV, ConstantArray::get(AT, CV));
+
+      AllocaInst *Alloca = new AllocaInst(AT, SPIRAS_Private, "", BB);
+
+      // get pointer to the element of the array
+      // store the result of argument
+      for (size_t I = 0; I < Constituents.size(); I++) {
+        auto *GEP = GetElementPtrInst::Create(
+            AT, Alloca, {getInt32(M, 0), getInt32(M, I)}, "gep", BB);
+        GEP->setIsInBounds(true);
+        new StoreInst(Constituents[I], GEP, false, BB);
+      }
+
+      auto *Load = new LoadInst(AT, Alloca, "load", false, BB);
+      return mapValue(BV, Load);
+    }
+    case OpTypeStruct: {
+      auto *ST = cast<StructType>(transType(CC->getType()));
+      if (!HasRtValues)
+        return mapValue(BV, ConstantStruct::get(ST, CV));
+
+      AllocaInst *Alloca = new AllocaInst(ST, SPIRAS_Private, "", BB);
+
+      // get pointer to the element of structure
+      // store the result of argument
+      for (size_t I = 0; I < Constituents.size(); I++) {
+        auto *GEP = GetElementPtrInst::Create(
+            ST, Alloca, {getInt32(M, 0), getInt32(M, I)}, "gep", BB);
+        GEP->setIsInBounds(true);
+        new StoreInst(Constituents[I], GEP, false, BB);
+      }
+
+      auto *Load = new LoadInst(ST, Alloca, "load", false, BB);
+      return mapValue(BV, Load);
+    }
     case internal::OpTypeJointMatrixINTEL:
     case OpTypeCooperativeMatrixKHR:
       return mapValue(BV, transSPIRVBuiltinFromInst(CC, BB));
@@ -2632,6 +2686,9 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
       Builder.SetInsertPoint(BB);
     }
     SPIRVUnary *BC = static_cast<SPIRVUnary *>(BV);
+    if (BV->getType()->isTypeCooperativeMatrixKHR()) {
+      return mapValue(BV, transSPIRVBuiltinFromInst(BC, BB));
+    }
     auto Neg =
         Builder.CreateNeg(transValue(BC->getOperand(0), F, BB), BV->getName());
     if (auto *NegInst = dyn_cast<Instruction>(Neg)) {
@@ -2684,6 +2741,9 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
 
   case OpFNegate: {
     SPIRVUnary *BC = static_cast<SPIRVUnary *>(BV);
+    if (BV->getType()->isTypeCooperativeMatrixKHR()) {
+      return mapValue(BV, transSPIRVBuiltinFromInst(BC, BB));
+    }
     auto Neg = UnaryOperator::CreateFNeg(transValue(BC->getOperand(0), F, BB),
                                          BV->getName(), BB);
     applyFPFastMathModeDecorations(BV, Neg);
@@ -2719,6 +2779,14 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
   case OpISubBorrow: {
     auto *BC = static_cast<SPIRVBinary *>(BV);
     return mapValue(BV, transBuiltinFromInst("__spirv_ISubBorrow", BC, BB));
+  }
+  case OpSMulExtended: {
+    auto *BC = static_cast<SPIRVBinary *>(BV);
+    return mapValue(BV, transBuiltinFromInst("__spirv_SMulExtended", BC, BB));
+  }
+  case OpUMulExtended: {
+    auto *BC = static_cast<SPIRVBinary *>(BV);
+    return mapValue(BV, transBuiltinFromInst("__spirv_UMulExtended", BC, BB));
   }
   case OpGetKernelWorkGroupSize:
   case OpGetKernelPreferredWorkGroupSizeMultiple:
@@ -3718,14 +3786,7 @@ bool SPIRVToLLVM::translate() {
   if (!transSourceExtension())
     return false;
   transGeneratorMD();
-  // TODO: add an option to control the builtin format in SPV-IR.
-  // The primary format should be function calls:
-  //   e.g. call spir_func i32 @_Z29__spirv_BuiltInGlobalLinearIdv()
-  // The secondary format should be global variables:
-  //   e.g. load i32, i32* @__spirv_BuiltInGlobalLinearId, align 4
-  // If the desired format is global variables, we don't have to lower them
-  // as calls.
-  if (!lowerBuiltinVariablesToCalls(M))
+  if (!lowerBuiltins(BM, M))
     return false;
   if (BM->getDesiredBIsRepresentation() == BIsRepresentation::SPIRVFriendlyIR) {
     SPIRVWord SrcLangVer = 0;
