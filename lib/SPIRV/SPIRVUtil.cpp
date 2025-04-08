@@ -637,6 +637,21 @@ static Type *parsePrimitiveType(LLVMContext &Ctx, StringRef Name) {
 
 } // namespace SPIRV
 
+namespace {
+
+// Return the value for when the dimension index of a builtin is out of range.
+uint64_t getBuiltinOutOfRangeValue(StringRef VarName) {
+  assert(VarName.starts_with("__spirv_BuiltIn"));
+  return StringSwitch<uint64_t>(VarName)
+      .EndsWith("GlobalSize", 1)
+      .EndsWith("NumWorkgroups", 1)
+      .EndsWith("WorkgroupSize", 1)
+      .EndsWith("EnqueuedWorkgroupSize", 1)
+      .Default(0);
+}
+
+} // anonymous namespace
+
 // The demangler node hierarchy doesn't use LLVM's RTTI helper functions (as it
 // also needs to live in libcxxabi). By specializing this implementation here,
 // we can add support for these functions.
@@ -2192,22 +2207,50 @@ bool lowerBuiltinCallsToVariables(Module *M) {
     bool IsVec = F.getFunctionType()->getNumParams() > 0;
     Type *GVType =
         IsVec ? FixedVectorType::get(F.getReturnType(), 3) : F.getReturnType();
-    auto *BV = new GlobalVariable(
-        *M, GVType, /*isConstant=*/true, GlobalValue::ExternalLinkage, nullptr,
-        BuiltinVarName, 0, GlobalVariable::NotThreadLocal, SPIRAS_Input);
+    GlobalVariable *BV = nullptr;
+    // Consider the following LLVM IR:
+    // @__spirv_BuiltInLocalInvocationId = <Global constant>
+    // .....
+    // define spir_kernel void @kernel1(....) {
+    //   %3 = tail call i64 @_Z12get_local_idj(i32 0)
+    //   .....
+    //   return void
+    // }
+    // During the OCLToSPIRV pass, the opencl call will get lowered to
+    // yet another global variable with the name
+    // '@__spirv_BuiltInLocalInvocationId'. In such a case, we would want to
+    // create only a single global variable with this name.
+    if (GlobalVariable *GV = M->getGlobalVariable(BuiltinVarName))
+      BV = GV;
+    else
+      BV = new GlobalVariable(*M, GVType, /*isConstant=*/true,
+                              GlobalValue::ExternalLinkage, nullptr,
+                              BuiltinVarName, 0, GlobalVariable::NotThreadLocal,
+                              SPIRAS_Input);
     for (auto *U : F.users()) {
       auto *CI = dyn_cast<CallInst>(U);
       assert(CI && "invalid instruction");
-      const DebugLoc &DLoc = CI->getDebugLoc();
-      Instruction *NewValue = new LoadInst(GVType, BV, "", CI);
-      if (DLoc)
-        NewValue->setDebugLoc(DLoc);
+      IRBuilder<> Builder(CI);
+      Value *NewValue = Builder.CreateLoad(GVType, BV);
       LLVM_DEBUG(dbgs() << "Transform: " << *CI << " => " << *NewValue << '\n');
       if (IsVec) {
-        NewValue =
-            ExtractElementInst::Create(NewValue, CI->getArgOperand(0), "", CI);
-        if (DLoc)
-          NewValue->setDebugLoc(DLoc);
+        auto *GVVecTy = cast<FixedVectorType>(GVType);
+        ConstantInt *Bound = Builder.getInt32(GVVecTy->getNumElements());
+        // Create a select on the index first, to avoid undefined behaviour
+        // due to exceeding the vector size by the extractelement.
+        Value *IndexCmp = Builder.CreateICmpULT(CI->getArgOperand(0), Bound);
+        Constant *ZeroIndex =
+            ConstantInt::get(CI->getArgOperand(0)->getType(), 0);
+        Value *ExtractIndex =
+            Builder.CreateSelect(IndexCmp, CI->getArgOperand(0), ZeroIndex);
+
+        // Extract from builtin variable.
+        NewValue = Builder.CreateExtractElement(NewValue, ExtractIndex);
+
+        // Clamp to out-of-range value.
+        Constant *OutOfRangeVal = ConstantInt::get(
+            F.getReturnType(), getBuiltinOutOfRangeValue(BuiltinVarName));
+        NewValue = Builder.CreateSelect(IndexCmp, NewValue, OutOfRangeVal);
         LLVM_DEBUG(dbgs() << *NewValue << '\n');
       }
       NewValue->takeName(CI);
