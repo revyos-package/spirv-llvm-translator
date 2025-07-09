@@ -68,7 +68,6 @@ enum InternalOp {
   IOpJointMatrixSUMadINTEL = 6128,
   IOpJointMatrixUSMadINTEL = 6129,
   IOpJointMatrixUUMadINTEL = 6130,
-  IOpArithmeticFenceINTEL = 6145,
   IOpCooperativeMatrixLoadCheckedINTEL = 6193,
   IOpCooperativeMatrixStoreCheckedINTEL = 6194,
   IOpCooperativeMatrixConstructCheckedINTEL = 6195,
@@ -98,21 +97,16 @@ enum InternalDecoration {
   IDecInitModeINTEL = 6148,
   IDecImplementInCSRINTEL = 6149,
   IDecArgumentAttributeINTEL = 6409,
-  IDecCacheControlLoadINTEL = 6442,
-  IDecCacheControlStoreINTEL = 6443
 };
 
 enum InternalCapability {
   ICapFPGADSPControlINTEL = 5908,
   ICapFPGAInvocationPipeliningAttributesINTEL = 5916,
   ICapRuntimeAlignedAttributeINTEL = 5939,
-  ICapFastCompositeINTEL = 6093,
-  ICapOptNoneINTEL = 6094,
   ICapTokenTypeINTEL = 6112,
   ICapBfloat16ConversionINTEL = 6115,
   ICapabilityJointMatrixINTEL = 6118,
   ICapabilityHWThreadQueryINTEL = 6134,
-  ICapFPArithmeticFenceINTEL = 6144,
   ICapGlobalVariableDecorationsINTEL = 6146,
   ICapabilityCooperativeMatrixCheckedInstructionsINTEL = 6192,
   ICapabilityCooperativeMatrixPrefetchINTEL = 6411,
@@ -121,19 +115,10 @@ enum InternalCapability {
   ICapabilityMaskedGatherScatterINTEL = 6427,
   ICapabilityJointMatrixWIInstructionsINTEL = 6435,
   ICapabilityCacheControlsINTEL = 6441,
-  ICapRegisterLimitsINTEL = 6460,
   ICapabilityBindlessImagesINTEL = 6528
 };
 
-enum InternalFunctionControlMask { IFunctionControlOptNoneINTELMask = 0x10000 };
-
-enum InternalExecutionMode {
-  IExecModeFastCompositeKernelINTEL = 6088,
-  IExecModeStreamingInterfaceINTEL = 6154,
-  IExecModeMaximumRegistersINTEL = 6461,
-  IExecModeMaximumRegistersIdINTEL = 6462,
-  IExecModeNamedMaximumRegistersINTEL = 6463
-};
+enum InternalExecutionMode {};
 
 enum InternalLoopControlMask { ILoopControlLoopCountINTELMask = 0x1000000 };
 
@@ -152,25 +137,6 @@ enum InternalJointMatrixUse { MatrixA = 0, MatrixB = 1, Accumulator = 2 };
 enum InternalBuiltIn {
   IBuiltInSubDeviceIDINTEL = 6135,
   IBuiltInGlobalHWThreadIDINTEL = 6136,
-};
-
-enum class LoadCacheControlINTEL {
-  Uncached = 0,
-  Cached = 1,
-  Streaming = 2,
-  InvalidateAfterRead = 3,
-  ConstCached = 4
-};
-
-enum class StoreCacheControlINTEL {
-  Uncached = 0,
-  WriteThrough = 1,
-  WriteBack = 2,
-  Streaming = 3
-};
-
-enum InternalNamedMaximumNumberOfRegisters {
-  NamedMaximumNumberOfRegistersAutoINTEL = 0,
 };
 
 #define _SPIRV_OP(x, y) constexpr x x##y = static_cast<x>(I##x##y);
@@ -260,7 +226,6 @@ constexpr SourceLanguage SourceLanguageCPP20 =
 
 constexpr Op OpForward = static_cast<Op>(IOpForward);
 constexpr Op OpTypeTokenINTEL = static_cast<Op>(IOpTypeTokenINTEL);
-constexpr Op OpArithmeticFenceINTEL = static_cast<Op>(IOpArithmeticFenceINTEL);
 constexpr Op OpConvertFToBF16INTEL = static_cast<Op>(IOpConvertFToBF16INTEL);
 constexpr Op OpConvertBF16ToFINTEL = static_cast<Op>(IOpConvertBF16ToFINTEL);
 
@@ -270,8 +235,6 @@ constexpr Decoration DecorationMaxConcurrencyINTEL =
     static_cast<Decoration>(IDecMaxConcurrencyINTEL);
 constexpr Decoration DecorationPipelineEnableINTEL =
     static_cast<Decoration>(IDecPipelineEnableINTEL);
-constexpr Decoration DecorationCallableFunctionINTEL =
-    static_cast<Decoration>(IDecCallableFunctionINTEL);
 constexpr Decoration DecorationRuntimeAlignedINTEL =
     static_cast<Decoration>(IDecRuntimeAlignedINTEL);
 constexpr Decoration DecorationHostAccessINTEL =
@@ -282,15 +245,7 @@ constexpr Decoration DecorationImplementInCSRINTEL =
     static_cast<Decoration>(IDecImplementInCSRINTEL);
 constexpr Decoration DecorationArgumentAttributeINTEL =
     static_cast<Decoration>(IDecArgumentAttributeINTEL);
-constexpr Decoration DecorationCacheControlLoadINTEL =
-    static_cast<Decoration>(IDecCacheControlLoadINTEL);
-constexpr Decoration DecorationCacheControlStoreINTEL =
-    static_cast<Decoration>(IDecCacheControlStoreINTEL);
 
-constexpr Capability CapabilityFastCompositeINTEL =
-    static_cast<Capability>(ICapFastCompositeINTEL);
-constexpr Capability CapabilityOptNoneINTEL =
-    static_cast<Capability>(ICapOptNoneINTEL);
 constexpr Capability CapabilityFPGADSPControlINTEL =
     static_cast<Capability>(ICapFPGADSPControlINTEL);
 constexpr Capability CapabilityFPGAInvocationPipeliningAttributesINTEL =
@@ -299,34 +254,16 @@ constexpr Capability CapabilityTokenTypeINTEL =
     static_cast<Capability>(ICapTokenTypeINTEL);
 constexpr Capability CapabilityRuntimeAlignedAttributeINTEL =
     static_cast<Capability>(ICapRuntimeAlignedAttributeINTEL);
-constexpr Capability CapabilityFPArithmeticFenceINTEL =
-    static_cast<Capability>(ICapFPArithmeticFenceINTEL);
 constexpr Capability CapabilityBfloat16ConversionINTEL =
     static_cast<Capability>(ICapBfloat16ConversionINTEL);
 constexpr Capability CapabilityGlobalVariableDecorationsINTEL =
     static_cast<Capability>(ICapGlobalVariableDecorationsINTEL);
-constexpr Capability CapabilityRegisterLimitsINTEL =
-    static_cast<Capability>(ICapRegisterLimitsINTEL);
-
-constexpr FunctionControlMask FunctionControlOptNoneINTELMask =
-    static_cast<FunctionControlMask>(IFunctionControlOptNoneINTELMask);
 
 constexpr Decoration DecorationMathOpDSPModeINTEL =
     static_cast<Decoration>(IDecMathOpDSPModeINTEL);
 
-constexpr ExecutionMode ExecutionModeFastCompositeKernelINTEL =
-    static_cast<ExecutionMode>(IExecModeFastCompositeKernelINTEL);
-constexpr ExecutionMode ExecutionModeStreamingInterfaceINTEL =
-    static_cast<ExecutionMode>(IExecModeStreamingInterfaceINTEL);
-
 constexpr LoopControlMask LoopControlLoopCountINTELMask =
     static_cast<LoopControlMask>(ILoopControlLoopCountINTELMask);
-constexpr ExecutionMode ExecutionModeMaximumRegistersINTEL =
-    static_cast<ExecutionMode>(IExecModeMaximumRegistersINTEL);
-constexpr ExecutionMode ExecutionModeMaximumRegistersIdINTEL =
-    static_cast<ExecutionMode>(IExecModeMaximumRegistersIdINTEL);
-constexpr ExecutionMode ExecutionModeNamedMaximumRegistersINTEL =
-    static_cast<ExecutionMode>(IExecModeNamedMaximumRegistersINTEL);
 
 } // namespace internal
 } // namespace spv

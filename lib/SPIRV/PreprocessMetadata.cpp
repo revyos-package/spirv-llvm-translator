@@ -242,7 +242,7 @@ void PreprocessMetadataBase::visit(Module *M) {
           InterfaceMode = 1;
         EM.addOp()
             .add(&Kernel)
-            .add(spv::internal::ExecutionModeStreamingInterfaceINTEL)
+            .add(spv::ExecutionModeStreamingInterfaceINTEL)
             .add(InterfaceMode)
             .done();
       }
@@ -340,12 +340,6 @@ void PreprocessMetadataBase::preprocessVectorComputeMetadata(Module *M,
           .add(&F)
           .add(spv::ExecutionModeSharedLocalMemorySizeINTEL)
           .add(SLMSize)
-          .done();
-    }
-    if (Attrs.hasFnAttr(kVCMetadata::VCFCEntry)) {
-      EM.addOp()
-          .add(&F)
-          .add(spv::internal::ExecutionModeFastCompositeKernelINTEL)
           .done();
     }
 
