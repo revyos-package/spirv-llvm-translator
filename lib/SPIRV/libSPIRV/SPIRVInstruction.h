@@ -51,7 +51,6 @@
 #include <cassert>
 #include <functional>
 #include <iostream>
-#include <optional>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -650,6 +649,10 @@ protected:
       assert(getValueType(Op1)->getVectorComponentCount() ==
                  getValueType(Op2)->getVectorComponentCount() &&
              "Inconsistent Vector component width");
+    } else if (getValueType(Op1)->isTypeCooperativeMatrixKHR()) {
+      Op1Ty = getValueType(Op1)->getVectorComponentType();
+      Op2Ty = getValueType(Op2)->getVectorComponentType();
+      assert(Op1Ty == Op2Ty && "Inconsistent Cooperative matrix types");
     } else {
       Op1Ty = getValueType(Op1);
       Op2Ty = getValueType(Op2);
@@ -689,6 +692,18 @@ protected:
     if (isBinaryPtrOpCode(OpCode))
       return static_cast<SPIRVWord>(VersionNumber::SPIRV_1_4);
     return static_cast<SPIRVWord>(VersionNumber::SPIRV_1_0);
+  }
+  SPIRVCapVec getRequiredCapability() const override {
+    if (OpCode == OpDot) {
+      const SPIRVType *OpTy = getValueType(Ops[0]);
+      if (OpTy && OpTy->isTypeVector()) {
+        OpTy = OpTy->getVectorComponentType();
+        if (OpTy && OpTy->isTypeFloat(16, FPEncodingBFloat16KHR)) {
+          return getVec(CapabilityBFloat16DotProductKHR);
+        }
+      }
+    }
+    return SPIRVInstruction::getRequiredCapability();
   }
 };
 
@@ -1562,10 +1577,13 @@ protected:
       return;
     if (isGenericNegateOpCode(OpCode)) {
       SPIRVType *ResTy =
-          Type->isTypeVector() ? Type->getVectorComponentType() : Type;
-      SPIRVType *OpTy = Type->isTypeVector()
-                            ? getValueType(Op)->getVectorComponentType()
-                            : getValueType(Op);
+          Type->isTypeVector() || Type->isTypeCooperativeMatrixKHR()
+              ? Type->getVectorComponentType()
+              : Type;
+      SPIRVType *OpTy =
+          Type->isTypeVector() || Type->isTypeCooperativeMatrixKHR()
+              ? getValueType(Op)->getVectorComponentType()
+              : getValueType(Op);
 
       (void)ResTy;
       (void)OpTy;
@@ -1616,10 +1634,8 @@ _SPIRV_OP(SignBitSet)
 _SPIRV_OP(Any)
 _SPIRV_OP(All)
 _SPIRV_OP(BitCount)
+_SPIRV_OP(ArithmeticFenceEXT)
 #undef _SPIRV_OP
-#define _SPIRV_OP_INTERNAL(x) typedef SPIRVUnaryInst<internal::Op##x> SPIRV##x;
-_SPIRV_OP_INTERNAL(ArithmeticFenceINTEL)
-#undef _SPIRV_OP_INTERNAL
 
 class SPIRVAccessChainBase : public SPIRVInstTemplateBase {
 public:
@@ -1818,6 +1834,14 @@ public:
 
   SPIRVExtInstSetKind getExtSetKind() const { return ExtSetKind; }
 
+  void addContinuedInstruction(SPIRVExtInst *Inst) {
+    ContinuedInstructions.push_back(Inst);
+  }
+
+  std::vector<SPIRVExtInst *> getContinuedInstructions() {
+    return ContinuedInstructions;
+  }
+
   void setExtSetKindById() {
     assert(Module && "Invalid module");
     ExtSetKind = Module->getBuiltinSet(ExtSetId);
@@ -1869,7 +1893,17 @@ public:
       assert(0 && "not supported");
       getDecoder(I) >> ExtOp;
     }
-    getDecoder(I) >> Args;
+    SPIRVDecoder Decoder = getDecoder(I);
+    Decoder >> Args;
+
+    if (ExtSetKind == SPIRVEIS_NonSemantic_Shader_DebugInfo_100 ||
+        ExtSetKind == SPIRVEIS_NonSemantic_Shader_DebugInfo_200) {
+      if (getExtOp() == SPIRVDebug::Instruction::Source) {
+        for (SPIRVEntry *E : Decoder.getSourceContinuedInstructions()) {
+          addContinuedInstruction(static_cast<SPIRVExtInst *>(E));
+        }
+      }
+    }
   }
   void validate() const override {
     SPIRVFunctionCallGeneric::validate();
@@ -1926,6 +1960,7 @@ protected:
     SPIRVDebugExtOpKind ExtOpDebug;
     NonSemanticAuxDataOpKind ExtOpNonSemanticAuxData;
   };
+  std::vector<SPIRVExtInst *> ContinuedInstructions;
 };
 
 class SPIRVCompositeConstruct : public SPIRVInstruction {
@@ -3471,7 +3506,60 @@ _SPIRV_OP(JointMatrixMad, true, 7)
 _SPIRV_OP(JointMatrixSUMad, true, 7)
 _SPIRV_OP(JointMatrixUSMad, true, 7)
 _SPIRV_OP(JointMatrixUUMad, true, 7)
+// TODO: move to SPIRVJointMatrixINTELWorkItemInst
 _SPIRV_OP(JointMatrixWorkItemLength, true, 4)
+#undef _SPIRV_OP
+
+class SPIRVJointMatrixINTELWorkItemInst : public SPIRVJointMatrixINTELInstBase {
+protected:
+  SPIRVCapVec getRequiredCapability() const override {
+    return getVec(internal::CapabilityJointMatrixWIInstructionsINTEL);
+  }
+};
+
+#define _SPIRV_OP(x, ...)                                                      \
+  typedef SPIRVInstTemplate<SPIRVJointMatrixINTELWorkItemInst,                 \
+                            internal::Op##x##INTEL, __VA_ARGS__>               \
+      SPIRV##x##INTEL;
+_SPIRV_OP(JointMatrixGetElementCoord, true, 5)
+#undef _SPIRV_OP
+
+class SPIRVCooperativeMatrixPrefetchINTELInstBase
+    : public SPIRVInstTemplateBase {
+protected:
+  std::optional<ExtensionID> getRequiredExtension() const override {
+    return ExtensionID::SPV_INTEL_joint_matrix;
+  }
+  SPIRVCapVec getRequiredCapability() const override {
+    return getVec(internal::CapabilityCooperativeMatrixPrefetchINTEL);
+  }
+};
+
+#define _SPIRV_OP(x, ...)                                                      \
+  typedef SPIRVInstTemplate<SPIRVCooperativeMatrixPrefetchINTELInstBase,       \
+                            internal::Op##x##INTEL, __VA_ARGS__>               \
+      SPIRV##x##INTEL;
+_SPIRV_OP(CooperativeMatrixPrefetch, false, 6, true, 3)
+#undef _SPIRV_OP
+
+class SPIRVCooperativeMatrixKHRInstBase : public SPIRVInstTemplateBase {
+protected:
+  std::optional<ExtensionID> getRequiredExtension() const override {
+    return ExtensionID::SPV_KHR_cooperative_matrix;
+  }
+  SPIRVCapVec getRequiredCapability() const override {
+    return getVec(CapabilityCooperativeMatrixKHR);
+  }
+};
+
+#define _SPIRV_OP(x, ...)                                                      \
+  typedef SPIRVInstTemplate<SPIRVCooperativeMatrixKHRInstBase, Op##x,          \
+                            __VA_ARGS__>                                       \
+      SPIRV##x;
+_SPIRV_OP(CooperativeMatrixLoadKHR, true, 5, true, 3)
+_SPIRV_OP(CooperativeMatrixStoreKHR, false, 4, true, 4)
+_SPIRV_OP(CooperativeMatrixLengthKHR, true, 4, false)
+_SPIRV_OP(CooperativeMatrixMulAddKHR, true, 6, true, 3)
 #undef _SPIRV_OP
 
 class SPIRVCooperativeMatrixCheckedInstructionsINTELInstBase
@@ -3494,26 +3582,6 @@ protected:
 _SPIRV_OP(CooperativeMatrixLoadChecked, true, 9, true, 7)
 _SPIRV_OP(CooperativeMatrixStoreChecked, false, 8, true, 8)
 _SPIRV_OP(CooperativeMatrixConstructChecked, true, 8)
-#undef _SPIRV_OP
-
-class SPIRVCooperativeMatrixKHRInstBase : public SPIRVInstTemplateBase {
-protected:
-  std::optional<ExtensionID> getRequiredExtension() const override {
-    return ExtensionID::SPV_KHR_cooperative_matrix;
-  }
-  SPIRVCapVec getRequiredCapability() const override {
-    return getVec(CapabilityCooperativeMatrixKHR);
-  }
-};
-
-#define _SPIRV_OP(x, ...)                                                      \
-  typedef SPIRVInstTemplate<SPIRVCooperativeMatrixKHRInstBase, Op##x,          \
-                            __VA_ARGS__>                                       \
-      SPIRV##x;
-_SPIRV_OP(CooperativeMatrixLoadKHR, true, 5, true, 3)
-_SPIRV_OP(CooperativeMatrixStoreKHR, false, 4, true, 4)
-_SPIRV_OP(CooperativeMatrixLengthKHR, true, 4, false)
-_SPIRV_OP(CooperativeMatrixMulAddKHR, true, 6, true, 3)
 #undef _SPIRV_OP
 
 class SPIRVSplitBarrierINTELBase : public SPIRVInstTemplateBase {
@@ -3970,6 +4038,61 @@ public:
                             Op##x##INTEL, __VA_ARGS__>                         \
       SPIRV##x##INTEL;
 _SPIRV_OP(SubgroupMatrixMultiplyAccumulate, true, 7, true, 4)
+#undef _SPIRV_OP
+
+class SPIRVTernaryBitwiseFunctionINTELInst : public SPIRVInstTemplateBase {
+public:
+  void validate() const override {
+    SPIRVInstruction::validate();
+    SPIRVErrorLog &SPVErrLog = this->getModule()->getErrorLog();
+    std::string InstName = "BitwiseFunctionINTEL";
+
+    const SPIRVType *ResTy = this->getType();
+    SPVErrLog.checkError(
+        ResTy->isTypeInt() || (ResTy->isTypeVector() &&
+                               ResTy->getVectorComponentType()->isTypeInt()),
+        SPIRVEC_InvalidInstruction,
+        InstName + "\nResult type must be an integer scalar or vector.\n");
+
+    auto CommonArgCheck = [this, ResTy, &InstName,
+                           &SPVErrLog](size_t ArgI, const char *ArgPlacement) {
+      SPIRVValue *Arg =
+          const_cast<SPIRVTernaryBitwiseFunctionINTELInst *>(this)->getOperand(
+              ArgI);
+      SPVErrLog.checkError(
+          Arg->getType() == ResTy, SPIRVEC_InvalidInstruction,
+          InstName + "\n" + ArgPlacement +
+              " argument must be the same as the result type.\n");
+    };
+
+    CommonArgCheck(0, "First");
+    CommonArgCheck(1, "Second");
+    CommonArgCheck(2, "Third");
+
+    SPIRVValue *LUTIndexArg =
+        const_cast<SPIRVTernaryBitwiseFunctionINTELInst *>(this)->getOperand(3);
+    const SPIRVType *LUTIndexArgTy = LUTIndexArg->getType();
+    SPVErrLog.checkError(
+        LUTIndexArgTy->isTypeInt(32), SPIRVEC_InvalidInstruction,
+        InstName + "\nFourth argument must be a 32-bit integer scalar.\n");
+    SPVErrLog.checkError(
+        isConstantOpCode(LUTIndexArg->getOpCode()), SPIRVEC_InvalidInstruction,
+        InstName + "\nFourth argument must be constant instruction.\n");
+  }
+
+  std::optional<ExtensionID> getRequiredExtension() const override {
+    return ExtensionID::SPV_INTEL_ternary_bitwise_function;
+  }
+  SPIRVCapVec getRequiredCapability() const override {
+    return getVec(CapabilityTernaryBitwiseFunctionINTEL);
+  }
+};
+
+#define _SPIRV_OP(x, ...)                                                      \
+  typedef SPIRVInstTemplate<SPIRVTernaryBitwiseFunctionINTELInst,              \
+                            Op##x##INTEL, __VA_ARGS__>                         \
+      SPIRV##x##INTEL;
+_SPIRV_OP(BitwiseFunction, true, 7)
 #undef _SPIRV_OP
 
 } // namespace SPIRV

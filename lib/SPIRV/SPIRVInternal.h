@@ -251,7 +251,7 @@ inline void
 SPIRVMap<Attribute::AttrKind, SPIRVFunctionControlMaskKind>::init() {
   add(Attribute::AlwaysInline, FunctionControlInlineMask);
   add(Attribute::NoInline, FunctionControlDontInlineMask);
-  add(Attribute::OptimizeNone, internal::FunctionControlOptNoneINTELMask);
+  add(Attribute::OptimizeNone, FunctionControlOptNoneEXTMask);
 }
 typedef SPIRVMap<Attribute::AttrKind, SPIRVFunctionControlMaskKind>
     SPIRSPIRVFuncCtlMaskMap;
@@ -319,6 +319,7 @@ const static char ConstantPipeStorage[] = "ConstantPipeStorage";
 const static char VmeImageINTEL[] = "VmeImageINTEL";
 const static char JointMatrixINTEL[] = "JointMatrixINTEL";
 const static char CooperativeMatrixKHR[] = "CooperativeMatrixKHR";
+const static char BufferSurfaceINTEL[] = "BufferSurfaceINTEL";
 } // namespace kSPIRVTypeName
 
 namespace kSPR2TypeName {
@@ -976,6 +977,7 @@ template <> inline void SPIRVMap<std::string, Op, SPIRVOpaqueType>::init() {
   _SPIRV_OP(AvcRefResultINTEL)
   _SPIRV_OP(AvcSicResultINTEL)
   _SPIRV_OP(VmeImageINTEL)
+  _SPIRV_OP(BufferSurfaceINTEL)
   _SPIRV_OP(CooperativeMatrixKHR)
 #undef _SPIRV_OP
   add("JointMatrixINTEL", internal::OpTypeJointMatrixINTEL);
