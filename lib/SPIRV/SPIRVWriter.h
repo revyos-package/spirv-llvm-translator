@@ -131,10 +131,11 @@ public:
   SPIRVFunction *transFunctionDecl(Function *F);
   void transVectorComputeMetadata(Function *F);
   void transFPGAFunctionMetadata(SPIRVFunction *BF, Function *F);
-  void transAuxDataInst(SPIRVFunction *BF, Function *F);
   void transFunctionMetadataAsExecutionMode(SPIRVFunction *BF, Function *F);
   void transFunctionMetadataAsUserSemanticDecoration(SPIRVFunction *BF,
                                                      Function *F);
+  void transAuxDataInst(SPIRVFunction *BF, Function *F);
+
   bool transGlobalVariables();
 
   Op transBoolOpCode(SPIRVValue *Opn, Op OC);
@@ -146,7 +147,7 @@ public:
   SPIRVValue *transConstant(Value *V);
   /// Translate a reference to a constant in a constant expression. This may
   /// involve inserting extra bitcasts to correct type issues.
-  SPIRVValue *transConstantUse(Constant *V);
+  SPIRVValue *transConstantUse(Constant *V, SPIRVType *ExpectedType);
   SPIRVValue *transValue(Value *V, SPIRVBasicBlock *BB,
                          bool CreateForward = true,
                          FuncTransMode FuncTrans = FuncTransMode::Decl);

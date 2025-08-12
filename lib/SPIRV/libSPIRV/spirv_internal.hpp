@@ -53,8 +53,8 @@ enum InternalSourceLanguageNonSemanticDI {
 };
 
 enum InternalLinkageType {
-  ILTPrev = LinkageTypeMax - 2,
-  ILTInternal
+    ILTPrev = LinkageTypeMax - 2,
+    ILTInternal
 };
 
 enum InternalOp {
@@ -68,7 +68,6 @@ enum InternalOp {
   IOpJointMatrixSUMadINTEL = 6128,
   IOpJointMatrixUSMadINTEL = 6129,
   IOpJointMatrixUUMadINTEL = 6130,
-  IOpArithmeticFenceINTEL = 6145,
   IOpCooperativeMatrixLoadCheckedINTEL = 6193,
   IOpCooperativeMatrixStoreCheckedINTEL = 6194,
   IOpCooperativeMatrixConstructCheckedINTEL = 6195,
@@ -78,6 +77,8 @@ enum InternalOp {
   IOpRoundFToTF32INTEL = 6426,
   IOpMaskedGatherINTEL = 6428,
   IOpMaskedScatterINTEL = 6429,
+  IOpJointMatrixGetElementCoordINTEL = 6440,
+  IOpCooperativeMatrixPrefetchINTEL = 6449,
   IOpConvertHandleToImageINTEL = 6529,
   IOpConvertHandleToSamplerINTEL = 6530,
   IOpConvertHandleToSampledImageINTEL = 6531,
@@ -92,35 +93,22 @@ enum InternalDecoration {
   IDecInitModeINTEL = 6148,
   IDecImplementInCSRINTEL = 6149,
   IDecArgumentAttributeINTEL = 6409,
-  IDecCacheControlLoadINTEL = 6442,
-  IDecCacheControlStoreINTEL = 6443
 };
 
 enum InternalCapability {
-  ICapFastCompositeINTEL = 6093,
-  ICapOptNoneINTEL = 6094,
   ICapTokenTypeINTEL = 6112,
   ICapBfloat16ConversionINTEL = 6115,
   ICapabilityJointMatrixINTEL = 6118,
   ICapabilityHWThreadQueryINTEL = 6134,
-  ICapFPArithmeticFenceINTEL = 6144,
   ICapGlobalVariableDecorationsINTEL = 6146,
   ICapabilityCooperativeMatrixCheckedInstructionsINTEL = 6192,
+  ICapabilityCooperativeMatrixPrefetchINTEL = 6411,
   ICapabilityComplexFloatMulDivINTEL = 6414,
   ICapabilityTensorFloat32RoundingINTEL = 6425,
   ICapabilityMaskedGatherScatterINTEL = 6427,
+  ICapabilityJointMatrixWIInstructionsINTEL = 6435,
   ICapabilityCacheControlsINTEL = 6441,
-  ICapRegisterLimitsINTEL = 6460,
   ICapabilityBindlessImagesINTEL = 6528
-};
-
-enum InternalFunctionControlMask { IFunctionControlOptNoneINTELMask = 0x10000 };
-
-enum InternalExecutionMode {
-  IExecModeFastCompositeKernelINTEL = 6088,
-  IExecModeMaximumRegistersINTEL = 6461,
-  IExecModeMaximumRegistersIdINTEL = 6462,
-  IExecModeNamedMaximumRegistersINTEL = 6463
 };
 
 constexpr LinkageType LinkageTypeInternal =
@@ -140,27 +128,9 @@ enum InternalBuiltIn {
   IBuiltInGlobalHWThreadIDINTEL = 6136,
 };
 
-enum class LoadCacheControlINTEL {
-  Uncached = 0,
-  Cached = 1,
-  Streaming = 2,
-  InvalidateAfterRead = 3,
-  ConstCached = 4
-};
-
-enum class StoreCacheControlINTEL {
-  Uncached = 0,
-  WriteThrough = 1,
-  WriteBack = 2,
-  Streaming = 3
-};
-
-enum InternalNamedMaximumNumberOfRegisters {
-  NamedMaximumNumberOfRegistersAutoINTEL = 0,
-};
-
 #define _SPIRV_OP(x, y) constexpr x x##y = static_cast<x>(I##x##y);
 _SPIRV_OP(Capability, JointMatrixINTEL)
+_SPIRV_OP(Capability, JointMatrixWIInstructionsINTEL)
 _SPIRV_OP(Op, TypeJointMatrixINTEL)
 _SPIRV_OP(Op, JointMatrixLoadINTEL)
 _SPIRV_OP(Op, JointMatrixStoreINTEL)
@@ -169,11 +139,14 @@ _SPIRV_OP(Op, JointMatrixSUMadINTEL)
 _SPIRV_OP(Op, JointMatrixUSMadINTEL)
 _SPIRV_OP(Op, JointMatrixUUMadINTEL)
 _SPIRV_OP(Op, JointMatrixWorkItemLengthINTEL)
+_SPIRV_OP(Op, JointMatrixGetElementCoordINTEL)
 
 _SPIRV_OP(Capability, CooperativeMatrixCheckedInstructionsINTEL)
 _SPIRV_OP(Op, CooperativeMatrixLoadCheckedINTEL)
 _SPIRV_OP(Op, CooperativeMatrixStoreCheckedINTEL)
 _SPIRV_OP(Op, CooperativeMatrixConstructCheckedINTEL)
+_SPIRV_OP(Capability, CooperativeMatrixPrefetchINTEL)
+_SPIRV_OP(Op, CooperativeMatrixPrefetchINTEL)
 
 _SPIRV_OP(Capability, HWThreadQueryINTEL)
 _SPIRV_OP(BuiltIn, SubDeviceIDINTEL)
@@ -241,12 +214,9 @@ constexpr SourceLanguage SourceLanguageCPP20 =
 
 constexpr Op OpForward = static_cast<Op>(IOpForward);
 constexpr Op OpTypeTokenINTEL = static_cast<Op>(IOpTypeTokenINTEL);
-constexpr Op OpArithmeticFenceINTEL = static_cast<Op>(IOpArithmeticFenceINTEL);
 constexpr Op OpConvertFToBF16INTEL = static_cast<Op>(IOpConvertFToBF16INTEL);
 constexpr Op OpConvertBF16ToFINTEL = static_cast<Op>(IOpConvertBF16ToFINTEL);
 
-constexpr Decoration DecorationCallableFunctionINTEL =
-    static_cast<Decoration>(IDecCallableFunctionINTEL);
 constexpr Decoration DecorationRuntimeAlignedINTEL =
     static_cast<Decoration>(IDecRuntimeAlignedINTEL);
 constexpr Decoration DecorationHostAccessINTEL =
@@ -257,37 +227,13 @@ constexpr Decoration DecorationImplementInCSRINTEL =
     static_cast<Decoration>(IDecImplementInCSRINTEL);
 constexpr Decoration DecorationArgumentAttributeINTEL =
     static_cast<Decoration>(IDecArgumentAttributeINTEL);
-constexpr Decoration DecorationCacheControlLoadINTEL =
-    static_cast<Decoration>(IDecCacheControlLoadINTEL);
-constexpr Decoration DecorationCacheControlStoreINTEL =
-    static_cast<Decoration>(IDecCacheControlStoreINTEL);
 
-constexpr Capability CapabilityFastCompositeINTEL =
-    static_cast<Capability>(ICapFastCompositeINTEL);
-constexpr Capability CapabilityOptNoneINTEL =
-    static_cast<Capability>(ICapOptNoneINTEL);
 constexpr Capability CapabilityTokenTypeINTEL =
     static_cast<Capability>(ICapTokenTypeINTEL);
-constexpr Capability CapabilityFPArithmeticFenceINTEL =
-    static_cast<Capability>(ICapFPArithmeticFenceINTEL);
 constexpr Capability CapabilityBfloat16ConversionINTEL =
     static_cast<Capability>(ICapBfloat16ConversionINTEL);
 constexpr Capability CapabilityGlobalVariableDecorationsINTEL =
     static_cast<Capability>(ICapGlobalVariableDecorationsINTEL);
-constexpr Capability CapabilityRegisterLimitsINTEL =
-    static_cast<Capability>(ICapRegisterLimitsINTEL);
-
-constexpr FunctionControlMask FunctionControlOptNoneINTELMask =
-    static_cast<FunctionControlMask>(IFunctionControlOptNoneINTELMask);
-
-constexpr ExecutionMode ExecutionModeFastCompositeKernelINTEL =
-    static_cast<ExecutionMode>(IExecModeFastCompositeKernelINTEL);
-constexpr ExecutionMode ExecutionModeMaximumRegistersINTEL =
-    static_cast<ExecutionMode>(IExecModeMaximumRegistersINTEL);
-constexpr ExecutionMode ExecutionModeMaximumRegistersIdINTEL =
-    static_cast<ExecutionMode>(IExecModeMaximumRegistersIdINTEL);
-constexpr ExecutionMode ExecutionModeNamedMaximumRegistersINTEL =
-    static_cast<ExecutionMode>(IExecModeNamedMaximumRegistersINTEL);
 
 } // namespace internal
 } // namespace spv
