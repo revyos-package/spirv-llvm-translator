@@ -1,9 +1,9 @@
-spirv-llvm-translator-14 (14.0.14-1) UNRELEASED; urgency=medium
+spirv-llvm-translator-14 (14.0.14-1) unstable; urgency=medium
 
   * New upstream release.
   * Bump spirv-headers dependency to 1.6.1+1.4.313.0.
 
- -- Andreas Beckmann <anbe@debian.org>  Tue, 12 Aug 2025 09:43:52 +0200
+ -- Andreas Beckmann <anbe@debian.org>  Tue, 12 Aug 2025 10:36:48 +0200
 
 spirv-llvm-translator-14 (14.0.11-1) unstable; urgency=medium
 
