@@ -71,10 +71,10 @@ inline bool isValid(spv::ExecutionModel V) {
   case ExecutionModelClosestHitKHR:
   case ExecutionModelMissKHR:
   case ExecutionModelCallableKHR:
-  case internal::ExecutionModeStreamingInterfaceINTEL:
-  case internal::ExecutionModeMaximumRegistersINTEL:
-  case internal::ExecutionModeMaximumRegistersIdINTEL:
-  case internal::ExecutionModeNamedMaximumRegistersINTEL:
+  case ExecutionModeStreamingInterfaceINTEL:
+  case ExecutionModeMaximumRegistersINTEL:
+  case ExecutionModeMaximumRegistersIdINTEL:
+  case ExecutionModeNamedMaximumRegistersINTEL:
     return true;
   default:
     return false;
@@ -293,7 +293,7 @@ inline bool isValidFunctionControlMask(SPIRVWord Mask) {
   ValidMask |= FunctionControlDontInlineMask;
   ValidMask |= FunctionControlPureMask;
   ValidMask |= FunctionControlConstMask;
-  ValidMask |= internal::FunctionControlOptNoneINTELMask;
+  ValidMask |= FunctionControlOptNoneEXTMask;
 
   return (Mask & ~ValidMask) == 0;
 }

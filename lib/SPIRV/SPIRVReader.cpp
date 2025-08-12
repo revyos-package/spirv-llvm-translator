@@ -310,6 +310,8 @@ llvm::Optional<uint64_t> SPIRVToLLVM::getAlignment(SPIRVValue *V) {
 Type *SPIRVToLLVM::transFPType(SPIRVType *T) {
   switch (T->getFloatBitWidth()) {
   case 16:
+    if (T->isTypeFloat(16, FPEncodingBFloat16KHR))
+      return Type::getBFloatTy(*Context);
     return Type::getHalfTy(*Context);
   case 32:
     return Type::getFloatTy(*Context);
@@ -571,6 +573,9 @@ std::string SPIRVToLLVM::transTypeToOCLTypeName(SPIRVType *T, bool IsSigned) {
   case OpTypeFloat:
     switch (T->getFloatBitWidth()) {
     case 16:
+      if (static_cast<SPIRVTypeFloat *>(T)->getFloatingPointEncoding() ==
+          FPEncodingBFloat16KHR)
+        return "bfloat16";
       return "half";
     case 32:
       return "float";
@@ -1309,6 +1314,7 @@ Value *SPIRVToLLVM::transCmpInst(SPIRVValue *BV, BasicBlock *BB, Function *F) {
   else if (BT->isTypeVectorOrScalarFloat())
     Inst = Builder.CreateFCmp(CmpMap::rmap(OP), Op0, Op1);
   assert(Inst && "not implemented");
+  applyFPFastMathModeDecorations(BV, static_cast<Instruction *>(Inst));
   return Inst;
 }
 
@@ -1572,7 +1578,9 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
       const llvm::fltSemantics *FS = nullptr;
       switch (BT->getFloatBitWidth()) {
       case 16:
-        FS = &APFloat::IEEEhalf();
+        FS =
+            (BT->isTypeFloat(16, FPEncodingBFloat16KHR) ? &APFloat::BFloat()
+                                                        : &APFloat::IEEEhalf());
         break;
       case 32:
         FS = &APFloat::IEEEsingle();
@@ -2909,7 +2917,7 @@ Value *SPIRVToLLVM::transValueWithoutDecoration(SPIRVValue *BV, Function *F,
     return mapValue(
         BV, transArbFloatInst(static_cast<SPIRVInstruction *>(BV), BB, true));
 
-  case internal::OpArithmeticFenceINTEL: {
+  case OpArithmeticFenceEXT: {
     IRBuilder<> Builder(BB);
     auto *BC = static_cast<SPIRVUnary *>(BV);
     Type *RetTy = transType(BC->getType());
@@ -4442,12 +4450,6 @@ bool SPIRVToLLVM::transMetadata() {
     if (BM->getDesiredBIsRepresentation() == BIsRepresentation::SPIRVFriendlyIR)
       transFunctionDecorationsToMetadata(BF, F);
 
-    if (BF->hasDecorate(internal::DecorationCallableFunctionINTEL))
-      F->addFnAttr(kVCMetadata::VCCallable);
-    if (isKernel(BF) &&
-        BF->getExecutionMode(internal::ExecutionModeFastCompositeKernelINTEL))
-      F->addFnAttr(kVCMetadata::VCFCEntry);
-
     if (F->getCallingConv() != CallingConv::SPIR_KERNEL)
       continue;
 
@@ -4543,8 +4545,7 @@ bool SPIRVToLLVM::transMetadata() {
                      getMDNodeStringIntVec(Context, EM->getLiterals()));
     }
     // Generate metadata for Intel FPGA streaming interface
-    if (auto *EM = BF->getExecutionMode(
-            internal::ExecutionModeStreamingInterfaceINTEL)) {
+    if (auto *EM = BF->getExecutionMode(ExecutionModeStreamingInterfaceINTEL)) {
       std::vector<uint32_t> InterfaceVec = EM->getLiterals();
       assert(InterfaceVec.size() == 1 &&
              "Expected StreamingInterfaceINTEL to have exactly 1 literal");
@@ -4563,8 +4564,7 @@ bool SPIRVToLLVM::transMetadata() {
       F->setMetadata(kSPIR2MD::IntelFPGAIPInterface,
                      MDNode::get(*Context, InterfaceMDVec));
     }
-    if (auto *EM = BF->getExecutionMode(
-            internal::ExecutionModeMaximumRegistersINTEL)) {
+    if (auto *EM = BF->getExecutionMode(ExecutionModeMaximumRegistersINTEL)) {
       NamedMDNode *ExecModeMD =
           M->getOrInsertNamedMetadata(kSPIRVMD::ExecutionMode);
 
@@ -4576,8 +4576,7 @@ bool SPIRVToLLVM::transMetadata() {
           ConstantAsMetadata::get(getUInt32(M, EM->getLiterals()[0])));
       ExecModeMD->addOperand(MDNode::get(*Context, ValueVec));
     }
-    if (auto *EM = BF->getExecutionMode(
-            internal::ExecutionModeMaximumRegistersIdINTEL)) {
+    if (auto *EM = BF->getExecutionMode(ExecutionModeMaximumRegistersIdINTEL)) {
       NamedMDNode *ExecModeMD =
           M->getOrInsertNamedMetadata(kSPIRVMD::ExecutionMode);
 
@@ -4592,8 +4591,8 @@ bool SPIRVToLLVM::transMetadata() {
                                     transValue(ExecOp, nullptr, nullptr)))));
       ExecModeMD->addOperand(MDNode::get(*Context, ValueVec));
     }
-    if (auto *EM = BF->getExecutionMode(
-            internal::ExecutionModeNamedMaximumRegistersINTEL)) {
+    if (auto *EM =
+            BF->getExecutionMode(ExecutionModeNamedMaximumRegistersINTEL)) {
       NamedMDNode *ExecModeMD =
           M->getOrInsertNamedMetadata(kSPIRVMD::ExecutionMode);
 

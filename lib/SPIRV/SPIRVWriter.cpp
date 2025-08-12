@@ -333,6 +333,16 @@ SPIRVType *LLVMToSPIRVBase::transType(Type *T) {
     }
   }
 
+  if (T->isBFloatTy()) {
+    BM->getErrorLog().checkError(
+        BM->isAllowedToUseExtension(ExtensionID::SPV_KHR_bfloat16),
+        SPIRVEC_RequiresExtension,
+        "SPV_KHR_bfloat16\n"
+        "NOTE: LLVM module contains bfloat type, translation of which "
+        "requires this extension");
+    return mapType(T, BM->addFloatType(16, FPEncodingBFloat16KHR));
+  }
+
   if (T->isFloatingPointTy())
     return mapType(T, BM->addFloatType(T->getPrimitiveSizeInBits()));
 
@@ -658,7 +668,9 @@ SPIRVType *LLVMToSPIRVBase::transSPIRVJointOrCooperativeMatrixType(
   else if (Ty == "double")
     ElemTy = Type::getDoubleTy(M->getContext());
   else if (Ty == "bfloat16")
-    ElemTy = Type::getInt16Ty(M->getContext());
+    ElemTy = BM->isAllowedToUseExtension(ExtensionID::SPV_KHR_bfloat16)
+                 ? Type::getBFloatTy(M->getContext())
+                 : Type::getInt16Ty(M->getContext());
   else
     llvm_unreachable("Unexpected type for matrix!");
 
@@ -925,11 +937,6 @@ SPIRVFunction *LLVMToSPIRVBase::transFunctionDecl(Function *F) {
     BF->addDecorate(DecorationReferencedIndirectlyINTEL);
   }
 
-  if (Attrs.hasFnAttr(kVCMetadata::VCCallable) &&
-      BM->isAllowedToUseExtension(ExtensionID::SPV_INTEL_fast_composite)) {
-    BF->addDecorate(internal::DecorationCallableFunctionINTEL);
-  }
-
   if (BM->isAllowedToUseExtension(ExtensionID::SPV_INTEL_vector_compute))
     transVectorComputeMetadata(F);
 
@@ -1073,11 +1080,11 @@ void LLVMToSPIRVBase::transFunctionMetadataAsExecutionMode(SPIRVFunction *BF,
     auto *RegisterAllocMode = RegisterAllocModeMDs[I]->getOperand(0).get();
     if (isa<MDString>(RegisterAllocMode)) {
       const StringRef Str = getMDOperandAsString(RegisterAllocModeMDs[I], 0);
-      const internal::InternalNamedMaximumNumberOfRegisters NamedValue =
+      const NamedMaximumNumberOfRegisters NamedValue =
           SPIRVNamedMaximumNumberOfRegistersNameMap::rmap(Str.str());
       BF->addExecutionMode(BM->add(new SPIRVExecutionMode(
-          OpExecutionMode, BF,
-          internal::ExecutionModeNamedMaximumRegistersINTEL, NamedValue)));
+          OpExecutionMode, BF, ExecutionModeNamedMaximumRegistersINTEL,
+          NamedValue)));
     } else if (isa<MDNode>(RegisterAllocMode)) {
       auto *RegisterAllocNodeMDOp =
           getMDOperandAsMDNode(RegisterAllocModeMDs[I], 0);
@@ -1085,12 +1092,12 @@ void LLVMToSPIRVBase::transFunctionMetadataAsExecutionMode(SPIRVFunction *BF,
       auto *Const =
           BM->addConstant(transType(Type::getInt32Ty(F->getContext())), Num);
       BF->addExecutionMode(BM->add(new SPIRVExecutionModeId(
-          BF, internal::ExecutionModeMaximumRegistersIdINTEL, Const->getId())));
+          BF, ExecutionModeMaximumRegistersIdINTEL, Const->getId())));
     } else {
       const int64_t RegisterAllocVal =
           mdconst::dyn_extract<ConstantInt>(RegisterAllocMode)->getZExtValue();
       BF->addExecutionMode(BM->add(new SPIRVExecutionMode(
-          OpExecutionMode, BF, internal::ExecutionModeMaximumRegistersINTEL,
+          OpExecutionMode, BF, ExecutionModeMaximumRegistersINTEL,
           RegisterAllocVal)));
     }
   }
@@ -1913,14 +1920,12 @@ LLVMToSPIRVBase::transValueWithoutDecoration(Value *V, SPIRVBasicBlock *BB,
     if (static_cast<uint32_t>(Builtin) >= internal::BuiltInSubDeviceIDINTEL &&
         static_cast<uint32_t>(Builtin) <=
             internal::BuiltInGlobalHWThreadIDINTEL) {
-      if (!BM->isAllowedToUseExtension(
-              ExtensionID::SPV_INTEL_hw_thread_queries)) {
-        std::string ErrorStr = "Intel HW thread queries must be enabled by "
-                               "SPV_INTEL_hw_thread_queries extension.\n"
-                               "LLVM value that is being translated:\n";
-        getErrorLog().checkError(false, SPIRVEC_InvalidModule, V, ErrorStr);
-      }
-      BM->addExtension(ExtensionID::SPV_INTEL_hw_thread_queries);
+      const std::string ErrorStr =
+          "SPV_INTEL_hw_thread_queries\n"
+          "Please report to "
+          "https://github.com/intel/llvm in case if you see "
+          "this error.\nRef LLVM Value:";
+      getErrorLog().checkError(false, SPIRVEC_DeprecatedExtension, V, ErrorStr);
     }
 
     BVar->setBuiltin(Builtin);
@@ -2627,7 +2632,7 @@ static void transMetadataDecorations(Metadata *MD, SPIRVValue *Target) {
       break;
     }
 
-    case spv::internal::DecorationCacheControlLoadINTEL: {
+    case DecorationCacheControlLoadINTEL: {
       ErrLog.checkError(
           NumOperands == 3, SPIRVEC_InvalidLlvmModule,
           "CacheControlLoadINTEL requires exactly 2 extra operands");
@@ -2644,11 +2649,10 @@ static void transMetadataDecorations(Metadata *MD, SPIRVValue *Target) {
 
       Target->addDecorate(new SPIRVDecorateCacheControlLoadINTEL(
           Target, CacheLevel->getZExtValue(),
-          static_cast<internal::LoadCacheControlINTEL>(
-              CacheControl->getZExtValue())));
+          static_cast<LoadCacheControl>(CacheControl->getZExtValue())));
       break;
     }
-    case spv::internal::DecorationCacheControlStoreINTEL: {
+    case DecorationCacheControlStoreINTEL: {
       ErrLog.checkError(
           NumOperands == 3, SPIRVEC_InvalidLlvmModule,
           "CacheControlStoreINTEL requires exactly 2 extra operands");
@@ -2665,8 +2669,7 @@ static void transMetadataDecorations(Metadata *MD, SPIRVValue *Target) {
 
       Target->addDecorate(new SPIRVDecorateCacheControlStoreINTEL(
           Target, CacheLevel->getZExtValue(),
-          static_cast<internal::StoreCacheControlINTEL>(
-              CacheControl->getZExtValue())));
+          static_cast<StoreCacheControl>(CacheControl->getZExtValue())));
       break;
     }
     default: {
@@ -4127,10 +4130,17 @@ SPIRVValue *LLVMToSPIRVBase::transIntrinsicInst(IntrinsicInst *II,
   case Intrinsic::arithmetic_fence: {
     SPIRVType *Ty = transType(II->getType());
     SPIRVValue *Op = transValue(II->getArgOperand(0), BB);
+    if (BM->isAllowedToUseExtension(ExtensionID::SPV_EXT_arithmetic_fence)) {
+      BM->addCapability(CapabilityArithmeticFenceEXT);
+      BM->addExtension(ExtensionID::SPV_EXT_arithmetic_fence);
+      return BM->addUnaryInst(OpArithmeticFenceEXT, Ty, Op, BB);
+    }
     if (BM->isAllowedToUseExtension(ExtensionID::SPV_INTEL_arithmetic_fence)) {
-      BM->addCapability(internal::CapabilityFPArithmeticFenceINTEL);
+      // Note: SPV_INTEL_arithmetic_fence was unpublished and superseded by
+      // SPV_EXT_arithmetic_fence.
+      BM->addCapability(CapabilityArithmeticFenceEXT);
       BM->addExtension(ExtensionID::SPV_INTEL_arithmetic_fence);
-      return BM->addUnaryInst(internal::OpArithmeticFenceINTEL, Ty, Op, BB);
+      return BM->addUnaryInst(OpArithmeticFenceEXT, Ty, Op, BB);
     }
     return Op;
   }
@@ -4524,10 +4534,15 @@ SPIRVWord LLVMToSPIRVBase::transFunctionControlMask(Function *F) {
       [&](Attribute::AttrKind Attr, SPIRVFunctionControlMaskKind Mask) {
         if (F->hasFnAttribute(Attr)) {
           if (Attr == Attribute::OptimizeNone) {
-            if (!BM->isAllowedToUseExtension(ExtensionID::SPV_INTEL_optnone))
+            if (BM->isAllowedToUseExtension(ExtensionID::SPV_EXT_optnone)) {
+              BM->addExtension(ExtensionID::SPV_EXT_optnone);
+              BM->addCapability(CapabilityOptNoneEXT);
+            } else if (BM->isAllowedToUseExtension(
+                           ExtensionID::SPV_INTEL_optnone)) {
+              BM->addExtension(ExtensionID::SPV_INTEL_optnone);
+              BM->addCapability(CapabilityOptNoneINTEL);
+            } else
               return;
-            BM->addExtension(ExtensionID::SPV_INTEL_optnone);
-            BM->addCapability(internal::CapabilityOptNoneINTEL);
           }
           FCM |= Mask;
         }
@@ -5024,7 +5039,7 @@ bool LLVMToSPIRVBase::transExecutionMode() {
       case spv::ExecutionModeNumSIMDWorkitemsINTEL:
       case spv::ExecutionModeSchedulerTargetFmaxMhzINTEL:
       case spv::ExecutionModeMaxWorkDimINTEL:
-      case spv::internal::ExecutionModeStreamingInterfaceINTEL: {
+      case spv::ExecutionModeStreamingInterfaceINTEL: {
         if (!BM->isAllowedToUseExtension(
                 ExtensionID::SPV_INTEL_kernel_attributes))
           break;
@@ -5071,11 +5086,6 @@ bool LLVMToSPIRVBase::transExecutionMode() {
                 ExtensionID::SPV_INTEL_float_controls2))
           break;
         AddSingleArgExecutionMode(static_cast<ExecutionMode>(EMode));
-      } break;
-      case spv::internal::ExecutionModeFastCompositeKernelINTEL: {
-        if (BM->isAllowedToUseExtension(ExtensionID::SPV_INTEL_fast_composite))
-          BF->addExecutionMode(BM->add(new SPIRVExecutionMode(
-              OpExecutionMode, BF, static_cast<ExecutionMode>(EMode))));
       } break;
       default:
         llvm_unreachable("invalid execution mode");
