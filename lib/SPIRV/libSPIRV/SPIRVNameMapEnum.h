@@ -187,6 +187,7 @@ template <> inline void SPIRVMap<Decoration, std::string>::init() {
 
   add(DecorationCacheControlLoadINTEL, "CacheControlLoadINTEL");
   add(DecorationCacheControlStoreINTEL, "CacheControlStoreINTEL");
+  add(DecorationConditionalINTEL, "DecorationConditionalINTEL");
 
   // From spirv_internal.hpp
   add(internal::DecorationMathOpDSPModeINTEL, "MathOpDSPModeINTEL");
@@ -646,6 +647,11 @@ template <> inline void SPIRVMap<Capability, std::string>::init() {
   add(internal::CapabilityCooperativeMatrixCheckedInstructionsINTEL,
       "CooperativeMatrixCheckedInstructionsINTEL");
   add(internal::CapabilityBindlessImagesINTEL, "BindlessImagesINTEL");
+  add(CapabilityInt4TypeINTEL, "Int4TypeINTEL");
+  add(CapabilityInt4CooperativeMatrixINTEL, "Int4CooperativeMatrixINTEL");
+  add(CapabilityFunctionVariantsINTEL, "FunctionVariantsINTEL");
+  add(CapabilitySpecConditionalINTEL, "SpecConditionalINTEL");
+  add(internal::CapabilityBFloat16ArithmeticINTEL, "BFloat16ArithmeticINTEL");
 }
 SPIRV_DEF_NAMEMAP(Capability, SPIRVCapabilityNameMap)
 
