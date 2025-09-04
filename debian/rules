@@ -7,10 +7,18 @@ include /usr/share/dpkg/pkg-info.mk
 LLVM_VERSION	 = $(shell sed -n -r '/^Build/,/^$$/s/.*llvm-([0-9]+)-dev.*/\1/p' debian/control)
 LLVM_SOVERSION	 = $(LLVM_VERSION)
 
+AUTOGEN		 = debian/libllvmspirvlib$(LLVM_SOVERSION).install
+AUTOGEN		+= debian/libllvmspirvlib$(LLVM_SOVERSION).symbols
+
 %:
 	dh $@ --builddir build/
 
-override_dh_auto_configure:
+libllvmspirvlib$(LLVM_SOVERSION).%: libllvmspirvlibSOVERSION.%
+	ln -s $(<F) $@
+
+autogen: $(AUTOGEN) ;
+
+override_dh_auto_configure: autogen
 	dh_auto_configure -- \
 		-DCMAKE_SKIP_RPATH=ON \
 		-DLLVM_EXTERNAL_SPIRV_HEADERS_SOURCE_DIR=/usr/include \
@@ -34,7 +42,10 @@ override_dh_gencontrol:
 		-V'llvm:major=$(LLVM_VERSION)' \
 		-V'llvm:soversion=$(LLVM_SOVERSION)' \
 
-update-symbols:
+execute_after_dh_clean:
+	$(RM) $(AUTOGEN)
+
+update-symbols: debian/libllvmspirvlib$(LLVM_SOVERSION).symbols
 	pkgkde-getbuildlogs
 	echo "pkgkde-symbolshelper batchpatch -v $(DEB_VERSION_EPOCH_UPSTREAM) $(DEB_SOURCE)_$(DEB_DISTRIBUTION)_logs/$(DEB_SOURCE)_$(DEB_VERSION)_*build"
 

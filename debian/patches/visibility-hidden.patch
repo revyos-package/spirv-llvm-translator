@@ -56,7 +56,7 @@ Forwarded: https://github.com/KhronosGroup/SPIRV-LLVM-Translator/issues/1963
  namespace llvm {
  class IntrinsicInst;
  } // namespace llvm
-@@ -279,4 +281,6 @@ private:
+@@ -342,4 +344,6 @@ private:
  
  } // namespace SPIRV
  

@@ -10,7 +10,7 @@ Build-Depends: debhelper-compat (= 13),
  cmake,
  gcc (>= 4:14),
  pkgconf,
- spirv-headers (>= 1.6.1+1.4.313.0),
+ spirv-headers (>= 1.6.1+1.4.321.0-2~),
  spirv-tools,
 # keep the clang/llvm version in sync, don't forget debian/tests/control
  libclang-16-dev,
