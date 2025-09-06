@@ -3,6 +3,7 @@ spirv-llvm-translator-15 (15.0.16-1) UNRELEASED; urgency=medium
   * New upstream release.
   * Merge changes from spirv-llvm-translator-14 14.0.15-2.
   * Bump spirv-headers dependency to 1.6.1+1.4.321.0-2.
+  * Update .symbols control file.
   * Build with g++-14.
 
  -- Andreas Beckmann <anbe@debian.org>  Thu, 04 Sep 2025 10:43:12 +0200
