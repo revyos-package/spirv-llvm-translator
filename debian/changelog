@@ -1,8 +1,9 @@
 spirv-llvm-translator-15 (15.0.16-1) UNRELEASED; urgency=medium
 
   * New upstream release.
-  * Merge changes from spirv-llvm-translator-14 14.0.15-1.
+  * Merge changes from spirv-llvm-translator-14 14.0.15-2.
   * Bump spirv-headers dependency to 1.6.1+1.4.321.0-2.
+  * Build with g++-14.
 
  -- Andreas Beckmann <anbe@debian.org>  Thu, 04 Sep 2025 10:43:12 +0200
 
@@ -134,6 +135,12 @@ spirv-llvm-translator-15 (15.0.0-1) unstable; urgency=medium
   * Build with llvm 15.
 
  -- Andreas Beckmann <anbe@debian.org>  Mon, 03 Oct 2022 02:09:37 +0200
+
+spirv-llvm-translator-14 (14.0.15-2) unstable; urgency=medium
+
+  * Build with g++-14.
+
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 04 Sep 2025 17:27:18 +0200
 
 spirv-llvm-translator-14 (14.0.15-1) unstable; urgency=medium
 
