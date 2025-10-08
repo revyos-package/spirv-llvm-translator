@@ -1,9 +1,9 @@
-spirv-llvm-translator-14 (14.0.16-1) UNRELEASED; urgency=medium
+spirv-llvm-translator-14 (14.0.16-1) unstable; urgency=medium
 
   * New upstream release.
   * Drop redundant Rules-Requires-Root: no.
 
- -- Andreas Beckmann <anbe@debian.org>  Wed, 08 Oct 2025 20:33:36 +0200
+ -- Andreas Beckmann <anbe@debian.org>  Wed, 08 Oct 2025 21:43:03 +0200
 
 spirv-llvm-translator-14 (14.0.15-2) unstable; urgency=medium
 
