@@ -1,3 +1,9 @@
+spirv-llvm-translator-16 (16.0.17-1) UNRELEASED; urgency=medium
+
+  * New upstream release.
+
+ -- Andreas Beckmann <anbe@debian.org>  Thu, 09 Oct 2025 20:17:57 +0200
+
 spirv-llvm-translator-16 (16.0.16-1) UNRELEASED; urgency=medium
 
   * New upstream release.
