@@ -1,3 +1,16 @@
+spirv-llvm-translator-16 (16.0.18-0revyos1) unstable; urgency=medium
+
+  [ Han Gao ]
+  * New upstream release.
+
+  [ YixingZhang007 ]
+  * [Backport to 16] Implement SPV_INTEL_predicated_io extension (#3370) (#3380)
+
+  [ Marcos Maronas ]
+  * [Backport to 16] Fix incorrect translation for AtomicCmpExchangeWeak builtin ptr arg type. (#3390) (#3397)
+
+ -- Han Gao <rabenda.cn@gmail.com>  Sun, 09 Nov 2025 12:41:41 +0800
+
 spirv-llvm-translator-16 (16.0.17-1) UNRELEASED; urgency=medium
 
   * New upstream release.
